@@ -1,55 +1,76 @@
-//! Bloco de parâmetros: a imagem do buffer de uniforms de um efeito, publicada pelo app de controle e
-//! copiada pela layer a cada frame.
+//! Bloco de bytes publicado por um escritor e lido sem bloqueio por leitores (um *seqlock*). Serve
+//! aos dois canais do app de controle para a layer:
+//!
+//! - [`Params`]: a imagem do buffer de uniforms de um efeito, copiada pela layer a cada frame;
+//! - [`Selection`]: o caminho do bundle que a layer deve carregar.
 //!
 //! É um *seqlock*: o contador `seq` é ímpar enquanto alguém escreve e par quando o conteúdo é
 //! consistente. O leitor só aceita uma cópia se `seq` era par e não mudou durante a leitura, então
 //! nunca vê dados "rasgados", e nunca bloqueia nem faz syscall. Os dados ficam em palavras atômicas
 //! (acessos `Relaxed`) para que a leitura concorrente não seja uma corrida de dados.
 //!
-//! O bloco leva o `bundle_id` do efeito a que pertence: a layer só aplica um bloco do efeito que ela
-//! mesma carregou, então valores de outro efeito nunca vazam para este.
+//! Cada bloco leva uma etiqueta (`tag`): nos parâmetros, o `bundle_id` do efeito a que pertencem (a
+//! layer só aplica um bloco do efeito que ela mesma carregou, então valores de outro efeito nunca
+//! vazam para este); na seleção, uma constante.
 
 use std::hint::spin_loop;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering, fence};
 use std::time::{Duration, Instant};
 
-/// Tamanho máximo do bloco: o mínimo que o Vulkan garante para um buffer de uniforms.
+/// Tamanho máximo dos parâmetros: o mínimo que o Vulkan garante para um buffer de uniforms.
 pub const MAX_PARAM_BYTES: usize = 16384;
-const WORDS: usize = MAX_PARAM_BYTES / 4;
+/// Tamanho máximo do caminho do bundle selecionado.
+pub const MAX_SELECTION_BYTES: usize = 1024;
 
 /// Um escritor que não termina em tanto tempo é considerado morto no meio da escrita.
 const STUCK_WRITER: Duration = Duration::from_millis(50);
 const READ_ATTEMPTS: usize = 16;
 
 #[repr(C)]
-pub(crate) struct Params {
+pub(crate) struct Blob<const WORDS: usize> {
     seq: AtomicU32,
     len: AtomicU32,
-    bundle_id: AtomicU64,
+    tag: AtomicU64,
     words: [AtomicU32; WORDS],
+}
+
+pub(crate) type Params = Blob<{ MAX_PARAM_BYTES / 4 }>;
+pub(crate) type Selection = Blob<{ MAX_SELECTION_BYTES / 4 }>;
+
+/// Resultado de uma tentativa de leitura.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Snapshot {
+    /// Cópia consistente de `len` bytes (pode ser 0: bloco vazio ou nunca publicado).
+    Consistent { len: usize },
+    /// O bloco publicado tem outra etiqueta; nada foi copiado.
+    Mismatch,
+    /// A leitura caiu no meio de uma escrita; tente de novo depois.
+    Torn,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum PublishError {
     /// Os dados não cabem no bloco.
-    TooLarge { len: usize },
+    TooLarge { len: usize, max: usize },
 }
 
 impl std::fmt::Display for PublishError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PublishError::TooLarge { len } => write!(f, "{len} bytes de parâmetros (máximo {MAX_PARAM_BYTES})"),
+            PublishError::TooLarge { len, max } => write!(f, "{len} bytes (máximo {max})"),
         }
     }
 }
 
 impl std::error::Error for PublishError {}
 
-impl Params {
-    /// Publica `data` como os parâmetros do efeito `bundle_id`. Vários escritores se revezam.
-    pub(crate) fn publish(&self, bundle_id: u64, data: &[u8]) -> Result<(), PublishError> {
-        if data.len() > MAX_PARAM_BYTES {
-            return Err(PublishError::TooLarge { len: data.len() });
+impl<const WORDS: usize> Blob<WORDS> {
+    const MAX_BYTES: usize = WORDS * 4;
+
+    /// Publica `data` com a etiqueta `tag`. Vários escritores se revezam.
+    pub(crate) fn publish(&self, tag: u64, data: &[u8]) -> Result<(), PublishError> {
+        if data.len() > Self::MAX_BYTES {
+            return Err(PublishError::TooLarge { len: data.len(), max: Self::MAX_BYTES });
         }
         let started = Instant::now();
         let before = loop {
@@ -68,7 +89,7 @@ impl Params {
         };
         fence(Ordering::Release); // o contador ímpar precisa ser visível antes dos dados
         self.len.store(data.len() as u32, Ordering::Relaxed);
-        self.bundle_id.store(bundle_id, Ordering::Relaxed);
+        self.tag.store(tag, Ordering::Relaxed);
         for (i, chunk) in data.chunks(4).enumerate() {
             let mut word = [0u8; 4];
             word[..chunk.len()].copy_from_slice(chunk);
@@ -78,35 +99,48 @@ impl Params {
         Ok(())
     }
 
-    /// Copia para `out` o bloco do efeito `bundle_id`. `None` se não há bloco desse efeito, se `out` é
-    /// de tamanho zero ou se a leitura não conseguiu uma cópia consistente (o chamador tenta no próximo frame).
-    /// Devolve quantos bytes foram copiados (no máximo `out.len()`).
-    pub(crate) fn read(&self, bundle_id: u64, out: &mut [u8]) -> Option<usize> {
+    /// Tenta copiar para `out` o bloco publicado com a etiqueta `tag` (no máximo `out.len()` bytes).
+    pub(crate) fn snapshot(&self, tag: u64, out: &mut [u8]) -> Snapshot {
         for _ in 0..READ_ATTEMPTS {
             let s1 = self.seq.load(Ordering::Acquire);
             if s1 % 2 == 1 {
                 spin_loop();
                 continue;
             }
-            if self.bundle_id.load(Ordering::Relaxed) != bundle_id {
-                return None;
+            if self.tag.load(Ordering::Relaxed) != tag {
+                return Snapshot::Mismatch;
             }
-            let n = (self.len.load(Ordering::Relaxed) as usize).min(MAX_PARAM_BYTES).min(out.len());
+            let n = (self.len.load(Ordering::Relaxed) as usize).min(Self::MAX_BYTES).min(out.len());
             for (i, chunk) in out[..n].chunks_mut(4).enumerate() {
                 let word = self.words[i].load(Ordering::Relaxed).to_le_bytes();
                 chunk.copy_from_slice(&word[..chunk.len()]);
             }
             fence(Ordering::Acquire);
             if self.seq.load(Ordering::Relaxed) == s1 {
-                return (n > 0).then_some(n);
+                return Snapshot::Consistent { len: n };
             }
         }
-        None
+        Snapshot::Torn
     }
 
-    /// Identificador do efeito a que o bloco publicado pertence (0 se nunca foi publicado).
-    pub(crate) fn published_id(&self) -> u64 {
-        self.bundle_id.load(Ordering::Relaxed)
+    /// Copia para `out` o bloco com a etiqueta `tag`. `None` se não há bloco dessa etiqueta, se está
+    /// vazio ou se a leitura não conseguiu uma cópia consistente (o chamador tenta no próximo frame).
+    /// Devolve quantos bytes foram copiados (no máximo `out.len()`).
+    pub(crate) fn read(&self, tag: u64, out: &mut [u8]) -> Option<usize> {
+        match self.snapshot(tag, out) {
+            Snapshot::Consistent { len } if len > 0 => Some(len),
+            _ => None,
+        }
+    }
+
+    /// Número da publicação atual: muda a cada `publish`. Uma leitura barata para saber se algo mudou.
+    pub(crate) fn generation(&self) -> u32 {
+        self.seq.load(Ordering::Acquire) / 2
+    }
+
+    /// Etiqueta do bloco publicado (0 se nunca foi publicado).
+    pub(crate) fn published_tag(&self) -> u64 {
+        self.tag.load(Ordering::Relaxed)
     }
 
     #[cfg(test)]
@@ -143,7 +177,7 @@ mod tests {
         let mut out = [0u8; 8];
         assert_eq!(p.read(8, &mut out), None);
         assert_eq!(out, [0u8; 8], "nada é copiado");
-        assert_eq!(p.published_id(), 7);
+        assert_eq!(p.published_tag(), 7);
     }
 
     #[test]
@@ -166,7 +200,7 @@ mod tests {
     fn oversized_blocks_are_refused_and_leave_the_old_one() {
         let p = params();
         p.publish(1, &[1; 8]).unwrap();
-        assert_eq!(p.publish(1, &vec![0u8; MAX_PARAM_BYTES + 1]), Err(PublishError::TooLarge { len: MAX_PARAM_BYTES + 1 }));
+        assert_eq!(p.publish(1, &vec![0u8; MAX_PARAM_BYTES + 1]), Err(PublishError::TooLarge { len: MAX_PARAM_BYTES + 1, max: MAX_PARAM_BYTES }));
         let mut out = [0u8; 8];
         assert_eq!(p.read(1, &mut out), Some(8));
         assert_eq!(out, [1; 8]);
@@ -255,5 +289,42 @@ mod tests {
         let mut out = [0u8; 256];
         assert_eq!(p.read(1, &mut out), Some(256));
         assert!(out.iter().all(|&x| x == out[0]) && (out[0] == 0xAA || out[0] == 0x55), "o bloco final é de um dos escritores, inteiro");
+    }
+
+    #[test]
+    fn generation_changes_on_every_publication_and_only_then() {
+        let p = params();
+        let g0 = p.generation();
+        let mut out = [0u8; 4];
+        p.read(1, &mut out);
+        assert_eq!(p.generation(), g0, "ler não muda a geração");
+        p.publish(1, &[1; 4]).unwrap();
+        let g1 = p.generation();
+        assert_ne!(g0, g1);
+        p.publish(1, &[1; 4]).unwrap();
+        assert_ne!(g1, p.generation(), "mesmo conteúdo publicado de novo é outra publicação");
+    }
+
+    #[test]
+    fn snapshot_tells_empty_apart_from_mismatched() {
+        let p = params();
+        let mut out = [0u8; 8];
+        assert_eq!(p.snapshot(0, &mut out), Snapshot::Consistent { len: 0 }, "nunca publicado");
+        p.publish(4, &[]).unwrap();
+        assert_eq!(p.snapshot(4, &mut out), Snapshot::Consistent { len: 0 }, "publicado vazio (limpo)");
+        assert_eq!(p.snapshot(5, &mut out), Snapshot::Mismatch);
+        p.force_seq(1);
+        assert_eq!(p.snapshot(4, &mut out), Snapshot::Torn);
+    }
+
+    #[test]
+    fn a_selection_blob_is_smaller_and_enforces_its_own_limit() {
+        // SAFETY: atomics com todos os bits em zero são valores válidos.
+        let s: Box<Selection> = unsafe { Box::<Selection>::new_zeroed().assume_init() };
+        assert!(s.publish(1, &vec![b'x'; MAX_SELECTION_BYTES]).is_ok());
+        assert_eq!(
+            s.publish(1, &vec![b'x'; MAX_SELECTION_BYTES + 1]),
+            Err(PublishError::TooLarge { len: MAX_SELECTION_BYTES + 1, max: MAX_SELECTION_BYTES })
+        );
     }
 }

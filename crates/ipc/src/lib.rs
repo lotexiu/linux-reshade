@@ -9,11 +9,11 @@
 //! o diretório do estado precisa ser do próprio usuário (modo 0700) e o leitor só aceita um
 //! arquivo que também seja do próprio usuário.
 
-mod params;
+mod blob;
 
-pub use params::{MAX_PARAM_BYTES, PublishError};
+pub use blob::{MAX_PARAM_BYTES, MAX_SELECTION_BYTES, PublishError};
 
-use params::Params;
+use blob::{Params, Selection, Snapshot};
 use rustix::mm::{MapFlags, ProtFlags, mmap, munmap};
 use std::ffi::c_void;
 use std::fs::{self, File, OpenOptions};
@@ -24,7 +24,9 @@ use std::ptr::{self, NonNull};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 const MAGIC: u32 = 0x4C52_5348; // "LRSH"
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
+/// Etiqueta do bloco de seleção (o bloco de parâmetros usa o `bundle_id` do efeito).
+const SELECTION_TAG: u64 = 1;
 
 pub const FLAG_EFFECTS_ENABLED: u32 = 1 << 0;
 
@@ -37,14 +39,38 @@ struct State {
     flags: AtomicU32,
 }
 
-/// O arquivo inteiro: estado geral e bloco de parâmetros.
+/// O arquivo inteiro: estado geral, parâmetros do efeito e o efeito selecionado.
 #[repr(C)]
 struct Shared {
     state: State,
     params: Params,
+    selection: Selection,
 }
 
 const SIZE: usize = size_of::<Shared>();
+
+/// O que a leitura da seleção encontrou.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SelectionRead {
+    /// Nenhum efeito selecionado (nunca escolhido, ou limpo com `clear_selection`).
+    Cleared,
+    /// O caminho do bundle selecionado.
+    Path(String),
+    /// A leitura caiu no meio de uma escrita; tente de novo no próximo frame.
+    Unstable,
+}
+
+fn read_selection(blob: &Selection) -> SelectionRead {
+    let mut buf = [0u8; MAX_SELECTION_BYTES];
+    match blob.snapshot(SELECTION_TAG, &mut buf) {
+        Snapshot::Torn => SelectionRead::Unstable,
+        Snapshot::Mismatch | Snapshot::Consistent { len: 0 } => SelectionRead::Cleared,
+        Snapshot::Consistent { len } => match String::from_utf8(buf[..len].to_vec()) {
+            Ok(path) => SelectionRead::Path(path),
+            Err(_) => SelectionRead::Cleared, // só o nosso escritor grava aqui, e só UTF-8
+        },
+    }
+}
 
 /// Caminho do arquivo de estado.
 pub fn state_path() -> PathBuf {
@@ -94,6 +120,10 @@ impl Mapping {
 
     fn params(&self) -> &Params {
         &self.shared().params
+    }
+
+    fn selection(&self) -> &Selection {
+        &self.shared().selection
     }
 }
 
@@ -167,7 +197,23 @@ impl Writer {
 
     /// Para qual efeito está publicado o bloco de parâmetros (0 se nenhum).
     pub fn published_bundle(&self) -> u64 {
-        self.map.params().published_id()
+        self.map.params().published_tag()
+    }
+
+    /// Escolhe o efeito que a layer deve carregar: o caminho (de preferência absoluto) do bundle.
+    pub fn publish_selection(&self, bundle_dir: &str) -> Result<(), PublishError> {
+        self.map.selection().publish(SELECTION_TAG, bundle_dir.as_bytes())
+    }
+
+    /// Desfaz a escolha: a layer volta a usar o que vem do ambiente (`LINUX_RESHADE_BUNDLE`), se houver.
+    pub fn clear_selection(&self) {
+        // Um bloco vazio sempre cabe.
+        let _ = self.map.selection().publish(SELECTION_TAG, &[]);
+    }
+
+    /// O efeito atualmente selecionado, se houver.
+    pub fn selection(&self) -> SelectionRead {
+        read_selection(self.map.selection())
     }
 }
 
@@ -219,7 +265,18 @@ impl Reader {
     /// Para qual efeito está publicado o bloco de parâmetros (0 se nenhum). Permite distinguir "o bloco
     /// é de outro efeito" de "a leitura caiu no meio de uma escrita".
     pub fn published_bundle(&self) -> u64 {
-        self.map.params().published_id()
+        self.map.params().published_tag()
+    }
+
+    /// Muda a cada vez que o efeito selecionado é publicado. Uma leitura barata, para a layer olhar a
+    /// cada frame e só ler o caminho quando algo mudou.
+    pub fn selection_generation(&self) -> u32 {
+        self.map.selection().generation()
+    }
+
+    /// O efeito selecionado pelo app de controle.
+    pub fn read_selection(&self) -> SelectionRead {
+        read_selection(self.map.selection())
     }
 }
 
@@ -315,6 +372,56 @@ mod tests {
         let reader = Reader::open_at(&path).unwrap().expect("agora é do tamanho certo");
         assert!(!reader.effects_enabled(), "o arquivo antigo é reinicializado");
         assert_eq!(reader.read_params(1, &mut [0u8; 4]), Some(4));
+    }
+
+    #[test]
+    fn the_selected_effect_travels_to_the_reader_and_can_be_cleared() {
+        let path = temp_path("selection");
+        let writer = Writer::create_at(&path).unwrap();
+        let reader = Reader::open_at(&path).unwrap().unwrap();
+        assert_eq!(reader.read_selection(), SelectionRead::Cleared, "nada escolhido ainda");
+
+        let g0 = reader.selection_generation();
+        writer.publish_selection("/jogos/efeitos/Sepia-1920x1080").unwrap();
+        assert_eq!(reader.read_selection(), SelectionRead::Path("/jogos/efeitos/Sepia-1920x1080".into()));
+        assert_eq!(writer.selection(), reader.read_selection());
+        let g1 = reader.selection_generation();
+        assert_ne!(g0, g1, "a geração muda ao publicar");
+        assert_eq!(reader.selection_generation(), g1, "e não muda sozinha");
+
+        writer.clear_selection();
+        assert_eq!(reader.read_selection(), SelectionRead::Cleared);
+        assert_ne!(reader.selection_generation(), g1, "limpar também é uma mudança");
+    }
+
+    #[test]
+    fn a_path_with_non_ascii_characters_and_the_size_limit() {
+        let path = temp_path("selection-utf8");
+        let writer = Writer::create_at(&path).unwrap();
+        let reader = Reader::open_at(&path).unwrap().unwrap();
+        writer.publish_selection("/home/são josé/efeitos/Sépia-1920x1080").unwrap();
+        assert_eq!(reader.read_selection(), SelectionRead::Path("/home/são josé/efeitos/Sépia-1920x1080".into()));
+        let huge = "a".repeat(MAX_SELECTION_BYTES + 1);
+        assert!(writer.publish_selection(&huge).is_err());
+        assert_eq!(
+            reader.read_selection(),
+            SelectionRead::Path("/home/são josé/efeitos/Sépia-1920x1080".into()),
+            "a recusa não estraga a seleção anterior"
+        );
+    }
+
+    #[test]
+    fn selection_and_params_are_independent() {
+        let path = temp_path("independent");
+        let writer = Writer::create_at(&path).unwrap();
+        let reader = Reader::open_at(&path).unwrap().unwrap();
+        writer.publish_params(7, &[1, 2, 3, 4]).unwrap();
+        writer.publish_selection("/a").unwrap();
+        writer.publish_params(7, &[5, 6, 7, 8]).unwrap();
+        assert_eq!(reader.read_selection(), SelectionRead::Path("/a".into()));
+        let mut out = [0u8; 4];
+        assert_eq!(reader.read_params(7, &mut out), Some(4));
+        assert_eq!(out, [5, 6, 7, 8]);
     }
 
     #[test]
