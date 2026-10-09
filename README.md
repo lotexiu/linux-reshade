@@ -3,8 +3,7 @@
 Pós-processamento de jogos **nativo no Linux**, com uso quase idêntico ao ReShade do Windows, e
 com acesso ao **depth buffer** (o ponto que as alternativas atuais no Linux não cobrem bem).
 
-> Estado: **só anotações** (2026-10-08). Nenhum código, nenhum `cargo init`, nenhum repositório git
-> ainda. Este diretório existe para a ideia não se perder. Ver `ROADMAP.md` e `DEPENDENCIAS.md`.
+> Estado: **marco 1 em andamento** (2026-10-09): a layer passthrough já carrega no `vkcube`. Rust 1.99 via asdf (`.tool-versions`), `scripts/dev.sh` criado; workspace Cargo com `vk-layer` e `layer`. Ver `ROADMAP.md` e `DEPENDENCIAS.md`.
 
 ## Por que existe
 
@@ -28,6 +27,11 @@ reutilizáveis** (ver `DEPENDENCIAS.md`). As libs nascem da necessidade do proje
 | **FX como entrada** (compatibilidade); formato nativo próprio **depois** | A biblioteca de efeitos em FX é o valor. Formato novo só quando o runtime já funcionar. |
 | Controle por **processo separado** (socket Unix / memória compartilhada) | Layer não recebe input, e no Wayland não há captura global. App de controle (egui) edita parâmetros e presets e recompila quando `#define` muda. |
 | Interface do backend atrás de uma **trait** | Mantém o núcleo (grafo de efeitos, parâmetros, presets) independente de Vulkan. |
+| **Efeitos rodam na layer; só controle e UI ficam fora** (2026-10-09) | Passes gravados no mesmo command buffer, antes do `vkQueuePresentKHR`: zero frame de atraso (sem ghosting). Processo separado exigiria dma-buf + semáforos e pelo menos um frame de latência. Parâmetros vão por memória compartilhada, lidos uma vez por frame. Socket só para comandos raros. |
+| **A layer não toca em input** (2026-10-09) | Reduz superfície no processo do jogo (anti-cheat) e simplifica a layer. Captura de teclado/mouse e atalhos ficam no app de controle. |
+| **Wayland é requisito**, X11 é o ambiente atual (2026-10-09) | Atalhos globais precisam de backends trocáveis atrás de uma trait: X11 (XInput2/XGrabKey), portal GlobalShortcuts e/ou evdev no Wayland. Verificado em 2026-10-09 (GNOME 50.1): o frontend (`GlobalShortcuts` v1) e o backend `xdg-desktop-portal-gnome` expõem a interface; o comportamento real (diálogo de permissão, atribuição da tecla pelo usuário, `app_id` de processo fora de sandbox) ainda não foi testado. |
+| Scopes de atalho: `Global` e `Janela visível` | `Global` = atalho registrado no sistema. `Janela visível` = eventos normais da janela do app de controle quando em foco. |
+| **Depth é opt-in por jogo**, desligado por padrão (2026-10-09) | É a feature mais sensível para anti-cheat (permite efeitos que "enxergam" através de paredes). |
 | OpenGL nativo **fica para depois** | Não há mecanismo de layer. Exigiria `LD_PRELOAD` e hook de `glXSwapBuffers`/`eglSwapBuffers`, ou Zink. |
 
 ## Arquitetura alvo
