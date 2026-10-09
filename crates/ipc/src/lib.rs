@@ -1,14 +1,19 @@
 //! Bloco de memória compartilhada entre o app de controle e a layer.
 //!
-//! O app de controle cria `$XDG_RUNTIME_DIR/linux-reshade/state` e escreve; a layer só mapeia
-//! para leitura, uma vez por frame, sem syscall nem lock (só `load` atômico). O arquivo nunca é
-//! apagado nem recriado, então um mapeamento aberto continua válido se o app de controle reiniciar.
+//! O app de controle cria `/dev/shm/linux-reshade-<uid>/state` e escreve; a layer só mapeia para
+//! leitura, uma vez por frame, sem syscall nem lock (só `load` atômico). O arquivo nunca é apagado
+//! nem recriado, então um mapeamento aberto continua válido se o app de controle reiniciar.
+//!
+//! Por que `/dev/shm` e não `$XDG_RUNTIME_DIR`: os containers da Steam (pressure-vessel) não expõem
+//! o `/run/user/<uid>` do host, mas expõem `/dev/shm`. Como esse diretório é de todos os usuários,
+//! o diretório do estado precisa ser do próprio usuário (modo 0700) e o leitor só aceita um
+//! arquivo que também seja do próprio usuário.
 
 use rustix::mm::{MapFlags, ProtFlags, mmap, munmap};
 use std::ffi::c_void;
 use std::fs::{self, File, OpenOptions};
 use std::io;
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::PathBuf;
 use std::ptr::{self, NonNull};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -31,10 +36,21 @@ const SIZE: usize = size_of::<State>();
 
 /// Caminho do arquivo de estado.
 pub fn state_path() -> PathBuf {
-    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/tmp"));
-    runtime.join("linux-reshade").join("state")
+    let uid = rustix::process::getuid().as_raw();
+    PathBuf::from(format!("/dev/shm/linux-reshade-{uid}")).join("state")
+}
+
+/// Cria o diretório do estado (se preciso) e garante que é do usuário atual e privado.
+fn ensure_private_dir(dir: &std::path::Path) -> io::Result<()> {
+    fs::create_dir_all(dir)?;
+    let meta = fs::metadata(dir)?;
+    if meta.uid() != rustix::process::getuid().as_raw() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("{} pertence a outro usuário", dir.display()),
+        ));
+    }
+    fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
 }
 
 /// Mapeamento de `SIZE` bytes. `munmap` no `Drop`.
@@ -81,8 +97,7 @@ impl Writer {
 
     pub fn create_at(path: &std::path::Path) -> io::Result<Self> {
         if let Some(dir) = path.parent() {
-            fs::create_dir_all(dir)?;
-            fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
+            ensure_private_dir(dir)?;
         }
         let file = OpenOptions::new().read(true).write(true).create(true).mode(0o600).open(path)?;
         let fresh = file.metadata()?.len() < SIZE as u64;
@@ -138,7 +153,11 @@ impl Reader {
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e),
         };
-        if file.metadata()?.len() < SIZE as u64 {
+        let meta = file.metadata()?;
+        if meta.uid() != rustix::process::getuid().as_raw() {
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "estado pertence a outro usuário"));
+        }
+        if meta.len() < SIZE as u64 {
             return Ok(None); // o criador ainda não dimensionou
         }
         let map = Mapping::new(&file, false)?;
