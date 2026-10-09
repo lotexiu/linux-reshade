@@ -12,7 +12,7 @@ Marcos em ordem. Cada um deve rodar de ponta a ponta antes do próximo. Atualiza
    log registra cada Present, e um processo separado liga/desliga uma flag em memória compartilhada
    (inverter cores quando ligada) com atalho global. Inclui manifesto JSON, ativação por variável de ambiente (para não rodar em todo processo
    Vulkan) e teste dentro do container do Steam (pressure-vessel).
-2. **Passe fullscreen fixo.** Ler o swapchain e escrever nele (por exemplo inverter cores).
+2. **Passe fullscreen fixo.** *(feito em 2026-10-09: crate `postfx` + integração na layer; Ctrl+Shift+F10 alterna entre normal e invertido no `vkcube`; `scripts/dev.sh validate` roda com a validation layer sem mensagens. Pendente: espaço de cor sRGB, desempenho medido, jogos reais.)* Ler o swapchain e escrever nele (por exemplo inverter cores).
 3. **Bundle + um `.fx` simples** (só cor, sem depth). Define o formato do manifesto: passes,
    texturas, samplers, uniforms, técnicas, anotações para a UI, semânticas `COLOR` e `DEPTH`.
 4. **App de controle** conversando por socket: parâmetros, presets, recompilação quando um

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Utilitário de desenvolvimento. Idempotente; serve para trocar de máquina sem esforço.
-# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|smoke-steam|hotkey|shaders|placement|logs> [args]
+# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|hotkey|shaders|placement|logs> [args]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -129,17 +129,28 @@ smoke_with() {
   local lrctl="$ROOT/target/release/lrctl"
   "$lrctl" off >/dev/null
   : >"$LOG_FILE"
-  env "$ENABLE_VAR=1" LINUX_RESHADE_LOG="$LOG_FILE" timeout "$limit" "$@" --c 1800 >/dev/null 2>&1 &
+  # SMOKE_VALIDATE=1 liga a validation layer do Vulkan; a saída do vkcube fica em $LOG_FILE.out
+  local validate_env=()
+  [ "${SMOKE_VALIDATE:-0}" = 1 ] && validate_env=("VK_LOADER_LAYERS_ENABLE=*validation*")
+  env "$ENABLE_VAR=1" LINUX_RESHADE_LOG="$LOG_FILE" "${validate_env[@]}" timeout "$limit" "$@" --c 1800 >"$LOG_FILE.out" 2>&1 &
   local pid=$!
   # espera o primeiro present (até ~15 s) antes de mexer na flag
   for _ in $(seq 1 150); do grep -q "vkQueuePresentKHR #1$" "$LOG_FILE" 2>/dev/null && break; sleep 0.1; done
+  # liga, desliga, liga de novo (reaproveita os recursos já criados) e desliga
   sleep 1; "$lrctl" on >/dev/null
-  sleep 2; "$lrctl" off >/dev/null
+  sleep 1.5; "$lrctl" off >/dev/null
+  sleep 1; "$lrctl" on >/dev/null
+  sleep 1.5; "$lrctl" off >/dev/null
   local rc=0; wait "$pid" || rc=$?
   [ "$rc" = 0 ] || warn "o vkcube terminou com código $rc (124 = estourou o timeout; 143/137 = morto por sinal)"
   local ok=1 patterns=("vkCreateInstance ok" "vkCreateDevice ok" "vkQueuePresentKHR #1$" \
-             "estado compartilhado aberto" "efeitos LIGADOS" "efeitos DESLIGADOS")
+             "estado compartilhado aberto" "efeitos LIGADOS" "efeitos DESLIGADOS" "efeito criado")
   [ "$strict" = 1 ] && patterns+=("vkDestroyInstance")
+  if [ "${SMOKE_VALIDATE:-0}" = 1 ]; then
+    local issues; issues=$(grep -ciE "VUID|Validation (Error|Warning)" "$LOG_FILE.out" || true)
+    if [ "$issues" = 0 ]; then printf '  ok     validation sem mensagens\n'; else
+      printf '  FALHOU validation: %s mensagens (veja %s)\n' "$issues" "$LOG_FILE.out"; ok=0; fi
+  fi
   for pat in "${patterns[@]}"; do
     if grep -q "$pat" "$LOG_FILE"; then printf '  ok     %s\n' "$pat"; else printf '  FALHOU %s\n' "$pat"; ok=0; fi
   done
@@ -148,6 +159,9 @@ smoke_with() {
 
 # --wsi wayland explícito: o caminho XWayland (--wsi xcb) trava nesta máquina mesmo sem a layer.
 cmd_smoke() { smoke_with "host" 1 60 vkcube --wsi wayland; }
+
+# O mesmo, com a validation layer: falha se ela acusar qualquer uso incorreto da API.
+cmd_validate() { SMOKE_VALIDATE=1 smoke_with "host + validation" 1 60 vkcube --wsi wayland; }
 
 # Mesmo teste, mas dentro do container soldier da Steam (pressure-vessel).
 cmd_smoke_steam() {
@@ -224,10 +238,11 @@ case "${1:-}" in
   uninstall) cmd_uninstall ;;
   run)       shift; cmd_run "$@" ;;
   smoke)     cmd_smoke ;;
+  validate)  cmd_validate ;;
   smoke-steam) cmd_smoke_steam ;;
   hotkey)    cmd_hotkey ;;
   shaders)   cmd_shaders ;;
   placement) shift; cmd_placement "$@" ;;
   logs)      shift; cmd_logs "$@" ;;
-  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|smoke-steam|hotkey|shaders|placement|logs>" >&2; exit 2 ;;
+  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|hotkey|shaders|placement|logs>" >&2; exit 2 ;;
 esac
