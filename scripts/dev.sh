@@ -77,6 +77,11 @@ cmd_install() {
   cmd_build -p linux-reshade-layer
   local lib="$ROOT/target/release/$LAYER_LIB"
   [ -f "$lib" ] || { warn "não achei $lib"; exit 1; }
+  # Após um travamento do PC o .so pode ficar zerado e o Cargo não o refaz; o loader só diz "invalid ELF header".
+  if [ "$(head -c 4 "$lib" | tail -c 3)" != "ELF" ]; then
+    warn "$lib está corrompido; refazendo"
+    (cd "$ROOT" && cargo clean -p linux-reshade-layer --release) && cmd_build -p linux-reshade-layer
+  fi
   mkdir -p "$MANIFEST_DIR"
   cat >"$MANIFEST" <<EOF
 {
