@@ -2,10 +2,12 @@
 //!
 //! - [`proc_addr`]: negociação com o loader e as tabelas `vkGet*ProcAddr`
 //! - [`instance`], [`device`], [`swapchain`], [`present`]: um módulo por grupo de comandos
+//! - [`effect`]: ciclo de vida do efeito (postfx) de cada swapchain
 //! - [`state`]: dados por instance/device; [`control`]: estado escrito pelo app de controle
 
 mod control;
 mod device;
+mod effect;
 mod instance;
 mod log;
 mod present;

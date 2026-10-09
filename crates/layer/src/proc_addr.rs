@@ -25,7 +25,10 @@ fn intercept_device(name: &[u8]) -> vk::PFN_vkVoidFunction {
     match name {
         b"vkGetDeviceProcAddr" => erase(get_device_proc_addr as vk::PFN_vkGetDeviceProcAddr),
         b"vkDestroyDevice" => erase(device::destroy_device as vk::PFN_vkDestroyDevice),
+        b"vkGetDeviceQueue" => erase(device::get_device_queue as vk::PFN_vkGetDeviceQueue),
+        b"vkGetDeviceQueue2" => erase(device::get_device_queue2 as vk::PFN_vkGetDeviceQueue2),
         b"vkCreateSwapchainKHR" => erase(swapchain::create_swapchain as vk::PFN_vkCreateSwapchainKHR),
+        b"vkDestroySwapchainKHR" => erase(swapchain::destroy_swapchain as vk::PFN_vkDestroySwapchainKHR),
         b"vkQueuePresentKHR" => erase(present::queue_present as vk::PFN_vkQueuePresentKHR),
         _ => None,
     }

@@ -33,7 +33,8 @@ pub unsafe extern "system" fn create_instance(
         let handle = *p_instance;
         // Carrega as funções a partir do próximo elo da cadeia (não do loader).
         let instance = ash::Instance::load(&ash::StaticFn { get_instance_proc_addr: next_gipa }, handle);
-        INSTANCES.insert(dispatch_key(handle.as_raw()), InstanceData { instance, next_gipa });
+        let surface = ash::khr::surface::InstanceFn::load(|name| std::mem::transmute(next_gipa(handle, name.as_ptr())));
+        INSTANCES.insert(dispatch_key(handle.as_raw()), InstanceData { instance, surface, next_gipa });
 
         let (app_name, api) = match (*p_create_info).p_application_info.as_ref() {
             Some(a) if !a.p_application_name.is_null() => {

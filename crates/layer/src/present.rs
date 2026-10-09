@@ -1,6 +1,7 @@
-//! `vkQueuePresentKHR`.
+//! `vkQueuePresentKHR`: ponto onde o efeito é aplicado, no mesmo frame que o jogo acabou de desenhar.
 
 use crate::control::effects_enabled;
+use crate::effect;
 use crate::log::log;
 use crate::state::DEVICES;
 use ash::vk::{self, Handle};
@@ -29,7 +30,23 @@ pub unsafe extern "system" fn queue_present(
         if data.last_effects.swap(enabled, Ordering::Relaxed) != enabled {
             log!("efeitos {} (present #{n})", if enabled { "LIGADOS" } else { "DESLIGADOS" });
         }
-        let result = (data.swapchain.queue_present_khr)(queue, p_present_info);
+
+        // Com o efeito aplicado, o present passa a esperar o semáforo do efeito, não os do jogo
+        // (que o submit do efeito já consumiu).
+        let effect_semaphore = if enabled { effect::apply(&data, queue, &*p_present_info) } else { None };
+        let wait = [effect_semaphore.unwrap_or_default()];
+        let patched;
+        let p_info = if effect_semaphore.is_some() {
+            let mut copy = *p_present_info;
+            copy.wait_semaphore_count = 1;
+            copy.p_wait_semaphores = wait.as_ptr();
+            patched = copy;
+            &patched as *const vk::PresentInfoKHR<'_>
+        } else {
+            p_present_info
+        };
+
+        let result = (data.swapchain.queue_present_khr)(queue, p_info);
         if result != vk::Result::SUCCESS && data.odd_presents.fetch_add(1, Ordering::Relaxed) < ODD_PRESENT_LOG_MAX {
             log!("vkQueuePresentKHR #{n} devolveu {}", result.as_raw());
         }
