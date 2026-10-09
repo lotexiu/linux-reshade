@@ -30,6 +30,7 @@ pub unsafe extern "system" fn create_instance(
             return result;
         }
 
+        std::sync::LazyLock::force(&crate::effect::START); // marca o início para o `timer`
         let handle = *p_instance;
         // Carrega as funções a partir do próximo elo da cadeia (não do loader).
         let instance = ash::Instance::load(&ash::StaticFn { get_instance_proc_addr: next_gipa }, handle);

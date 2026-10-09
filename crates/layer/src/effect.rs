@@ -4,8 +4,24 @@
 use crate::log::log;
 use crate::state::DeviceData;
 use ash::vk::{self, Handle};
-use postfx::effect::Target;
+use postfx::effect::{FrameInfo, Target, utc_date};
 use postfx::Effect;
+use std::sync::LazyLock;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+/// Início da contagem do `source = "timer"` (aproximadamente o início do jogo: é tocado na criação da instância).
+pub static START: LazyLock<Instant> = LazyLock::new(Instant::now);
+
+/// Valores do frame que o runtime fornece aos uniforms com `source`.
+fn frame_info(now: Instant, previous: Option<Instant>, frame_count: u64) -> FrameInfo {
+    let unix = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    FrameInfo {
+        time_ms: now.duration_since(*START).as_secs_f32() * 1000.0,
+        frame_time_ms: previous.map(|p| now.duration_since(p).as_secs_f32() * 1000.0).unwrap_or(0.0),
+        frame_count: frame_count as u32,
+        date: utc_date(unix),
+    }
+}
 
 /// Recursos que só existem depois do primeiro present com os efeitos ligados.
 struct Built {
@@ -35,6 +51,8 @@ pub struct SwapchainFx {
     /// não é suportado (por exemplo, mais de uma camada).
     usable: bool,
     fx: Fx,
+    /// Quando o present anterior deste swapchain começou (para o `frametime`).
+    last_present: Option<Instant>,
 }
 
 // SAFETY: contém handles do Vulkan (inteiros/ponteiros opacos) e é sempre acessado sob o `Mutex`
@@ -43,7 +61,7 @@ unsafe impl Send for SwapchainFx {}
 
 impl SwapchainFx {
     pub fn new(images: Vec<vk::Image>, format: vk::Format, extent: vk::Extent2D, usable: bool) -> Self {
-        Self { images, format, extent, usable, fx: Fx::Unbuilt }
+        Self { images, format, extent, usable, fx: Fx::Unbuilt, last_present: None }
     }
 
     /// Libera os recursos de GPU.
@@ -149,6 +167,9 @@ pub unsafe fn apply(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInfoK
             fx.fx = match fx.build(data, queue, family) {
                 Ok(built) => {
                     log!("efeito criado para o swapchain {:#x} ({} imagens)", swapchain.as_raw(), fx.images.len());
+                    for ignored in built.effect.ignored_sources() {
+                        log!("uniform sem fonte no runtime (fica no valor padrão): {ignored}");
+                    }
                     Fx::Ready(built)
                 }
                 Err(why) => {
@@ -157,7 +178,9 @@ pub unsafe fn apply(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInfoK
                 }
             };
         }
-        let Fx::Ready(built) = &fx.fx else { return None };
+        let now = Instant::now();
+        let previous = fx.last_present.replace(now);
+        let Fx::Ready(built) = &mut fx.fx else { return None };
 
         // A execução anterior desta imagem precisa ter terminado antes de reenviar o mesmo buffer.
         let fence = built.fences[index];
@@ -165,6 +188,9 @@ pub unsafe fn apply(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInfoK
             log!("efeito pulado: a execução anterior da imagem {index} não terminou");
             return None;
         }
+
+        // A fence garante que a GPU terminou com o buffer de uniforms desta imagem: pode reescrevê-lo.
+        built.effect.update_sources(index, &frame_info(now, previous, data.presents.load(std::sync::atomic::Ordering::Relaxed)));
 
         let waits = std::slice::from_raw_parts(info.p_wait_semaphores, info.wait_semaphore_count as usize);
         // ALL_COMMANDS: nada do efeito pode começar antes de o jogo terminar de desenhar o frame.
