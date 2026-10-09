@@ -1,0 +1,10 @@
+[package]
+name = "shortcuts-portal"
+description = "Backend de atalhos globais via org.freedesktop.portal.GlobalShortcuts (Wayland/GNOME/KDE)"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+shortcuts = { path = "../shortcuts" }
+zbus = "5"
