@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Utilitário de desenvolvimento. Idempotente; serve para trocar de máquina sem esforço.
-# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-golden|placement|logs> [args]
+# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-golden|placement|logs> [args]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -27,11 +27,11 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # Pacotes de sistema por gerenciador. Rust não entra aqui (asdf/rustup, sem root).
 pkg_cmd() {
   if have apt-get; then
-    echo "sudo apt-get install -y build-essential pkg-config vulkan-tools vulkan-validationlayers glslang-tools spirv-tools"
+    echo "sudo apt-get install -y build-essential pkg-config vulkan-tools vulkan-validationlayers glslang-tools spirv-tools libgtk-4-dev"
   elif have pacman; then
-    echo "sudo pacman -S --needed base-devel pkgconf vulkan-tools vulkan-validation-layers glslang spirv-tools"
+    echo "sudo pacman -S --needed base-devel pkgconf vulkan-tools vulkan-validation-layers glslang spirv-tools gtk4"
   elif have dnf; then
-    echo "sudo dnf install -y gcc make pkgconf-pkg-config vulkan-tools vulkan-validation-layers glslang spirv-tools"
+    echo "sudo dnf install -y gcc make pkgconf-pkg-config vulkan-tools vulkan-validation-layers glslang spirv-tools gtk4-devel"
   else
     echo ""
   fi
@@ -49,7 +49,7 @@ cmd_setup() {
   local cmd; cmd="$(pkg_cmd)"
   if [ -z "$cmd" ]; then
     warn "Gerenciador de pacotes não reconhecido. Instale manualmente: compilador C, vulkan-tools (vkcube)."
-  elif have cc && have vkcube; then
+  elif have cc && have vkcube && pkg-config --exists gtk4 2>/dev/null; then
     say "Dependências de sistema já presentes"
   else
     say "Faltam pacotes de sistema (precisa de root):"
@@ -68,6 +68,7 @@ cmd_doctor() {
   printf '  distro:      %s\n' "$(. /etc/os-release && echo "$PRETTY_NAME")"
   printf '  kernel:      %s\n' "$(uname -r)"
   printf '  gpu:         %s\n' "$(lspci 2>/dev/null | grep -iE 'vga|3d' | sed 's/.*: //' | paste -sd';' || echo '?')"
+  if pkg-config --exists gtk4 2>/dev/null; then printf '  %-12s ok (%s)\n' gtk4 "$(pkg-config --modversion gtk4)"; else printf '  %-12s \033[1;31mFALTA\033[0m (libgtk-4-dev)\n' gtk4; fi
   for t in rustc cargo cc vkcube vulkaninfo glslangValidator spirv-val; do
     if have "$t"; then printf '  %-12s ok\n' "$t"; else printf '  %-12s \033[1;31mFALTA\033[0m\n' "$t"; fi
   done
@@ -257,6 +258,52 @@ cmd_smoke_auto() {
   [ "$ok" = 1 ] && say "smoke (auto): passou" || { warn "smoke (auto): falhou (logs: $LOG_FILE e $cache/watch.log)"; exit 1; }
 }
 
+# Abre a interface gráfica (compila se preciso).
+cmd_panel() {
+  cmd_build -p linux-reshade-gui -p linux-reshade-control >/dev/null
+  exec "$ROOT/target/release/lrpanel" "$@"
+}
+
+# Teste de ponta a ponta da interface: um vkcube de verdade com a layer, o vigia, e a interface escolhendo o
+# Sépia e mantendo a janela aberta. O script confere, de fora, que o jogo ficou "pronto" e que o efeito foi construído.
+cmd_panel_smoke() {
+  say "smoke (interface): abre um vkcube e a janela do lrpanel por ~10 s; evite mexer em janelas até terminar"
+  cmd_install
+  cmd_build -p linux-reshade-control -p linux-reshade-gui
+  local lrctl="$ROOT/target/release/lrctl" panel="$ROOT/target/release/lrpanel" cache; cache="$(mktemp -d)"
+  export LINUX_RESHADE_CACHE="$cache"
+  SMOKE_PIDS=()
+  trap smoke_auto_cleanup EXIT
+  "$lrctl" off >/dev/null; "$lrctl" use none >/dev/null
+  : >"$LOG_FILE"
+  "$lrctl" watch >"$cache/watch.log" 2>&1 &
+  SMOKE_PIDS+=($!)
+  env -u LINUX_RESHADE_BUNDLE "$ENABLE_VAR=1" LINUX_RESHADE_LOG="$LOG_FILE" timeout 60 vkcube --wsi wayland --width 500 --height 500 --c 2400 >/dev/null 2>&1 &
+  SMOKE_PIDS+=($!)
+
+  local ok=1
+  check() { if eval "$2"; then printf '  ok     %s\n' "$1"; else printf '  FALHOU %s\n' "$1"; ok=0; fi; }
+  wait_for() { for _ in $(seq 1 100); do eval "$1" && return 0; sleep 0.1; done; return 1; }
+
+  wait_for '"$lrctl" layers | grep -q 500x500' || true
+  # 1. a interface, aberta por 7 s com o Sépia escolhido, e uma captura de tela
+  "$panel" --effect Sepia --screenshot "$cache/painel.png" --hold 7000 >"$cache/panel.log" 2>&1 &
+  local panel_pid=$!
+  check "a interface escolheu o efeito (visível ao lrctl)" 'wait_for '"'"'"$lrctl" current | grep -q Sepia'"'"
+  check "o jogo ficou pronto para o efeito" 'wait_for '"'"'"$lrctl" layers | grep -q pronto'"'"
+  "$lrctl" on >/dev/null; sleep 1.2; "$lrctl" off >/dev/null
+  check "o efeito foi construído no jogo" 'grep -q "efeito criado" "$LOG_FILE"'
+  wait "$panel_pid" || true
+  check "a captura da janela foi gravada" '[ -s "$cache/painel.png" ]'
+  check "a interface deixou a escolha como estava" '"$lrctl" current | grep -q "nenhum efeito escolhido"'
+
+  # 2. a interface acionada como um usuário (lista, slider, restaurar, interruptor)
+  check "o teste de fumaça da interface" '"$panel" --smoke Sepia >"$cache/smoke.log" 2>&1'
+  [ -s "$cache/smoke.log" ] && sed 's/^/        /' "$cache/smoke.log"
+  printf '  captura: %s\n' "$cache/painel.png"
+  [ "$ok" = 1 ] && say "smoke (interface): passou" || { warn "smoke (interface): falhou (logs em $cache)"; exit 1; }
+}
+
 # Mesmo teste, mas dentro do container soldier da Steam (pressure-vessel).
 cmd_smoke_steam() {
   [ -x "$STEAM_SOLDIER" ] || { warn "não achei $STEAM_SOLDIER (Steam Linux Runtime soldier instalado?)"; exit 1; }
@@ -351,6 +398,8 @@ case "${1:-}" in
   validate)  cmd_validate ;;
   smoke-steam) cmd_smoke_steam ;;
   smoke-auto) cmd_smoke_auto ;;
+  panel)     shift; cmd_panel "$@" ;;
+  panel-smoke) cmd_panel_smoke ;;
   hotkey)    cmd_hotkey ;;
   fx-tool)   cmd_fx_tool ;;
   game-options) shift; cmd_game_options "$@" ;;
@@ -359,5 +408,5 @@ case "${1:-}" in
   fx-golden) cmd_fx_golden ;;
   placement) shift; cmd_placement "$@" ;;
   logs)      shift; cmd_logs "$@" ;;
-  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-golden|placement|logs>" >&2; exit 2 ;;
+  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-golden|placement|logs>" >&2; exit 2 ;;
 esac
