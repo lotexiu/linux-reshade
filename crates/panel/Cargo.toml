@@ -1,0 +1,11 @@
+[package]
+name = "panel"
+description = "Modelo da interface gráfica, independente de toolkit: efeitos, jogos e os controles de cada parâmetro"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+control-core = { path = "../control-core" }
+fx-bundle = { path = "../fx-bundle" }
+ipc = { path = "../ipc" }
