@@ -13,3 +13,4 @@ path = "src/main.rs"
 ipc = { path = "../ipc" }
 shortcuts = { path = "../shortcuts" }
 shortcuts-portal = { path = "../shortcuts-portal" }
+fx-bundle = { path = "../fx-bundle" }
