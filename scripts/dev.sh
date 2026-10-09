@@ -151,7 +151,8 @@ cmd_hotkey() {
   local daemon=$!
   env "$ENABLE_VAR=1" LINUX_RESHADE_LOG="$LOG_FILE" timeout 90 vkcube --c 5400 >/dev/null 2>&1 &
   local cube=$!
-  trap 'kill "$daemon" "$cube" 2>/dev/null || true' EXIT
+  # aspas duplas: expande já, porque as variáveis locais não existem mais quando o trap roda
+  trap "kill $daemon $cube 2>/dev/null || true" EXIT
   for _ in $(seq 1 100); do grep -q "atalho" "$daemon_log" && break; sleep 0.2; done
   cat "$daemon_log"
   say "aperte o atalho acima (aceite o diálogo do GNOME se aparecer); aguardando até 60 s"
