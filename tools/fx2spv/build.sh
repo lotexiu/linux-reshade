@@ -34,6 +34,18 @@ fetch() {
 fetch reshade "$RESHADE_URL" "$RESHADE_COMMIT" source
 fetch spirv-headers "$SPIRV_HEADERS_URL" "$SPIRV_HEADERS_COMMIT" include
 
+# Remendos nossos sobre o ReShade fixado (tools/fx2spv/patches/*.patch), aplicados uma vez por checkout.
+for patch in "$HERE"/patches/*.patch; do
+  [ -f "$patch" ] || continue
+  if git -C "$TP/reshade" apply --check "$patch" 2>/dev/null; then
+    git -C "$TP/reshade" apply "$patch"
+    echo "remendo aplicado: $(basename "$patch")"
+  elif ! git -C "$TP/reshade" apply --check --reverse "$patch" 2>/dev/null; then
+    echo "o remendo $(basename "$patch") não se aplica ao ReShade fixado" >&2
+    exit 1
+  fi
+done
+
 SRC="$TP/reshade/source"
 FILES=(effect_lexer effect_parser_exp effect_parser_stmt effect_preprocessor effect_symbol_table effect_expression effect_codegen_spirv)
 OBJS=()

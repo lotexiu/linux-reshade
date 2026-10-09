@@ -35,4 +35,15 @@ for fx in "$ROOT"/effects/*.fx; do check "$fx"; done
 for name in "$@"; do
   if [ -f "$LEGACY/Shaders/$name.fx" ]; then check "$LEGACY/Shaders/$name.fx"; else check "$SLIM/Shaders/$name.fx"; fi
 done
+# #include escrito para o Windows (barra invertida, maiúsculas trocadas) tem de achar o arquivo (remendo em patches/).
+inc_dir="$OUT/include-windows"; rm -rf "$inc_dir"; mkdir -p "$inc_dir/Sub"
+printf 'float4 cor() { return float4(1.0, 0.5, 0.25, 1.0); }\n' > "$inc_dir/Sub/Cor.fxh"
+cat > "$inc_dir/Teste.fx" <<'FX'
+#include ".\sub\COR.fxh"
+#include "reshade.fxh"
+float4 PS_Teste(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return cor() * tex2D(ReShade::BackBuffer, uv); }
+technique Teste { pass { VertexShader = PostProcessVS; PixelShader = PS_Teste; } }
+FX
+check "$inc_dir/Teste.fx"
+
 exit $fail

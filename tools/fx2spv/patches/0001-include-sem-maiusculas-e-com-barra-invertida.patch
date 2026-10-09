@@ -1,0 +1,70 @@
+diff --git a/source/effect_preprocessor.cpp b/source/effect_preprocessor.cpp
+index 626d718..3ad24a4 100644
+--- a/source/effect_preprocessor.cpp
++++ b/source/effect_preprocessor.cpp
+@@ -709,6 +709,38 @@ void reshadefx::preprocessor::parse_pragma()
+ 	_output += "_Pragma(\"" + pragma + "\")\n";
+ }
+ 
++// linux-reshade: os efeitos foram escritos no Windows, onde `\` separa pastas e maiúsculas não contam
++// (`#include ".\\Pasta\\Arquivo.fxh"`, `Reshade.fxh`). Aqui `\` vira `/` e o nome é procurado sem diferenciar
++// maiúsculas, componente por componente. Devolve vazio se não achar.
++static std::filesystem::path find_ignoring_case(const std::filesystem::path &base, const std::filesystem::path &relative)
++{
++	std::error_code ec;
++	std::filesystem::path current = base;
++	for (const std::filesystem::path &part : relative)
++	{
++		if (part == "." || part.empty())
++			continue;
++		if (part == "..")
++		{
++			current = current.parent_path();
++			continue;
++		}
++		if (std::filesystem::exists(current / part, ec))
++		{
++			current /= part;
++			continue;
++		}
++		const auto lower = [](std::string text) { for (char &c : text) c = (c >= 'A' && c <= 'Z') ? c + 32 : c; return text; };
++		const std::string wanted = lower(part.u8string());
++		bool found = false;
++		for (const auto &entry : std::filesystem::directory_iterator(current, ec))
++			if (lower(entry.path().filename().u8string()) == wanted) { current = entry.path(); found = true; break; }
++		if (!found)
++			return {};
++	}
++	return current;
++}
++
+ void reshadefx::preprocessor::parse_include()
+ {
+ 	const location keyword_location = std::move(_token.location);
+@@ -729,7 +761,9 @@ void reshadefx::preprocessor::parse_include()
+ 		return;
+ 	}
+ 
+-	std::filesystem::path file_name = std::filesystem::u8path(_token.literal_as_string);
++	std::string literal = _token.literal_as_string;
++	std::replace(literal.begin(), literal.end(), '\\', '/'); // linux-reshade: ver find_ignoring_case
++	std::filesystem::path file_name = std::filesystem::u8path(literal);
+ 	std::filesystem::path file_path = std::filesystem::u8path(_output_location.source);
+ 	file_path.replace_filename(file_name);
+ 
+@@ -739,6 +773,15 @@ void reshadefx::preprocessor::parse_include()
+ 			if (std::filesystem::exists(file_path = include_path / file_name, ec))
+ 				break;
+ 
++	if (!std::filesystem::exists(file_path, ec)) // linux-reshade: ver find_ignoring_case
++	{
++		std::filesystem::path found = find_ignoring_case(std::filesystem::u8path(_output_location.source).parent_path(), file_name);
++		for (auto it = _include_paths.begin(); found.empty() && it != _include_paths.end(); ++it)
++			found = find_ignoring_case(*it, file_name);
++		if (!found.empty())
++			file_path = found;
++	}
++
+ 	const std::string file_path_string = file_path.u8string();
+ 
+ 	// Detect recursive include and abort to avoid infinite loop

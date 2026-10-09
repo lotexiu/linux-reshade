@@ -29,3 +29,12 @@ Os headers do SPIR-V vêm do repositório `KhronosGroup/SPIRV-Headers`.
 
 Os efeitos de `reshade-shaders` usados em `fx-test` têm licenças próprias (indicadas no cabeçalho de
 cada arquivo); são baixados só para teste e nunca versionados aqui.
+
+## Remendos sobre o ReShade fixado
+
+`patches/*.patch` são aplicados por `build.sh` sobre `third_party/reshade` (uma vez por checkout; se não
+se aplicarem ao commit fixado, a construção falha). Hoje há um:
+
+- `0001`: `#include` escrito para o Windows. `\` vira `/` e o arquivo é procurado sem diferenciar maiúsculas
+  (`.\MartysMods\mmx_global.fxh`, `Reshade.fxh`, `FXShaders/` contra `FxShaders`). Numa pasta real com 152
+  efeitos, subiu de 108 para 135 os que compilam; os 17 restantes usam imagens de armazenamento (compute).
