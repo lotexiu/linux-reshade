@@ -242,9 +242,13 @@ cmd_smoke_auto() {
   check "320x240 ficou pronto (compilado pelo vigia)" 'wait_layers 320x240 pronto'
   "$lrctl" layers
 
+  # 3. um parâmetro ajustado com o efeito escolhido POR NOME vale para as duas resoluções (cada uma tem um bundle
+  #    de id diferente; os parâmetros são identificados pelo efeito e pelo layout, não pelo bundle)
+  check "ajustar um parâmetro com a escolha por nome" '"$lrctl" set Strength 0.5 >/dev/null'
   "$lrctl" on >/dev/null; sleep 2; "$lrctl" off >/dev/null
   wait "$cube1" "$cube2" 2>/dev/null || true
 
+  check "o parâmetro foi aplicado nos DOIS jogos" '[ "$(grep "parâmetros do app de controle aplicados" "$LOG_FILE" | grep -o "pid=[0-9]*" | sort -u | wc -l)" -ge 2 ]'
   check "o vigia compilou 320x240" 'grep -q "compilado Sepia para 320x240" "$cache/watch.log"'
   check "bundle 500x500 no cache" '[ -f "$cache/Sepia-500x500/manifest.json" ]'
   check "bundle 320x240 no cache" '[ -f "$cache/Sepia-320x240/manifest.json" ]'
