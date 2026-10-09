@@ -39,6 +39,7 @@ Todos os nomes de campo são `snake_case`. Campos desconhecidos devem ser ignora
   "target": { "width": 1920, "height": 1080, "color_space": "srgb" },
   "defines": { "NOME": "valor" },          // macros do usuário (-D) que afetaram a compilação
   "spirv_version": "1.0",                  // versão do SPIR-V dos módulos ("1.0" ou "1.3")
+  "y_flipped": true,                       // o vertex shader já inverte o Y (D3D -> Vulkan); o runtime exige true
   "entry_points": [ { "name": "PS_Sepia", "stage": "pixel", "file": "PS_Sepia.spv" } ],
   "total_uniform_size": 16,
   "textures":  [ Texture ],

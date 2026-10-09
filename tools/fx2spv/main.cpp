@@ -256,11 +256,15 @@ struct Options
 	// (conferido com spirv-val). 1.0 funciona em dispositivos Vulkan 1.0; 1.3 exige Vulkan 1.1+.
 	uint32_t spirv_version_word = 0x10000;
 	bool debug_info = false;
+	// O clip space do D3D (que os efeitos FX usam) tem Y para cima; o do Vulkan tem Y para baixo.
+	// O ReShade corrige no runtime com viewport de altura negativa (exige VK_KHR_maintenance1); aqui
+	// o vertex shader já sai com Y invertido, o que funciona em qualquer dispositivo Vulkan 1.0.
+	bool flip_y = true;
 };
 
 static void usage()
 {
-	std::cerr << "uso: fx2spv [-I dir]... [-D NOME[=VALOR]]... [--width W] [--height H] [--spirv-version 1.0|1.3] [--debug] -o diretorio arquivo.fx\n";
+	std::cerr << "uso: fx2spv [-I dir]... [-D NOME[=VALOR]]... [--width W] [--height H] [--spirv-version 1.0|1.3] [--no-flip-y] [--debug] -o diretorio arquivo.fx\n";
 }
 
 static bool parse_args(int argc, char **argv, Options &o)
@@ -286,6 +290,7 @@ static bool parse_args(int argc, char **argv, Options &o)
 			else return false;
 		}
 		else if (a == "--debug") o.debug_info = true;
+		else if (a == "--no-flip-y") o.flip_y = false;
 		else if (a == "--width") { if (!next(v)) return false; o.width = static_cast<uint32_t>(std::stoul(v)); }
 		else if (a == "--height") { if (!next(v)) return false; o.height = static_cast<uint32_t>(std::stoul(v)); }
 		else if (!a.empty() && a[0] == '-') return false;
@@ -331,7 +336,7 @@ int main(int argc, char **argv)
 	if (!preprocessed) return 1;
 
 	// 2. Parser + gerador de SPIR-V (semântica Vulkan, sem uniforms como spec constants).
-	std::unique_ptr<codegen> backend(create_codegen_spirv(true, opt.debug_info, false, false, false));
+	std::unique_ptr<codegen> backend(create_codegen_spirv(true, opt.debug_info, false, false, opt.flip_y));
 	parser p;
 	const bool compiled = p.parse(pp.output(), backend.get());
 	if (!p.errors().empty()) std::cerr << p.errors();
@@ -388,6 +393,7 @@ int main(int argc, char **argv)
 	j.key("defines").object();
 	for (const auto &d : opt.defines) j.field(d.first, d.second);
 	j.end();
+	j.field("y_flipped", opt.flip_y);
 	j.field("spirv_version", std::string(opt.spirv_version_word == 0x10300 ? "1.3" : "1.0"));
 	j.key("entry_points").array();
 	for (const Entry &e : entries)

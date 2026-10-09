@@ -37,6 +37,10 @@ pub struct Manifest {
     #[serde(default)]
     pub defines: HashMap<String, String>,
     pub spirv_version: String,
+    /// O vertex shader já inverte o Y (clip space do D3D para o do Vulkan). Sem isso a imagem sairia
+    /// de cabeça para baixo, a não ser que o runtime use viewport de altura negativa.
+    #[serde(default)]
+    pub y_flipped: bool,
     pub entry_points: Vec<EntryPoint>,
     pub total_uniform_size: u32,
     #[serde(default)]
