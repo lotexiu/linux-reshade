@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Utilitário de desenvolvimento. Idempotente; serve para trocar de máquina sem esforço.
-# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|smoke-steam|hotkey|placement|logs> [args]
+# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|smoke-steam|hotkey|shaders|placement|logs> [args]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -182,6 +182,19 @@ cmd_hotkey() {
     && say "hotkey: passou" || { warn "hotkey: não viu o ciclo ligar/desligar"; exit 1; }
 }
 
+# Compila os shaders GLSL do postfx para SPIR-V (os .spv são versionados).
+cmd_shaders() {
+  have glslangValidator || { warn "glslangValidator ausente (rode: scripts/dev.sh setup)"; exit 1; }
+  local dir="$ROOT/crates/postfx/shaders" f
+  for f in "$dir"/*.vert "$dir"/*.frag; do
+    if ! out=$(glslangValidator -V --target-env vulkan1.0 -o "$f.spv" "$f" 2>&1); then
+      echo "$out" >&2; warn "falhou: $(basename "$f")"; exit 1
+    fi
+    if have spirv-val; then spirv-val --target-env vulkan1.0 "$f.spv" || exit 1; fi
+    say "$(basename "$f").spv"
+  done
+}
+
 # Extensão do GNOME Shell que posiciona o vkcube (no Wayland o cliente não escolhe a posição).
 PLACEMENT_UUID="vkcube-placement@linux-reshade.dev"
 PLACEMENT_DIR="$DATA_HOME/gnome-shell/extensions/$PLACEMENT_UUID"
@@ -191,12 +204,9 @@ cmd_placement() {
     install)
       mkdir -p "$(dirname "$PLACEMENT_DIR")"
       ln -sfn "$ROOT/dev/gnome-placement" "$PLACEMENT_DIR"
-      if gnome-extensions enable "$PLACEMENT_UUID" 2>/dev/null; then
-        say "extensão ativada"
-      else
-        warn "o GNOME ainda não enxergou a extensão: no Wayland é preciso sair da sessão e entrar de novo."
-        warn "depois rode: gnome-extensions enable $PLACEMENT_UUID"
-      fi ;;
+      # Não ativa sozinho: é código dentro do compositor e já derrubou a sessão uma vez (2026-10-09).
+      warn "extensão instalada, mas DESATIVADA. No Wayland ela só carrega após sair e entrar na sessão."
+      warn "para ativar (por sua conta e risco): gnome-extensions enable $PLACEMENT_UUID" ;;
     uninstall)
       gnome-extensions disable "$PLACEMENT_UUID" 2>/dev/null || true
       rm -f "$PLACEMENT_DIR"; say "extensão removida" ;;
@@ -216,7 +226,8 @@ case "${1:-}" in
   smoke)     cmd_smoke ;;
   smoke-steam) cmd_smoke_steam ;;
   hotkey)    cmd_hotkey ;;
+  shaders)   cmd_shaders ;;
   placement) shift; cmd_placement "$@" ;;
   logs)      shift; cmd_logs "$@" ;;
-  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|smoke-steam|hotkey|placement|logs>" >&2; exit 2 ;;
+  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|smoke-steam|hotkey|shaders|placement|logs>" >&2; exit 2 ;;
 esac
