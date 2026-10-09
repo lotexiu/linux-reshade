@@ -178,10 +178,10 @@ impl Ini {
     pub fn sections(&self) -> Vec<&str> {
         let mut names: Vec<&str> = Vec::new();
         for l in &self.lines {
-            if let Line::Section { name, .. } = l {
-                if !names.contains(&name.as_str()) {
-                    names.push(name);
-                }
+            if let Line::Section { name, .. } = l
+                && !names.contains(&name.as_str())
+            {
+                names.push(name);
             }
         }
         names
