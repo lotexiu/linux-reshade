@@ -1,0 +1,13 @@
+[package]
+name = "linux-reshade-layer"
+description = "Layer Vulkan implícita do linux-reshade"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+ash.workspace = true
+vk-layer = { path = "../vk-layer" }
