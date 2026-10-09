@@ -7,9 +7,15 @@
 //! - [`invert`]: o primeiro passe, que inverte as cores (marco 2 do ROADMAP)
 
 pub mod backbuffer;
+pub mod effect;
+mod error;
+mod image;
 pub mod invert;
 mod memory;
 mod spirv;
 
 pub use backbuffer::BackbufferCopies;
+pub use effect::Effect;
+pub use error::Error;
 pub use invert::{InvertPass, Target};
+// `effect::Target` e `invert::Target` têm o mesmo formato; o `Effect` é o caminho novo.

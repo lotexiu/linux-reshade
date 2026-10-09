@@ -1,0 +1,137 @@
+//! Executa bundles reais (compilados pelo fx2spv; ver `scripts/dev.sh fx-golden`) numa GPU de
+//! software e confere os pixels. Cobre: um passe simples, dois passes com textura intermediária,
+//! escrita de uniforms e a recusa de alvos que a v1 não suporta.
+
+mod common;
+
+use ash::vk;
+use common::*;
+use fx_bundle::Bundle;
+use postfx::effect::Target;
+use postfx::{Effect, Error};
+use std::path::Path;
+
+fn bundle(name: &str) -> Bundle {
+    Bundle::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data").join(name)).expect("carregar o bundle de teste")
+}
+
+fn target(images: &[vk::Image], gpu: &Gpu) -> Target<'static> {
+    // O `'static` é seguro porque os testes mantêm `images` vivo até o fim; evita emprestar `images` na struct.
+    let images: &'static [vk::Image] = Box::leak(images.to_vec().into_boxed_slice());
+    Target { images, format: FORMAT, extent: vk::Extent2D { width: W, height: H }, rest_layout: REST, queue_family: gpu.family, init_command_buffer: None }
+}
+
+macro_rules! gpu_or_skip {
+    () => {
+        match Gpu::software() {
+            Some(g) => g,
+            None => {
+                eprintln!("sem dispositivo Vulkan de software (lavapipe); teste ignorado");
+                return;
+            }
+        }
+    };
+}
+
+#[test]
+fn invert_flips_every_pixel_of_every_image() {
+    let gpu = gpu_or_skip!();
+    unsafe {
+        let targets = gpu.targets(2, input);
+        let mut effect = Effect::new(&gpu.device, &gpu.memory, &bundle("Invert"), 0, &target(&targets.images, &gpu), gpu.queue).expect("criar o efeito");
+        for (i, &image) in targets.images.iter().enumerate() {
+            gpu.submit(effect.command_buffer(i));
+            for (n, got) in gpu.read(image).into_iter().enumerate() {
+                let (x, y) = (n as u32 % W, n as u32 / W);
+                let s = input(x, y);
+                assert_pixel(got, [255 - s[0], 255 - s[1], 255 - s[2], s[3]], 1, &format!("imagem {i} pixel ({x},{y})"));
+            }
+        }
+        effect.destroy(&gpu.device);
+        effect.destroy(&gpu.device); // idempotente
+        gpu.destroy_targets(targets);
+    }
+}
+
+#[test]
+fn two_passes_go_through_the_intermediate_texture() {
+    let gpu = gpu_or_skip!();
+    unsafe {
+        let targets = gpu.targets(2, input);
+        let mut effect = Effect::new(&gpu.device, &gpu.memory, &bundle("TwoPass"), 0, &target(&targets.images, &gpu), gpu.queue).expect("criar o efeito");
+        // Duas imagens em sequência: a textura intermediária é compartilhada entre elas.
+        for (i, &image) in targets.images.iter().enumerate() {
+            gpu.submit(effect.command_buffer(i));
+            for (n, got) in gpu.read(image).into_iter().enumerate() {
+                let (x, y) = (n as u32 % W, n as u32 / W);
+                let s = input(x, y);
+                // metade do frame (quantizada em 8 bits na textura) + 0,25 (64/255); alfa 1.
+                let f = |v: u8| ((v as f32 * 0.5).round() + 63.75).min(255.0) as u8;
+                assert_pixel(got, [f(s[0]), f(s[1]), f(s[2]), 255], 2, &format!("imagem {i} pixel ({x},{y})"));
+            }
+        }
+        effect.destroy(&gpu.device);
+        gpu.destroy_targets(targets);
+    }
+}
+
+fn sepia(c: [u8; 4], strength: f32) -> [u8; 4] {
+    let (r, g, b) = (c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0);
+    let gray = 0.299 * r + 0.587 * g + 0.114 * b;
+    let tone = [gray * 1.2, gray, gray * 0.8];
+    let mix = |orig: f32, t: f32| ((orig + (t - orig) * strength).clamp(0.0, 1.0) * 255.0).round() as u8;
+    [mix(r, tone[0]), mix(g, tone[1]), mix(b, tone[2]), c[3]]
+}
+
+#[test]
+fn uniform_default_and_overwrite_change_the_result() {
+    let gpu = gpu_or_skip!();
+    unsafe {
+        let targets = gpu.targets(1, input);
+        let mut effect = Effect::new(&gpu.device, &gpu.memory, &bundle("Sepia"), 0, &target(&targets.images, &gpu), gpu.queue).expect("criar o efeito");
+
+        // Valor padrão do manifesto (Strength = 1.0).
+        gpu.submit(effect.command_buffer(0));
+        for (n, got) in gpu.read(targets.images[0]).into_iter().enumerate() {
+            let (x, y) = (n as u32 % W, n as u32 / W);
+            assert_pixel(got, sepia(input(x, y), 1.0), 2, &format!("padrão ({x},{y})"));
+        }
+
+        // Sobrescreve o uniform com 0.0: o efeito passa a devolver o frame que recebeu. Como o frame
+        // agora é a saída do passo anterior, comparamos contra ela mesma passando de novo.
+        let before = gpu.read(targets.images[0]);
+        effect.write_uniforms(0, 0, &0.0f32.to_le_bytes());
+        gpu.submit(effect.command_buffer(0));
+        for (n, got) in gpu.read(targets.images[0]).into_iter().enumerate() {
+            assert_pixel(got, before[n], 1, &format!("Strength 0 mantém o pixel {n}"));
+        }
+        effect.destroy(&gpu.device);
+        gpu.destroy_targets(targets);
+    }
+}
+
+#[test]
+fn srgb_targets_are_refused_explicitly() {
+    let gpu = gpu_or_skip!();
+    unsafe {
+        let targets = gpu.targets(1, input);
+        let mut t = target(&targets.images, &gpu);
+        t.format = vk::Format::R8G8B8A8_SRGB;
+        match Effect::new(&gpu.device, &gpu.memory, &bundle("Invert"), 0, &t, gpu.queue) {
+            Err(Error::Unsupported(why)) => assert!(why.contains("sRGB"), "{why}"),
+            other => panic!("esperava Unsupported, veio {:?}", other.map(|_| ())),
+        }
+        gpu.destroy_targets(targets);
+    }
+}
+
+#[test]
+fn unknown_technique_is_an_error() {
+    let gpu = gpu_or_skip!();
+    unsafe {
+        let targets = gpu.targets(1, input);
+        let r = Effect::new(&gpu.device, &gpu.memory, &bundle("Invert"), 7, &target(&targets.images, &gpu), gpu.queue);
+        assert!(matches!(r, Err(Error::Invalid(_))));
+        gpu.destroy_targets(targets);
+    }
+}

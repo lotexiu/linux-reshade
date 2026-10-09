@@ -214,10 +214,17 @@ cmd_fx_tool() { "$ROOT/tools/fx2spv/build.sh"; }
 # Compila efeitos de exemplo (próprios e da comunidade) e valida os módulos SPIR-V.
 cmd_fx_test() { "$ROOT/tools/fx2spv/test.sh" "$@"; }
 
-# Regenera o bundle de referência (golden) usado pelos testes do fx-bundle, a partir de effects/Sepia.fx.
+# Regenera os bundles de referência (golden) usados pelos testes, a partir dos .fx de origem.
 cmd_fx_golden() {
   [ -x "$ROOT/build/fx2spv/fx2spv" ] || cmd_fx_tool
-  "$ROOT/build/fx2spv/fx2spv" --width 500 --height 500 -o "$ROOT/crates/fx-bundle/tests/data/Sepia" "$ROOT/effects/Sepia.fx"
+  local fx="$ROOT/build/fx2spv/fx2spv"
+  "$fx" --width 500 --height 500 -o "$ROOT/crates/fx-bundle/tests/data/Sepia" "$ROOT/effects/Sepia.fx"
+  for name in Sepia; do
+    "$fx" --width 8 --height 4 -o "$ROOT/crates/postfx/tests/data/$name" "$ROOT/effects/$name.fx"
+  done
+  for name in Invert TwoPass; do
+    "$fx" --width 8 --height 4 -o "$ROOT/crates/postfx/tests/data/$name" "$ROOT/crates/postfx/tests/fx/$name.fx"
+  done
 }
 
 # Extensão do GNOME Shell que posiciona o vkcube (no Wayland o cliente não escolhe a posição).

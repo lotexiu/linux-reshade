@@ -138,9 +138,9 @@ impl InvertPass {
             let sets = device.allocate_descriptor_sets(
                 &vk::DescriptorSetAllocateInfo::default().descriptor_pool(self.descriptor_pool).set_layouts(&set_layouts),
             )?;
-            for (set, view) in sets.iter().zip(&self.copies.views) {
+            for (set, copy) in sets.iter().zip(&self.copies.images) {
                 let image_info = [vk::DescriptorImageInfo::default()
-                    .image_view(*view)
+                    .image_view(copy.view)
                     .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
                 let write = vk::WriteDescriptorSet::default()
                     .dst_set(*set)
@@ -283,7 +283,7 @@ impl InvertPass {
         target: &Target<'_>,
     ) -> Result<(), vk::Result> {
         let image = target.images[index];
-        let copy = self.copies.images[index];
+        let copy = self.copies.images[index].image;
         let layers = vk::ImageSubresourceLayers {
             aspect_mask: vk::ImageAspectFlags::COLOR,
             mip_level: 0,

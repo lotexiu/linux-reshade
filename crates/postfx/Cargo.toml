@@ -7,7 +7,9 @@ publish.workspace = true
 
 [dependencies]
 ash.workspace = true
+fx-bundle = { path = "../fx-bundle" }
 
 [dev-dependencies]
-# `loaded` (carrega o libvulkan em tempo de execução) só para os testes com GPU de software.
-ash = { workspace = true, features = ["loaded"] }
+# `loaded` (carrega o libvulkan em tempo de execução) e `debug` (Debug nos tipos) só para os testes
+# com GPU de software.
+ash = { workspace = true, features = ["loaded", "debug"] }
