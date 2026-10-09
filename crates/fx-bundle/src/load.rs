@@ -84,6 +84,11 @@ impl Bundle {
         Ok(Self { manifest, id, shaders })
     }
 
+    /// Identidade dos parâmetros deste efeito, igual em todas as resoluções (ver `uniforms::params_id`).
+    pub fn params_id(&self) -> u64 {
+        crate::uniforms::params_id(&self.manifest)
+    }
+
     /// SPIR-V do entry point `name` (um nome presente em `manifest.entry_points`).
     pub fn shader(&self, name: &str) -> Option<&[u32]> {
         self.shaders.get(name).map(Vec::as_slice)

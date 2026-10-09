@@ -16,6 +16,34 @@ pub fn default_block(manifest: &Manifest) -> Vec<u8> {
     block
 }
 
+/// Identidade dos parâmetros de um efeito, **igual em todas as resoluções**: o arquivo de origem e o
+/// layout do buffer de uniforms (nome, tipo, deslocamento e tamanho de cada um).
+///
+/// O `Bundle::id` muda a cada resolução (o SPIR-V muda), mas os valores que o usuário ajusta valem
+/// para o efeito, não para um tamanho de janela. Dois efeitos diferentes nunca compartilham a identidade
+/// (o arquivo de origem entra), e uma mudança no layout dos uniforms a muda (os bytes deixariam de significar o mesmo).
+pub fn params_id(manifest: &Manifest) -> u64 {
+    const OFFSET: u64 = 0xCBF2_9CE4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01B3;
+    let mut hash = OFFSET;
+    let mut feed = |bytes: &[u8]| {
+        for &b in bytes {
+            hash = (hash ^ u64::from(b)).wrapping_mul(PRIME);
+        }
+        hash = (hash ^ 0xFF).wrapping_mul(PRIME); // separador, para "ab"+"c" não colidir com "a"+"bc"
+    };
+    feed(manifest.source.as_bytes());
+    feed(&manifest.total_uniform_size.to_le_bytes());
+    for u in &manifest.uniforms {
+        feed(u.unique_name.as_bytes());
+        feed(&[u.ty.base as u8]);
+        for n in [u.ty.rows, u.ty.cols, u.ty.array, u.offset, u.size] {
+            feed(&n.to_le_bytes());
+        }
+    }
+    hash
+}
+
 /// O uniform é alimentado pelo runtime (`source = "timer"` etc.), não é um controle do usuário.
 pub fn is_runtime_source(u: &Uniform) -> bool {
     u.annotations.contains_key("source")
@@ -233,6 +261,24 @@ mod tests {
         assert!(encode(uint, &[-1.0]).is_err(), "uint negativo");
         assert!(encode(boolean, &[2.0]).is_err(), "bool 2");
         assert!(encode(boolean, &[1.0]).is_ok());
+    }
+
+    #[test]
+    fn params_id_ignores_the_resolution_but_not_the_layout_or_the_effect() {
+        let layout = |source: &str, offset: u32, total: u32| {
+            let mut m = manifest(total, &uniform("float", 1, offset, 4, "null"));
+            m.source = source.into();
+            m
+        };
+        let base = layout("Sepia.fx", 0, 16);
+        let mut other_size = base.clone();
+        other_size.target.width = 1234; // outra resolução: o mesmo efeito, os mesmos controles
+        other_size.compiler.reshade_commit = "outro".into();
+        assert_eq!(params_id(&base), params_id(&other_size), "a resolução não muda a identidade");
+
+        assert_ne!(params_id(&base), params_id(&layout("Invert.fx", 0, 16)), "outro efeito");
+        assert_ne!(params_id(&base), params_id(&layout("Sepia.fx", 4, 16)), "outro deslocamento");
+        assert_ne!(params_id(&base), params_id(&layout("Sepia.fx", 0, 32)), "outro tamanho de buffer");
     }
 
     #[test]
