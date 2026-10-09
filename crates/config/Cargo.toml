@@ -1,0 +1,9 @@
+[package]
+name = "config"
+description = "Onde ficam os dados do usuário: pasta de dados, config.ini, caminhos de shaders, texturas e presets"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+ini = { path = "../ini" }

@@ -228,6 +228,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "config"
+version = "0.0.1"
+dependencies = [
+ "ini",
+]
+
+[[package]]
 name = "control-core"
 version = "0.0.1"
 dependencies = [
