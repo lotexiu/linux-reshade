@@ -59,7 +59,7 @@ pub fn describe(config: &Config, location_file: Option<&Path>) -> String {
     }
     out.push_str(&format!("{:<16}{}\n", "cache", config.cache_dir.display()));
     if !config.is_configured() {
-        out.push_str("\nnenhuma pasta de dados escolhida: vale o que está no clone do repositório.\nPara escolher uma: lrctl config init <pasta>\n");
+        out.push_str("\nnenhuma pasta de dados escolhida: vale o que está no clone do repositório.\nPara criar a padrão (~/.local/share/linux-reshade): lrctl config init\nPara escolher outra: lrctl config init <pasta>\n");
     }
     out
 }

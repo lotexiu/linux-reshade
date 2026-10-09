@@ -96,10 +96,13 @@ fn bundle_for(explicit: Option<PathBuf>, target: &Target) -> Result<Bundle, Stri
     load(&dir)
 }
 
-/// `lrctl config` e `lrctl config init <pasta>`.
-fn config_command(init: Option<PathBuf>) -> ExitCode {
+/// `lrctl config` e `lrctl config init [pasta]`.
+fn config_command(init: bool, dir: Option<PathBuf>) -> ExitCode {
     let env = |name: &str| std::env::var_os(name);
-    if let Some(dir) = init {
+    if init {
+        let Some(dir) = dir.or_else(|| config::default_data_dir(&env)) else {
+            return fail("não sei onde ficam seus dados (HOME e XDG_DATA_HOME vazios): passe a pasta");
+        };
         let dir = match std::path::absolute(&dir) {
             Ok(d) => d,
             Err(e) => return fail(format!("{}: {e}", dir.display())),
@@ -154,7 +157,7 @@ pub fn run(command: Command, state: &ipc::Writer) -> ExitCode {
             }
             ExitCode::SUCCESS
         }
-        Command::Config { init } => config_command(init),
+        Command::Config { init, dir } => config_command(init, dir),
         Command::Effects => match Compiler::from_env() {
             Ok(compiler) => {
                 let available = compiler.available();

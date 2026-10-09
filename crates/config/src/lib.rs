@@ -6,7 +6,9 @@
 //! <data_dir>/Shaders  Textures  Presets
 //! ```
 //!
-//! Ordem de decisão de cada pasta: variável de ambiente > `config.ini` > padrão dentro da pasta de dados.
+//! Pasta de dados: `LINUX_RESHADE_DATA` > `location.ini` > a padrão (`~/.local/share/linux-reshade`), que só
+//! vale se já existir (`lrctl config init` a cria). Ordem de decisão de cada pasta dentro dela: variável de
+//! ambiente > `config.ini` > padrão dentro da pasta de dados.
 //! Sem pasta de dados e sem variáveis, nada é configurado (os caminhos vêm vazios) e quem chama decide o
 //! que fazer (o `lrctl` usa os efeitos do clone do repositório). Caminhos relativos valem em relação à pasta
 //! do `config.ini`, e não do jogo: a pasta de dados pode ser copiada para outra máquina.
@@ -136,6 +138,13 @@ pub fn location_file(env: Env) -> Option<PathBuf> {
     Some(base.join(LOCATION_DIR).join("location.ini"))
 }
 
+/// A pasta de dados padrão, para quem nunca escolheu outra: `$XDG_DATA_HOME/linux-reshade`, ou
+/// `~/.local/share/linux-reshade`.
+pub fn default_data_dir(env: Env) -> Option<PathBuf> {
+    let base = env("XDG_DATA_HOME").map(PathBuf::from).or_else(|| home(env).map(|h| h.join(".local/share")))?;
+    Some(base.join(LOCATION_DIR))
+}
+
 fn default_cache(env: Env) -> PathBuf {
     let base = env("XDG_CACHE_HOME").map(PathBuf::from).or_else(|| home(env).map(|h| h.join(".cache"))).unwrap_or_else(|| PathBuf::from("/tmp"));
     base.join(LOCATION_DIR).join("bundles")
@@ -166,6 +175,9 @@ impl Config {
             let value = ini.get("", "data_dir").filter(|v| !v.is_empty())?;
             Some(SearchPath::parse(value, location.parent()?, home).dir)
         });
+        // Sem escolha nenhuma, a padrão vale desde que já tenha sido criada: um clone recém-baixado, sem
+        // `init`, continua usando os efeitos do repositório.
+        let data_dir = data_dir.or_else(|| default_data_dir(env).filter(|d| d.is_dir()));
 
         let config_file = env("LINUX_RESHADE_CONFIG").map(PathBuf::from).or_else(|| data_dir.as_ref().map(|d| d.join("config.ini")));
         let ini = config_file.as_deref().and_then(|f| Ini::load(f).ok());

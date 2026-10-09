@@ -19,7 +19,8 @@ uso: lrctl <comando> [opções]
   watch                           só compila, sem atalho global (o daemon já faz isso)
 
   config                          mostra onde estão os efeitos, texturas, presets e cache
-  config init <pasta>             prepara uma pasta de dados (Shaders, Textures, Presets, config.ini)
+  config init [pasta]             prepara a pasta de dados (Shaders, Textures, Presets, config.ini);
+                                  sem <pasta>: ~/.local/share/linux-reshade
                                   e a escolhe; sobrevive a reinstalar o jogo ou a máquina
 
   uniforms                        lista os parâmetros do efeito, com valor atual e faixa
@@ -45,8 +46,8 @@ pub enum Command {
     Layers,
     Watch,
     Effects,
-    /// Mostra a configuração de pastas (`init: None`) ou prepara uma pasta de dados.
-    Config { init: Option<PathBuf> },
+    /// Mostra a configuração de pastas (`init: false`) ou prepara uma pasta de dados (`dir`, ou a padrão).
+    Config { init: bool, dir: Option<PathBuf> },
     /// Escolhe o efeito (`Some`) ou desfaz a escolha (`None`). Com `layer`, só para aquele jogo.
     Use { bundle: Option<PathBuf>, layer: Option<String> },
     /// O jogo `layer` volta a seguir a escolha global.
@@ -113,9 +114,10 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "effects" => no_args(Command::Effects),
         "watch" => no_args(Command::Watch),
         "config" => match tail {
-            [] => Ok(Command::Config { init: None }),
-            [init, dir] if init == "init" => Ok(Command::Config { init: Some(PathBuf::from(dir)) }),
-            _ => Err("uso: lrctl config | lrctl config init <pasta>".into()),
+            [] => Ok(Command::Config { init: false, dir: None }),
+            [init] if init == "init" => Ok(Command::Config { init: true, dir: None }),
+            [init, dir] if init == "init" && !dir.starts_with('-') => Ok(Command::Config { init: true, dir: Some(PathBuf::from(dir)) }),
+            _ => Err("uso: lrctl config | lrctl config init [pasta]".into()),
         },
         "use" => match tail {
             [none] if none == "none" => Ok(Command::Use { bundle: None, layer }),
@@ -178,9 +180,11 @@ mod tests {
 
     #[test]
     fn config_shows_or_initialises() {
-        assert_eq!(parse(&args(&["config"])), Ok(Command::Config { init: None }));
-        assert_eq!(parse(&args(&["config", "init", "/mnt/D/reshade"])), Ok(Command::Config { init: p("/mnt/D/reshade") }));
-        assert!(parse(&args(&["config", "init"])).is_err());
+        assert_eq!(parse(&args(&["config"])), Ok(Command::Config { init: false, dir: None }));
+        assert_eq!(parse(&args(&["config", "init", "/mnt/D/reshade"])), Ok(Command::Config { init: true, dir: p("/mnt/D/reshade") }));
+        assert_eq!(parse(&args(&["config", "init"])), Ok(Command::Config { init: true, dir: None }));
+        // Uma opção não é nome de pasta (`config init --help` já criou uma pasta chamada `--help`).
+        assert!(parse(&args(&["config", "init", "--help"])).is_err());
         assert!(parse(&args(&["config", "x"])).is_err());
     }
 

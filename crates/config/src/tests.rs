@@ -194,3 +194,23 @@ fn init_creates_the_layout_and_the_pointer_without_overwriting() {
     assert!(again.created.is_empty(), "{:?}", again.created);
     assert_eq!(fs::read_to_string(data.join("config.ini")).unwrap(), "[GENERAL]\nPresetsPath=/meu\n; nota\n");
 }
+
+#[test]
+fn the_default_data_dir_counts_only_once_it_exists() {
+    let sb = Sandbox::new("default-dir");
+    let env = sb.env(&[]);
+    assert_eq!(default_data_dir(&|k| env.get(k).cloned()), Some(sb.path("home/.local/share/linux-reshade")));
+    assert_eq!(resolve(&env).data_dir, None);
+
+    fs::create_dir_all(sb.path("home/.local/share/linux-reshade")).unwrap();
+    let c = resolve(&env);
+    assert_eq!(c.data_dir, Some(sb.path("home/.local/share/linux-reshade")));
+    assert!(c.is_configured());
+    assert_eq!(c.presets_dir, Some(sb.path("home/.local/share/linux-reshade/Presets")));
+
+    // XDG_DATA_HOME manda; e uma escolha explícita vale mais que a padrão.
+    let env = sb.env(&[("XDG_DATA_HOME", sb.path("xdg").to_str().unwrap())]);
+    assert_eq!(default_data_dir(&|k| env.get(k).cloned()), Some(sb.path("xdg/linux-reshade")));
+    sb.write("home/.config/linux-reshade/location.ini", "data_dir=/outra\n");
+    assert_eq!(resolve(&sb.env(&[])).data_dir, Some(PathBuf::from("/outra")));
+}
