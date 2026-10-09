@@ -144,15 +144,19 @@ smoke_with() {
   local pid=$!
   # espera o primeiro present (até ~15 s) antes de mexer na flag
   for _ in $(seq 1 150); do grep -q "vkQueuePresentKHR #1$" "$LOG_FILE" 2>/dev/null && break; sleep 0.1; done
+  # publica um parâmetro antes de ligar: a layer precisa aplicá-lo ao criar o efeito
+  LINUX_RESHADE_BUNDLE="$SMOKE_BUNDLE" "$lrctl" set Strength 0.5 >/dev/null
   # liga, desliga, liga de novo (reaproveita os recursos já criados) e desliga
   sleep 1; "$lrctl" on >/dev/null
   sleep 1.5; "$lrctl" off >/dev/null
   sleep 1; "$lrctl" on >/dev/null
   sleep 1.5; "$lrctl" off >/dev/null
   local rc=0; wait "$pid" || rc=$?
+  LINUX_RESHADE_BUNDLE="$SMOKE_BUNDLE" "$lrctl" reset >/dev/null
   [ "$rc" = 0 ] || warn "o vkcube terminou com código $rc (124 = estourou o timeout; 143/137 = morto por sinal)"
   local ok=1 patterns=("vkCreateInstance ok" "vkCreateDevice ok" "vkQueuePresentKHR #1$" \
-             "estado compartilhado aberto" "efeitos LIGADOS" "efeitos DESLIGADOS" "efeito criado")
+             "estado compartilhado aberto" "efeitos LIGADOS" "efeitos DESLIGADOS" "efeito criado"
+             "parâmetros do app de controle aplicados")
   [ "$strict" = 1 ] && patterns+=("vkDestroyInstance")
   if [ "${SMOKE_VALIDATE:-0}" = 1 ]; then
     local issues; issues=$(grep -ciE "VUID|Validation (Error|Warning)" "$LOG_FILE.out" || true)
