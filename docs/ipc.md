@@ -41,11 +41,48 @@ essa geração (uma leitura atômica) e lê o caminho e o disco apenas quando el
 
 - **Ordem de prioridade na layer:** o efeito escolhido com `lrctl use` e, se não houver, a variável
   `LINUX_RESHADE_BUNDLE`. `lrctl use none` desfaz a escolha.
+- **O texto da escolha é um *modelo* de caminho.** Pode conter `{W}` e `{H}`, trocados pela resolução de
+  cada swapchain: `lrctl use Sepia` publica `<cache>/Sepia-{W}x{H}`, e cada swapchain procura o bundle
+  da sua resolução. Um caminho sem marcadores é um bundle fixo (compilado para uma só resolução).
 - **Troca em tempo de execução:** quando o bundle muda, a layer espera a GPU ficar ociosa, descarta o
   efeito construído com o bundle antigo e reconstrói com o novo no frame seguinte. Cada troca sobe uma
   *época*; tudo que foi construído a partir do bundle guarda a época e se refaz quando ela muda.
 - Os comandos de parâmetros do `lrctl` usam, por padrão, o efeito escolhido (ordem: `--bundle`, efeito
   escolhido, `LINUX_RESHADE_BUNDLE`).
+
+## Status das layers
+
+Cada processo com a layer cria o próprio arquivo `layer-<pid>-<instante>` no mesmo diretório e o atualiza
+quando algo muda. O texto é tolerante a campos desconhecidos:
+
+```
+app=Idols of Ash
+swapchain=1920x1080 44 3 ready
+swapchain=1920x1011 44 3 waiting
+swapchain=800x600 50 3 unavailable swapchain em formato sRGB
+```
+
+Por swapchain: `largura x altura`, `VkFormat`, nº de imagens e o estado do efeito: `idle` (nada escolhido),
+`waiting` (escolhido, mas ainda sem bundle para esta resolução), `ready`, `unavailable <motivo>` (o
+swapchain não aceita o efeito) ou `failed <motivo>`. É isso que o `lrctl layers` mostra e o que o vigia
+usa para saber para quais resoluções compilar.
+
+- **Quem está vivo:** a layer mantém um `flock` exclusivo no próprio arquivo; quem lê tenta um `flock`
+  compartilhado e, se conseguir, ninguém o segura mais (o processo morreu) e o arquivo órfão é apagado.
+  Não se usa o `pid` nem `/proc`: dentro do contêiner da Steam a layer enxerga outro `pid` que o host.
+- A layer apaga o arquivo quando a última instância Vulkan é destruída.
+
+## Compilação sob demanda
+
+`lrctl daemon` (ou só `lrctl watch`) olha os status a cada 500 ms. Se a escolha foi feita por nome e algum
+swapchain tem uma resolução sem bundle atual, chama o `fx2spv` para ela e **republica a escolha** (mesmo
+texto, nova geração): cada layer relê o que lhe cabe e só reconstrói o efeito se o `id` do bundle mudou.
+Uma falha de compilação não é repetida até o `.fx` ser editado.
+
+Configuração (variáveis de ambiente; os padrões servem a quem roda dentro de um clone do repositório):
+`LINUX_RESHADE_FX2SPV`, `LINUX_RESHADE_EFFECTS` e `LINUX_RESHADE_INCLUDES` (listas separadas por `:`) e
+`LINUX_RESHADE_CACHE` (padrão `~/.cache/linux-reshade/bundles`). Os nomes de efeito só aceitam letras,
+números, `_`, `-` e `.`, para nunca saírem do cache.
 
 ## O que vale enquanto não reiniciar
 
