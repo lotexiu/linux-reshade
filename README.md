@@ -77,6 +77,9 @@ invertido, formatos variados e MSAA. É heurística por jogo, e deve ter módulo
   container); `--wsi wayland` termina normalmente. É problema do ambiente, não do projeto, mas
   importa: jogos no Proton usam X11 por padrão. Testar com um jogo real antes de concluir algo.
 - **Ctrl+Alt+F1..F12 troca de terminal virtual** e travou a máquina uma vez; nunca sugerir esses atalhos.
+- **A extensão `vkcube-placement` derrubou o GNOME Shell** (SIGSEGV em `move_frame`, 11:08) e, com ele,
+  a sessão inteira. Foi reescrita com guardas e fica **desativada** por padrão; ativar é decisão
+  manual (`gnome-extensions enable ...`). Código dentro do compositor não tem segunda chance.
 - Um travamento do PC pode deixar artefatos de build zerados (o Cargo não os refaz);
   `scripts/dev.sh install` detecta e refaz o `.so`.
 
