@@ -1,0 +1,8 @@
+[package]
+name = "ini"
+description = "Arquivos .ini que preservam o que não entendem: comentários, ordem, chaves desconhecidas (base de config.ini e dos presets)"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
