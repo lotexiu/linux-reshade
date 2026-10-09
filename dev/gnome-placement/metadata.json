@@ -1,0 +1,6 @@
+{
+  "uuid": "vkcube-placement@linux-reshade.dev",
+  "name": "linux-reshade: posição do vkcube",
+  "description": "Só para desenvolvimento: move janelas do vkcube para o canto inferior esquerdo do monitor mais à esquerda.",
+  "shell-version": ["50"]
+}
