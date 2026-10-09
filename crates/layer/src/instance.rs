@@ -44,6 +44,7 @@ pub unsafe extern "system" fn create_instance(
             Some(a) => ("?".into(), a.api_version),
             None => ("?".into(), 0),
         };
+        crate::status::instance_created(&app_name);
         log!("vkCreateInstance ok: app={app_name:?} api={}.{}", vk::api_version_major(api), vk::api_version_minor(api));
         vk::Result::SUCCESS
     }
@@ -56,6 +57,7 @@ pub unsafe extern "system" fn destroy_instance(
     unsafe {
         if let Some(data) = INSTANCES.remove(dispatch_key(instance.as_raw())) {
             log!("vkDestroyInstance");
+            crate::status::instance_destroyed();
             (data.instance.fp_v1_0().destroy_instance)(instance, p_allocator);
         }
     }

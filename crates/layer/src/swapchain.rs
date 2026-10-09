@@ -49,8 +49,8 @@ pub unsafe extern "system" fn create_swapchain(
         let mut info = *p_create_info;
         // A layer só está no processo porque o usuário a ligou para este jogo (LINUX_RESHADE=1); o efeito pode
         // ser escolhido a qualquer momento, e o uso extra só pode ser pedido na criação do swapchain.
-        let usable = info.image_array_layers == 1 && surface_supports_effect(&data, info.surface);
-        if usable {
+        let supported = info.image_array_layers == 1 && surface_supports_effect(&data, info.surface);
+        if supported {
             info.image_usage |= EFFECT_USAGE;
         }
 
@@ -60,6 +60,15 @@ pub unsafe extern "system" fn create_swapchain(
         }
         let swapchain = *p_swapchain;
         let images = swapchain_images(&data, device, swapchain);
+        let unusable = if !supported {
+            Some("o swapchain não aceita o uso extra que o efeito precisa (COLOR_ATTACHMENT | TRANSFER_SRC)".to_string())
+        } else if images.is_empty() {
+            Some("não consegui obter as imagens do swapchain".to_string())
+        } else if postfx::effect::is_srgb(info.image_format) {
+            Some("swapchain em formato sRGB (os efeitos esperam valores já codificados)".to_string())
+        } else {
+            None
+        };
         log!(
             "vkCreateSwapchainKHR ok: {}x{} format={} images={} present_mode={} efeito={}",
             info.image_extent.width,
@@ -67,9 +76,9 @@ pub unsafe extern "system" fn create_swapchain(
             info.image_format.as_raw(),
             images.len(),
             info.present_mode.as_raw(),
-            if usable && !images.is_empty() { "possível" } else { "indisponível" },
+            if unusable.is_none() { "possível" } else { "indisponível" },
         );
-        let fx = SwapchainFx::new(images.clone(), info.image_format, info.image_extent, usable && !images.is_empty());
+        let fx = SwapchainFx::new(swapchain.as_raw(), images, info.image_format, info.image_extent, unusable);
         data.swapchains.lock().unwrap().insert(swapchain.as_raw(), fx);
         vk::Result::SUCCESS
     }

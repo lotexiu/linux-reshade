@@ -33,7 +33,7 @@ pub unsafe extern "system" fn queue_present(
 
         // Com o efeito aplicado, o present passa a esperar o semáforo do efeito, não os do jogo
         // (que o submit do efeito já consumiu).
-        let effect_semaphore = if enabled { effect::apply(&data, queue, &*p_present_info) } else { None };
+        let effect_semaphore = effect::process(&data, queue, &*p_present_info, enabled);
         let wait = [effect_semaphore.unwrap_or_default()];
         let patched;
         let p_info = if effect_semaphore.is_some() {

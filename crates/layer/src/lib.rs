@@ -15,4 +15,5 @@ mod params;
 mod present;
 mod proc_addr;
 mod state;
+mod status;
 mod swapchain;
