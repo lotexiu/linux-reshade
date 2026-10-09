@@ -110,13 +110,25 @@ cmd_run() {
   cat "$LOG_FILE"
 }
 
-# Build + instala + roda o vkcube e confere que a layer foi carregada e viu os presents.
+# Build + instala + roda o vkcube; liga e desliga a flag com o lrctl no meio da execução e
+# confere que a layer foi carregada, viu os presents e reagiu às duas mudanças.
 cmd_smoke() {
-  say "o vkcube abre na tela em foco por ~5 s; evite mexer em janelas até terminar"
+  say "o vkcube abre na tela em foco por ~15 s; evite mexer em janelas até terminar"
   cmd_install
-  cmd_run >/dev/null
+  cmd_build -p linux-reshade-control
+  local lrctl="$ROOT/target/release/lrctl"
+  "$lrctl" off >/dev/null
+  : >"$LOG_FILE"
+  env "$ENABLE_VAR=1" LINUX_RESHADE_LOG="$LOG_FILE" timeout 60 vkcube --c 1800 >/dev/null 2>&1 &
+  local pid=$!
+  # espera o primeiro present (até ~10 s) antes de mexer na flag
+  for _ in $(seq 1 100); do grep -q "vkQueuePresentKHR #1$" "$LOG_FILE" 2>/dev/null && break; sleep 0.1; done
+  sleep 1; "$lrctl" on >/dev/null
+  sleep 2; "$lrctl" off >/dev/null
+  wait "$pid" || true
   local ok=1
-  for pat in "vkCreateInstance ok" "vkCreateDevice ok" "vkQueuePresentKHR #1$" "vkDestroyInstance"; do
+  for pat in "vkCreateInstance ok" "vkCreateDevice ok" "vkQueuePresentKHR #1$" \
+             "estado compartilhado aberto" "efeitos LIGADOS" "efeitos DESLIGADOS" "vkDestroyInstance"; do
     if grep -q "$pat" "$LOG_FILE"; then printf '  ok     %s\n' "$pat"; else printf '  FALHOU %s\n' "$pat"; ok=0; fi
   done
   [ "$ok" = 1 ] && say "smoke: passou" || { warn "smoke: falhou (log em $LOG_FILE)"; exit 1; }
