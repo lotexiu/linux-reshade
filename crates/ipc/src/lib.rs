@@ -10,8 +10,10 @@
 //! arquivo que também seja do próprio usuário.
 
 mod blob;
+mod status;
 
 pub use blob::{MAX_PARAM_BYTES, MAX_SELECTION_BYTES, PublishError};
+pub use status::{EffectState, LayerStatus, LiveLayer, StatusWriter, SwapchainStatus, live_layers};
 
 use blob::{Params, Selection, Snapshot};
 use rustix::mm::{MapFlags, ProtFlags, mmap, munmap};
@@ -74,12 +76,17 @@ fn read_selection(blob: &Selection) -> SelectionRead {
 
 /// Caminho do arquivo de estado.
 pub fn state_path() -> PathBuf {
+    state_dir().join("state")
+}
+
+/// O diretório do estado: `/dev/shm/linux-reshade-<uid>`.
+pub fn state_dir() -> PathBuf {
     let uid = rustix::process::getuid().as_raw();
-    PathBuf::from(format!("/dev/shm/linux-reshade-{uid}")).join("state")
+    PathBuf::from(format!("/dev/shm/linux-reshade-{uid}"))
 }
 
 /// Cria o diretório do estado (se preciso) e garante que é do usuário atual e privado.
-fn ensure_private_dir(dir: &std::path::Path) -> io::Result<()> {
+pub(crate) fn ensure_private_dir(dir: &std::path::Path) -> io::Result<()> {
     fs::create_dir_all(dir)?;
     let meta = fs::metadata(dir)?;
     if meta.uid() != rustix::process::getuid().as_raw() {
@@ -91,52 +98,54 @@ fn ensure_private_dir(dir: &std::path::Path) -> io::Result<()> {
     fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
 }
 
-/// Mapeamento de `SIZE` bytes. `munmap` no `Drop`.
-struct Mapping {
-    ptr: NonNull<Shared>,
+/// Mapeamento de um `T` inteiro de um arquivo. `munmap` no `Drop`.
+pub(crate) struct Mapping<T> {
+    ptr: NonNull<T>,
 }
 
-// SAFETY: o conteúdo só é acessado por operações atômicas.
-unsafe impl Send for Mapping {}
-unsafe impl Sync for Mapping {}
+// SAFETY: o conteúdo (`T`) só é acessado por operações atômicas.
+unsafe impl<T> Send for Mapping<T> {}
+unsafe impl<T> Sync for Mapping<T> {}
 
-impl Mapping {
-    fn new(file: &File, writable: bool) -> io::Result<Self> {
+impl<T> Mapping<T> {
+    pub(crate) fn new(file: &File, writable: bool) -> io::Result<Self> {
         let prot = if writable { ProtFlags::READ | ProtFlags::WRITE } else { ProtFlags::READ };
-        // SAFETY: mapeamento novo (ptr nulo) de um arquivo com pelo menos `SIZE` bytes.
-        let raw = unsafe { mmap(ptr::null_mut(), SIZE, prot, MapFlags::SHARED, file, 0) }?;
-        let ptr = NonNull::new(raw.cast::<Shared>()).ok_or_else(|| io::Error::other("mmap nulo"))?;
+        // SAFETY: mapeamento novo (ptr nulo) de um arquivo com pelo menos `size_of::<T>()` bytes.
+        let raw = unsafe { mmap(ptr::null_mut(), size_of::<T>(), prot, MapFlags::SHARED, file, 0) }?;
+        let ptr = NonNull::new(raw.cast::<T>()).ok_or_else(|| io::Error::other("mmap nulo"))?;
         Ok(Self { ptr })
     }
 
-    fn shared(&self) -> &Shared {
+    pub(crate) fn get(&self) -> &T {
         // SAFETY: o mapeamento vive enquanto `self` e é alinhado (mmap devolve página inteira).
         unsafe { self.ptr.as_ref() }
     }
+}
 
-    fn state(&self) -> &State {
-        &self.shared().state
-    }
-
-    fn params(&self) -> &Params {
-        &self.shared().params
-    }
-
-    fn selection(&self) -> &Selection {
-        &self.shared().selection
+impl<T> Drop for Mapping<T> {
+    fn drop(&mut self) {
+        // SAFETY: mapeado em `new` com este mesmo tamanho; ninguém usa depois do Drop.
+        let _ = unsafe { munmap(self.ptr.as_ptr().cast::<c_void>(), size_of::<T>()) };
     }
 }
 
-impl Drop for Mapping {
-    fn drop(&mut self) {
-        // SAFETY: mapeado em `new` com este mesmo tamanho; ninguém usa depois do Drop.
-        let _ = unsafe { munmap(self.ptr.as_ptr().cast::<c_void>(), SIZE) };
+impl Mapping<Shared> {
+    fn state(&self) -> &State {
+        &self.get().state
+    }
+
+    fn params(&self) -> &Params {
+        &self.get().params
+    }
+
+    fn selection(&self) -> &Selection {
+        &self.get().selection
     }
 }
 
 /// Lado do app de controle.
 pub struct Writer {
-    map: Mapping,
+    map: Mapping<Shared>,
 }
 
 impl Writer {
@@ -219,7 +228,7 @@ impl Writer {
 
 /// Lado da layer. Somente leitura.
 pub struct Reader {
-    map: Mapping,
+    map: Mapping<Shared>,
 }
 
 impl Reader {
