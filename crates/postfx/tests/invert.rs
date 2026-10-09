@@ -171,7 +171,7 @@ fn inverts_every_image_in_place() {
         }
 
         // O passe sob teste.
-        let target = Target { images: &images, format: FORMAT, extent: vk::Extent2D { width: W, height: H }, rest_layout: REST, queue_family: gpu.family };
+        let target = Target { images: &images, format: FORMAT, extent: vk::Extent2D { width: W, height: H }, rest_layout: REST, queue_family: gpu.family, init_command_buffer: None };
         let mut pass = InvertPass::new(&gpu.device, &gpu.memory, &target).expect("criar o passe");
         for i in 0..images.len() {
             let cbs = [pass.command_buffer(i)];

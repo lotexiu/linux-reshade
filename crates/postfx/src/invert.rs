@@ -24,6 +24,9 @@ pub struct Target<'a> {
     pub rest_layout: vk::ImageLayout,
     /// Família da fila em que os command buffers serão submetidos.
     pub queue_family: u32,
+    /// Chamado em cada command buffer logo após a alocação. Uma layer Vulkan usa isto para
+    /// `vkSetDeviceLoaderData`; sem isso, as layers abaixo não reconhecem o objeto. `None` fora de layers.
+    pub init_command_buffer: Option<&'a dyn Fn(vk::CommandBuffer) -> Result<(), vk::Result>>,
 }
 
 #[derive(Default)]
@@ -168,6 +171,11 @@ impl InvertPass {
                     .level(vk::CommandBufferLevel::PRIMARY)
                     .command_buffer_count(count as u32),
             )?;
+            if let Some(init) = target.init_command_buffer {
+                for &cb in &self.command_buffers {
+                    init(cb)?;
+                }
+            }
             for (i, &cb) in self.command_buffers.iter().enumerate() {
                 self.record(device, cb, i, &sets[i], target)?;
             }
