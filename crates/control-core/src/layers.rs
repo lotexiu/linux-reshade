@@ -26,15 +26,39 @@ pub fn effect_text(state: &EffectState) -> String {
     }
 }
 
+/// O número do processo dentro do id de uma layer (`layer-4321-998` → `4321`): o que o usuário digita em `--layer`.
+pub fn pid_of(id: &str) -> Option<&str> {
+    id.strip_prefix("layer-")?.split('-').next().filter(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// Acha a layer que o usuário quis dizer: o id inteiro, o número do processo, ou o nome do jogo (sem
+/// diferenciar maiúsculas; precisa ser único).
+pub fn find<'a>(layers: &'a [LiveLayer], query: &str) -> Result<&'a LiveLayer, String> {
+    let query = query.trim();
+    let describe = |l: &LiveLayer| format!("{} (pid {})", if l.status.app.is_empty() { &l.id } else { &l.status.app }, pid_of(&l.id).unwrap_or("?"));
+    if let Some(l) = layers.iter().find(|l| l.id == query) {
+        return Ok(l);
+    }
+    let by_pid: Vec<_> = layers.iter().filter(|l| pid_of(&l.id) == Some(query)).collect();
+    let matches = if by_pid.is_empty() { layers.iter().filter(|l| l.status.app.eq_ignore_ascii_case(query)).collect() } else { by_pid };
+    match matches.as_slice() {
+        [one] => Ok(one),
+        [] if layers.is_empty() => Err(format!("nenhum jogo com a layer ativa (procurei {query:?})")),
+        [] => Err(format!("nenhum jogo com a layer chamado {query:?}; abertos: {}", layers.iter().map(describe).collect::<Vec<_>>().join(", "))),
+        many => Err(format!("{query:?} serve a mais de um jogo ({}); use o número do processo", many.iter().map(|l| describe(l)).collect::<Vec<_>>().join(", "))),
+    }
+}
+
+type Row = (String, String, String, String, String);
+
 /// A tabela de jogos e swapchains. Vazia, explica como ligar a layer.
 pub fn render(layers: &[LiveLayer]) -> String {
-    let rows: Vec<(String, String, String, String)> = layers
+    let rows: Vec<Row> = layers
         .iter()
         .flat_map(|l| {
             let app = if l.status.app.is_empty() { l.id.clone() } else { l.status.app.clone() };
-            l.status.swapchains.iter().map(move |s| {
-                (app.clone(), format!("{}x{}", s.width, s.height), format_name(s.format), effect_text(&s.effect))
-            })
+            let pid = pid_of(&l.id).unwrap_or("?").to_string();
+            l.status.swapchains.iter().map(move |s| (app.clone(), pid.clone(), format!("{}x{}", s.width, s.height), format_name(s.format), effect_text(&s.effect)))
         })
         .collect();
     if rows.is_empty() {
@@ -42,11 +66,11 @@ pub fn render(layers: &[LiveLayer]) -> String {
         text.push_str("(abra um jogo com LINUX_RESHADE=1 nas opções de lançamento; a layer só informa depois de criar o swapchain)\n");
         return text;
     }
-    let width = |f: fn(&(String, String, String, String)) -> usize| rows.iter().map(f).max().unwrap_or(0);
-    let (w1, w2, w3) = (width(|r| r.0.chars().count()).max(4), width(|r| r.1.len()).max(9), width(|r| r.2.chars().count()).max(7));
-    let mut text = format!("{:<w1$}  {:<w2$}  {:<w3$}  EFEITO\n", "JOGO", "RESOLUÇÃO", "FORMATO");
-    for (app, size, format, effect) in &rows {
-        text.push_str(&format!("{app:<w1$}  {size:<w2$}  {format:<w3$}  {effect}\n"));
+    let width = |f: fn(&Row) -> usize| rows.iter().map(f).max().unwrap_or(0);
+    let (w1, w2, w3, w4) = (width(|r| r.0.chars().count()).max(4), width(|r| r.1.len()).max(3), width(|r| r.2.len()).max(9), width(|r| r.3.chars().count()).max(7));
+    let mut text = format!("{:<w1$}  {:<w2$}  {:<w3$}  {:<w4$}  EFEITO\n", "JOGO", "PID", "RESOLUÇÃO", "FORMATO");
+    for (app, pid, size, format, effect) in &rows {
+        text.push_str(&format!("{app:<w1$}  {pid:<w2$}  {size:<w3$}  {format:<w4$}  {effect}\n"));
     }
     text
 }
@@ -57,7 +81,11 @@ mod tests {
     use ipc::{LayerStatus, SwapchainStatus};
 
     fn live(app: &str, swapchains: Vec<SwapchainStatus>) -> LiveLayer {
-        LiveLayer { id: "layer-1-2".into(), status: LayerStatus { app: app.into(), swapchains } }
+        live_with(app, "layer-1-2", swapchains)
+    }
+
+    fn live_with(app: &str, id: &str, swapchains: Vec<SwapchainStatus>) -> LiveLayer {
+        LiveLayer { id: id.into(), status: LayerStatus { app: app.into(), swapchains } }
     }
 
     fn sc(w: u32, h: u32, format: i32, effect: EffectState) -> SwapchainStatus {
@@ -87,6 +115,7 @@ mod tests {
         let col = |l: &str| {
             ["EFEITO", "pronto", "aguardando", "indisponível"].iter().find_map(|w| l.find(w)).map(|byte| l[..byte].chars().count())
         };
+        assert!(lines[1].contains("  1  "), "mostra o pid: {text}");
         assert_eq!(col(lines[0]), col(lines[1]));
         assert_eq!(col(lines[0]), col(lines[3]));
     }
@@ -100,5 +129,31 @@ mod tests {
     #[test]
     fn a_layer_without_a_name_falls_back_to_its_id() {
         assert!(render(&[live("", vec![sc(10, 10, 44, EffectState::Idle)])]).contains("layer-1-2"));
+    }
+
+    #[test]
+    fn the_pid_is_read_from_the_id() {
+        assert_eq!(pid_of("layer-4321-998"), Some("4321"));
+        assert_eq!(pid_of("layer-x-1"), None);
+        assert_eq!(pid_of("ctl-1-2"), None);
+    }
+
+    #[test]
+    fn find_accepts_id_pid_or_name_and_explains_failures() {
+        let layers = [
+            live_with("Idols of Ash", "layer-100-1", vec![]),
+            live_with("RocketLeague", "layer-200-2", vec![]),
+            live_with("vkcube", "layer-300-3", vec![]),
+            live_with("vkcube", "layer-400-4", vec![]),
+        ];
+        assert_eq!(find(&layers, "layer-100-1").unwrap().id, "layer-100-1");
+        assert_eq!(find(&layers, "200").unwrap().id, "layer-200-2");
+        assert_eq!(find(&layers, "rocketleague").unwrap().id, "layer-200-2", "nome sem diferenciar maiúsculas");
+        assert_eq!(find(&layers, " 300 ").unwrap().id, "layer-300-3");
+        let ambiguous = find(&layers, "vkcube").unwrap_err();
+        assert!(ambiguous.contains("pid 300") && ambiguous.contains("pid 400"), "{ambiguous}");
+        let missing = find(&layers, "nada").unwrap_err();
+        assert!(missing.contains("Idols of Ash") && missing.contains("RocketLeague"), "{missing}");
+        assert!(find(&[], "1").unwrap_err().contains("nenhum jogo"));
     }
 }

@@ -3,7 +3,34 @@
 
 use fx_bundle::manifest::{Scalar, Uniform, Value};
 use fx_bundle::{Bundle, uniforms};
+use ipc::{ChannelWriter, ParamSource, ParamStore, PublishError, Writer};
 use std::fmt;
+
+/// Os parâmetros de **um jogo** sobre os globais: lê o bloco do jogo e, se ele não tem, o global (o jogo
+/// começa herdando os valores de todos); grava sempre no canal do jogo.
+pub struct Layered<'a> {
+    pub own: &'a ChannelWriter,
+    pub global: &'a Writer,
+}
+
+impl ParamSource for Layered<'_> {
+    fn read_params(&self, bundle_id: u64, out: &mut [u8]) -> Option<usize> {
+        self.own.read_params(bundle_id, out).or_else(|| self.global.read_params(bundle_id, out))
+    }
+
+    fn published_bundle(&self) -> u64 {
+        match self.own.published_bundle() {
+            0 => self.global.published_bundle(),
+            id => id,
+        }
+    }
+}
+
+impl ParamStore for Layered<'_> {
+    fn publish_params(&self, bundle_id: u64, data: &[u8]) -> Result<(), PublishError> {
+        self.own.publish_params(bundle_id, data)
+    }
+}
 
 #[derive(Debug)]
 pub enum Error {
@@ -88,7 +115,7 @@ fn type_name(u: &Uniform) -> String {
 }
 
 /// A imagem atual do buffer de uniforms: o que está publicado para este efeito, ou os padrões.
-pub fn current_block(bundle: &Bundle, state: &ipc::Writer) -> Vec<u8> {
+pub fn current_block(bundle: &Bundle, state: &dyn ipc::ParamStore) -> Vec<u8> {
     let total = bundle.manifest.total_uniform_size as usize;
     let mut block = vec![0u8; total];
     match state.read_params(bundle.params_id(), &mut block) {
@@ -98,7 +125,7 @@ pub fn current_block(bundle: &Bundle, state: &ipc::Writer) -> Vec<u8> {
 }
 
 /// Todos os uniforms do efeito, com valor atual e padrão.
-pub fn describe(bundle: &Bundle, state: &ipc::Writer) -> Vec<Row> {
+pub fn describe(bundle: &Bundle, state: &dyn ipc::ParamStore) -> Vec<Row> {
     let block = current_block(bundle, state);
     let defaults = uniforms::default_block(&bundle.manifest);
     bundle
@@ -129,7 +156,7 @@ fn lookup<'a>(bundle: &'a Bundle, name: &str) -> Result<&'a Uniform, Error> {
 }
 
 /// O valor atual de um parâmetro.
-pub fn get(bundle: &Bundle, state: &ipc::Writer, name: &str) -> Result<Vec<f64>, Error> {
+pub fn get(bundle: &Bundle, state: &dyn ipc::ParamStore, name: &str) -> Result<Vec<f64>, Error> {
     let u = lookup(bundle, name)?;
     uniforms::decode(u, &current_block(bundle, state)).ok_or_else(|| Error::BadValue(format!("{name:?} não é um escalar nem um vetor")))
 }
@@ -143,7 +170,7 @@ pub struct Change {
 }
 
 /// Altera um parâmetro e publica o bloco completo para a layer.
-pub fn set(bundle: &Bundle, state: &ipc::Writer, name: &str, values: &[f64]) -> Result<Change, Error> {
+pub fn set(bundle: &Bundle, state: &dyn ipc::ParamStore, name: &str, values: &[f64]) -> Result<Change, Error> {
     let u = lookup(bundle, name)?;
     let bytes = uniforms::encode(u, values).map_err(|e| Error::BadValue(e.to_string()))?;
     let mut block = current_block(bundle, state);
@@ -164,7 +191,7 @@ pub fn set(bundle: &Bundle, state: &ipc::Writer, name: &str, values: &[f64]) -> 
 }
 
 /// Volta todos os parâmetros aos padrões do manifesto.
-pub fn reset(bundle: &Bundle, state: &ipc::Writer) -> Result<(), Error> {
+pub fn reset(bundle: &Bundle, state: &dyn ipc::ParamStore) -> Result<(), Error> {
     state.publish_params(bundle.params_id(), &uniforms::default_block(&bundle.manifest)).map_err(Error::Publish)
 }
 
@@ -318,5 +345,24 @@ mod tests {
         assert_eq!(parse_values(&a(&["0.1,0.2", "0.3"])).unwrap(), vec![0.1, 0.2, 0.3]);
         assert_eq!(parse_values(&a(&["on", "off", "true"])).unwrap(), vec![1.0, 0.0, 1.0]);
         assert!(parse_values(&a(&["abc"])).is_err());
+    }
+
+    #[test]
+    fn a_game_starts_from_the_global_values_and_then_diverges() {
+        let (bundle, global) = setup("layered");
+        let dir = std::env::temp_dir().join(format!("lr-control-params-{}-layered-own", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let own = ipc::ChannelWriter::create_in(&dir, "layer-1-1").unwrap();
+        set(&bundle, &global, "Strength", &[0.25]).unwrap();
+
+        let game = Layered { own: &own, global: &global };
+        assert_eq!(get(&bundle, &game, "Strength").unwrap(), vec![0.25], "herda o valor global");
+        set(&bundle, &game, "Strength", &[0.75]).unwrap();
+        assert_eq!(get(&bundle, &game, "Strength").unwrap(), vec![0.75]);
+        assert_eq!(get(&bundle, &global, "Strength").unwrap(), vec![0.25], "o global não mudou");
+
+        reset(&bundle, &game).unwrap();
+        assert_eq!(get(&bundle, &game, "Strength").unwrap(), vec![1.0], "restaurar no jogo volta ao padrão do efeito");
+        assert_eq!(get(&bundle, &global, "Strength").unwrap(), vec![0.25]);
     }
 }

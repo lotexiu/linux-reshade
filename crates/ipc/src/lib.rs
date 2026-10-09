@@ -167,6 +167,8 @@ impl Mapping<Shared> {
 /// Lado do app de controle.
 pub struct Writer {
     map: Mapping<Shared>,
+    /// O diretório do estado: é onde ficam também os canais das layers.
+    dir: PathBuf,
 }
 
 impl Writer {
@@ -193,7 +195,7 @@ impl Writer {
         } else if state.version.load(Ordering::Relaxed) != VERSION {
             return Err(io::Error::other("versão do estado incompatível; apague o arquivo"));
         }
-        Ok(Self { map })
+        Ok(Self { map, dir: path.parent().map(std::path::Path::to_path_buf).unwrap_or_default() })
     }
 
     pub fn set_effects_enabled(&self, on: bool) {
@@ -244,6 +246,24 @@ impl Writer {
     /// O efeito atualmente selecionado, se houver.
     pub fn selection(&self) -> SelectionRead {
         read_selection(self.map.selection())
+    }
+
+    /// O canal de uma layer (a escolha e os parâmetros só dela), criado se ainda não existe.
+    pub fn channel(&self, layer_id: &str) -> io::Result<ChannelWriter> {
+        ChannelWriter::create_in(&self.dir, layer_id)
+    }
+
+    /// A escolha própria de uma layer, sem criar o canal: `Inherit` se ela nunca teve uma.
+    pub fn layer_selection(&self, layer_id: &str) -> ChannelSelection {
+        match ChannelReader::open_in(&self.dir, layer_id) {
+            Ok(Some(channel)) => channel.read_selection(),
+            _ => ChannelSelection::Inherit,
+        }
+    }
+
+    /// Apaga os canais de jogos que já fecharam.
+    pub fn prune_channels(&self) -> usize {
+        prune_channels_in(&self.dir)
     }
 }
 

@@ -1,6 +1,7 @@
 //! Escolher o efeito que a layer executa.
 
 use crate::compiler::{CompileError, Compiler, Ensured};
+use ipc::{LiveLayer, SelectionStore};
 
 /// O que escolher um efeito por nome fez.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -9,12 +10,12 @@ pub struct Outcome {
     pub prepared: Vec<(u32, u32, bool)>,
 }
 
-/// Escolhe o efeito `name`: compila já para as resoluções dos jogos abertos (assim aparece sem esperar) e
-/// publica o modelo `<cache>/<Nome>-{W}x{H}`. As resoluções que surgirem depois ficam para o vigia.
-pub fn by_name(compiler: &Compiler, state: &ipc::Writer, name: &str) -> Result<Outcome, CompileError> {
+/// Escolhe o efeito `name`: compila já para as resoluções das `layers` dadas (assim aparece sem esperar) e
+/// publica no `store` o modelo `<cache>/<Nome>-{W}x{H}`. As resoluções que surgirem depois ficam para o
+/// vigia. `store` é o canal global (todas as layers vivas) ou o de um jogo (só a layer dele).
+pub fn by_name(compiler: &Compiler, store: &dyn SelectionStore, name: &str, layers: &[LiveLayer]) -> Result<Outcome, CompileError> {
     compiler.source(name)?; // valida o nome e confere que o efeito existe antes de mexer em qualquer coisa
-    let mut resolutions: Vec<(u32, u32)> = ipc::live_layers()
-        .unwrap_or_default()
+    let mut resolutions: Vec<(u32, u32)> = layers
         .iter()
         .flat_map(|l| &l.status.swapchains)
         .filter(|s| !matches!(s.effect, ipc::EffectState::Unavailable(_)))
@@ -22,18 +23,18 @@ pub fn by_name(compiler: &Compiler, state: &ipc::Writer, name: &str) -> Result<O
         .collect();
     resolutions.sort_unstable();
     resolutions.dedup();
-    prepare(compiler, state, name, &resolutions)
+    prepare(compiler, store, name, &resolutions)
 }
 
 /// O mesmo, para resoluções dadas (separado para poder ser testado sem jogos abertos).
-pub fn prepare(compiler: &Compiler, state: &ipc::Writer, name: &str, resolutions: &[(u32, u32)]) -> Result<Outcome, CompileError> {
+pub fn prepare(compiler: &Compiler, store: &dyn SelectionStore, name: &str, resolutions: &[(u32, u32)]) -> Result<Outcome, CompileError> {
     compiler.source(name)?;
     let mut outcome = Outcome::default();
     for &(w, h) in resolutions {
         let fresh = matches!(compiler.ensure(name, w, h)?, Ensured::Compiled(_));
         outcome.prepared.push((w, h, fresh));
     }
-    state.publish_selection(&compiler.template(name)).map_err(|e| CompileError::Io(format!("não consegui publicar a escolha: {e}")))?;
+    store.publish_selection(&compiler.template(name)).map_err(|e| CompileError::Io(format!("não consegui publicar a escolha: {e}")))?;
     Ok(outcome)
 }
 
