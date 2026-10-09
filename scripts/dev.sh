@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Utilitário de desenvolvimento. Idempotente; serve para trocar de máquina sem esforço.
-# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|placement|logs> [args]
+# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|hotkey|placement|logs> [args]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -134,6 +134,32 @@ cmd_smoke() {
   [ "$ok" = 1 ] && say "smoke: passou" || { warn "smoke: falhou (log em $LOG_FILE)"; exit 1; }
 }
 
+# Teste interativo do atalho global: o vkcube roda, o lrctl daemon escuta, e você aperta o atalho.
+# Não faz parte do smoke porque depende de uma pessoa (e, na primeira vez, do diálogo do GNOME).
+cmd_hotkey() {
+  cmd_install
+  cmd_build -p linux-reshade-control
+  local lrctl="$ROOT/target/release/lrctl" daemon_log="${LOG_FILE%.log}-daemon.log"
+  "$lrctl" off >/dev/null
+  : >"$LOG_FILE"; : >"$daemon_log"
+  "$lrctl" daemon >"$daemon_log" 2>&1 &
+  local daemon=$!
+  env "$ENABLE_VAR=1" LINUX_RESHADE_LOG="$LOG_FILE" timeout 90 vkcube --c 5400 >/dev/null 2>&1 &
+  local cube=$!
+  trap 'kill "$daemon" "$cube" 2>/dev/null || true' EXIT
+  for _ in $(seq 1 100); do grep -q "atalho" "$daemon_log" && break; sleep 0.2; done
+  cat "$daemon_log"
+  say "aperte o atalho acima (aceite o diálogo do GNOME se aparecer); aguardando até 60 s"
+  for _ in $(seq 1 120); do grep -q "efeitos LIGADOS" "$LOG_FILE" && break; sleep 0.5; done
+  if grep -q "efeitos LIGADOS" "$LOG_FILE"; then
+    say "ligado pelo atalho. Aperte de novo para desligar (aguardando até 30 s)"
+    for _ in $(seq 1 60); do grep -q "efeitos DESLIGADOS" "$LOG_FILE" && break; sleep 0.5; done
+  fi
+  echo "--- daemon"; cat "$daemon_log"; echo "--- layer"; grep -E "efeitos|estado" "$LOG_FILE"
+  grep -q "efeitos LIGADOS" "$LOG_FILE" && grep -q "efeitos DESLIGADOS" "$LOG_FILE" \
+    && say "hotkey: passou" || { warn "hotkey: não viu o ciclo ligar/desligar"; exit 1; }
+}
+
 # Extensão do GNOME Shell que posiciona o vkcube (no Wayland o cliente não escolhe a posição).
 PLACEMENT_UUID="vkcube-placement@linux-reshade.dev"
 PLACEMENT_DIR="$DATA_HOME/gnome-shell/extensions/$PLACEMENT_UUID"
@@ -166,7 +192,8 @@ case "${1:-}" in
   uninstall) cmd_uninstall ;;
   run)       shift; cmd_run "$@" ;;
   smoke)     cmd_smoke ;;
+  hotkey)    cmd_hotkey ;;
   placement) shift; cmd_placement "$@" ;;
   logs)      shift; cmd_logs "$@" ;;
-  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|placement|logs>" >&2; exit 2 ;;
+  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|hotkey|placement|logs>" >&2; exit 2 ;;
 esac
