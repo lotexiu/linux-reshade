@@ -2,7 +2,7 @@
 //!
 //! Uso normal: `lrpanel`. Para testes automáticos: `--smoke <Efeito>` aciona os widgets e confere o
 //! resultado (sai com código diferente de 0 se algo falhar); `--effect <Efeito>` escolhe um efeito;
-//! `--screenshot <arquivo.png>` grava a janela; `--hold <ms>` a mantém aberta antes de sair.
+//! `--screenshot <arquivo.png>` grava a janela; `--hold <ms>` a mantém aberta antes de sair; `--wait <ms>` espera antes de agir.
 
 mod controls;
 mod games;
@@ -20,6 +20,8 @@ use std::time::Duration;
 struct Options {
     smoke: Option<String>,
     screenshot: Option<String>,
+    /// Espera antes de agir (para um jogo abrir depois do painel).
+    wait_ms: u64,
     /// Escolhe este efeito na lista (e desfaz ao sair).
     effect: Option<String>,
     /// Mantém a janela aberta por este tempo antes de sair, para outro processo conferir o estado.
@@ -28,7 +30,7 @@ struct Options {
 
 impl Options {
     fn is_test_run(&self) -> bool {
-        self.smoke.is_some() || self.screenshot.is_some() || self.effect.is_some() || self.hold_ms > 0
+        self.smoke.is_some() || self.screenshot.is_some() || self.effect.is_some() || self.hold_ms > 0 || self.wait_ms > 0
     }
 }
 
@@ -39,9 +41,10 @@ fn parse_args() -> Result<Options, String> {
         match arg.as_str() {
             "--smoke" => options.smoke = Some(args.next().ok_or("--smoke precisa do nome de um efeito")?),
             "--effect" => options.effect = Some(args.next().ok_or("--effect precisa do nome de um efeito")?),
+            "--wait" => options.wait_ms = args.next().and_then(|v| v.parse().ok()).ok_or("--wait precisa de um tempo em milissegundos")?,
             "--hold" => options.hold_ms = args.next().and_then(|v| v.parse().ok()).ok_or("--hold precisa de um tempo em milissegundos")?,
             "--screenshot" => options.screenshot = Some(args.next().ok_or("--screenshot precisa de um arquivo .png")?),
-            other => return Err(format!("opção desconhecida: {other}\nuso: lrpanel [--smoke <Efeito>] [--effect <Efeito>] [--screenshot <arquivo.png>] [--hold <ms>]")),
+            other => return Err(format!("opção desconhecida: {other}\nuso: lrpanel [--smoke <Efeito>] [--effect <Efeito>] [--screenshot <arquivo.png>] [--wait <ms>] [--hold <ms>]")),
         }
     }
     Ok(options)
@@ -104,7 +107,7 @@ async fn test_run(app: gtk::Application, ui: Rc<window::Ui>, options: Rc<Options
         eprintln!("lrpanel: {why}");
         *exit.borrow_mut() = glib::ExitCode::FAILURE;
     };
-    glib::timeout_future(Duration::from_millis(600)).await;
+    glib::timeout_future(Duration::from_millis(600 + options.wait_ms)).await;
 
     if let Some(name) = &options.smoke {
         let problems = ui.smoke(name);
