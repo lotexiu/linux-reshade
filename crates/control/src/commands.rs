@@ -7,7 +7,7 @@ use control_core::compiler::Compiler;
 use crate::daemon;
 use control_core::{layers, location, params, select, watch};
 use fx_bundle::Bundle;
-use ipc::SelectionRead;
+use ipc::{ChannelSelection, LiveLayer, ParamStore, SelectionRead, SelectionStore};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -20,10 +20,73 @@ fn load(dir: &Path) -> Result<Bundle, String> {
     Bundle::load(dir).map_err(|e| format!("{}: {e}", dir.display()))
 }
 
+/// A quem um comando se dirige: a todos os jogos (canal global) ou a um só (canal próprio dele).
+enum Target<'a> {
+    All(&'a ipc::Writer),
+    Game { layer: LiveLayer, channel: ipc::ChannelWriter, global: &'a ipc::Writer },
+}
+
+impl<'a> Target<'a> {
+    /// `--layer <jogo>` (ou nenhum: todos). Falha se o jogo não está aberto.
+    fn open(layer: Option<&str>, state: &'a ipc::Writer) -> Result<Self, String> {
+        let Some(query) = layer else { return Ok(Target::All(state)) };
+        let layers = ipc::live_layers().map_err(|e| format!("não consegui listar as layers: {e}"))?;
+        let found = layers::find(&layers, query)?.clone();
+        let channel = state.channel(&found.id).map_err(|e| format!("não consegui abrir o canal de {query}: {e}"))?;
+        Ok(Target::Game { layer: found, channel, global: state })
+    }
+
+    fn selection_store(&self) -> &dyn SelectionStore {
+        match self {
+            Target::All(state) => *state,
+            Target::Game { channel, .. } => channel,
+        }
+    }
+
+    /// Os parâmetros do alvo: os globais, ou os do jogo sobre os globais.
+    fn with_params<R>(&self, f: impl FnOnce(&dyn ParamStore) -> R) -> R {
+        match self {
+            Target::All(state) => f(*state),
+            Target::Game { channel, global, .. } => f(&params::Layered { own: channel, global }),
+        }
+    }
+
+    /// As layers a que uma escolha se aplica: todas as vivas, ou só a do jogo.
+    fn layers(&self) -> Vec<LiveLayer> {
+        match self {
+            Target::All(_) => ipc::live_layers().unwrap_or_default(),
+            Target::Game { layer, .. } => vec![layer.clone()],
+        }
+    }
+
+    /// "todos os jogos" ou "vkcube (pid 123)".
+    fn label(&self) -> String {
+        match self {
+            Target::All(_) => "todos os jogos".into(),
+            Target::Game { layer, .. } => {
+                let app = if layer.status.app.is_empty() { layer.id.as_str() } else { layer.status.app.as_str() };
+                format!("{app} (pid {})", layers::pid_of(&layer.id).unwrap_or("?"))
+            }
+        }
+    }
+
+    /// A escolha de efeito que o alvo tem hoje, como os comandos de parâmetros a entendem.
+    fn selection(&self) -> Result<SelectionRead, String> {
+        match self {
+            Target::All(state) => Ok(state.selection()),
+            Target::Game { layer, global, .. } => match global.layer_selection(&layer.id) {
+                ChannelSelection::Path(path) => Ok(SelectionRead::Path(path)),
+                ChannelSelection::NoEffect => Err(format!("{} está sem efeito; escolha um com 'lrctl use <Nome> --layer ...'", self.label())),
+                ChannelSelection::Inherit | ChannelSelection::Unstable => Ok(global.selection()),
+            },
+        }
+    }
+}
+
 /// O bundle dos comandos de parâmetros: `--bundle`, senão o escolhido com `use`, senão o do ambiente.
-fn bundle_for(explicit: Option<PathBuf>, state: &ipc::Writer) -> Result<Bundle, String> {
+fn bundle_for(explicit: Option<PathBuf>, target: &Target) -> Result<Bundle, String> {
     let env = std::env::var_os("LINUX_RESHADE_BUNDLE").map(PathBuf::from);
-    let dir = cli::resolve_bundle(explicit, state.selection(), env)?;
+    let dir = cli::resolve_bundle(explicit, target.selection()?, env)?;
     // Uma escolha por nome é um modelo com {W}x{H}: para ler os controles basta o bundle de uma resolução.
     if dir.to_string_lossy().contains("{W}") {
         let compiler = Compiler::from_env()?;
@@ -79,14 +142,11 @@ pub fn run(command: Command, state: &ipc::Writer) -> ExitCode {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => fail(e),
         },
-        Command::Use { bundle: None } => {
-            state.clear_selection();
-            println!("nenhum efeito escolhido (a layer volta a usar LINUX_RESHADE_BUNDLE, se o jogo tiver)");
-            ExitCode::SUCCESS
-        }
-        Command::Use { bundle: Some(arg) } if !cli::is_path(&arg.to_string_lossy()) => select_by_name(&arg.to_string_lossy(), state),
-        Command::Use { bundle: Some(dir) } => select(&dir, state),
-        Command::Current => current(state),
+        Command::Use { bundle: None, layer } => with_target(layer, state, use_none),
+        Command::Inherit { layer } => with_target(Some(layer), state, inherit),
+        Command::Use { bundle: Some(arg), layer } if !cli::is_path(&arg.to_string_lossy()) => with_target(layer, state, |t| select_by_name(&arg.to_string_lossy(), t)),
+        Command::Use { bundle: Some(dir), layer } => with_target(layer, state, |t| select(&dir, t)),
+        Command::Current { layer } => with_target(layer, state, current),
         Command::Layers => {
             match ipc::live_layers() {
                 Ok(list) => print!("{}", layers::render(&list)),
@@ -115,8 +175,8 @@ pub fn run(command: Command, state: &ipc::Writer) -> ExitCode {
             }
             Err(e) => fail(e),
         },
-        Command::Uniforms { bundle } => with_bundle(bundle, state, |bundle| {
-            for row in params::describe(bundle, state) {
+        Command::Uniforms { bundle, layer } => with_bundle(bundle, layer, state, |bundle, target| {
+            for row in target.with_params(|store| params::describe(bundle, store)) {
                 match &row.source {
                     Some(source) => println!("{:<22} {:<8} (preenchido pelo runtime: {source})", row.name, row.type_name),
                     None => {
@@ -129,21 +189,21 @@ pub fn run(command: Command, state: &ipc::Writer) -> ExitCode {
             }
             ExitCode::SUCCESS
         }),
-        Command::Get { bundle, name } => with_bundle(bundle, state, |bundle| match params::get(bundle, state, &name) {
+        Command::Get { bundle, layer, name } => with_bundle(bundle, layer, state, |bundle, target| match target.with_params(|store| params::get(bundle, store, &name)) {
             Ok(v) => {
                 println!("{}", params::fmt_values(&v));
                 ExitCode::SUCCESS
             }
             Err(e) => fail(e),
         }),
-        Command::Set { bundle, name, values } => with_bundle(bundle, state, |bundle| {
+        Command::Set { bundle, layer, name, values } => with_bundle(bundle, layer, state, |bundle, target| {
             let parsed = match params::parse_values(&values) {
                 Ok(v) => v,
                 Err(e) => return fail(e),
             };
-            match params::set(bundle, state, &name, &parsed) {
+            match target.with_params(|store| params::set(bundle, store, &name, &parsed)) {
                 Ok(change) => {
-                    println!("{name}: {} -> {}", params::fmt_values(&change.old), params::fmt_values(&change.new));
+                    println!("{name}: {} -> {}  ({})", params::fmt_values(&change.old), params::fmt_values(&change.new), target.label());
                     for w in &change.warnings {
                         eprintln!("aviso: {w}");
                     }
@@ -152,9 +212,9 @@ pub fn run(command: Command, state: &ipc::Writer) -> ExitCode {
                 Err(e) => fail(e),
             }
         }),
-        Command::Reset { bundle } => with_bundle(bundle, state, |bundle| match params::reset(bundle, state) {
+        Command::Reset { bundle, layer } => with_bundle(bundle, layer, state, |bundle, target| match target.with_params(|store| params::reset(bundle, store)) {
             Ok(()) => {
-                println!("parâmetros de volta aos valores padrão");
+                println!("parâmetros de volta aos valores padrão ({})", target.label());
                 ExitCode::SUCCESS
             }
             Err(e) => fail(e),
@@ -167,15 +227,46 @@ fn report(action: Action, state: &ipc::Writer) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn with_bundle(explicit: Option<PathBuf>, state: &ipc::Writer, f: impl FnOnce(&Bundle) -> ExitCode) -> ExitCode {
-    match bundle_for(explicit, state) {
-        Ok(bundle) => f(&bundle),
+fn with_target(layer: Option<String>, state: &ipc::Writer, f: impl FnOnce(&Target) -> ExitCode) -> ExitCode {
+    match Target::open(layer.as_deref(), state) {
+        Ok(target) => f(&target),
         Err(e) => fail(e),
     }
 }
 
+fn with_bundle(explicit: Option<PathBuf>, layer: Option<String>, state: &ipc::Writer, f: impl FnOnce(&Bundle, &Target) -> ExitCode) -> ExitCode {
+    with_target(layer, state, |target| match bundle_for(explicit, target) {
+        Ok(bundle) => f(&bundle, target),
+        Err(e) => fail(e),
+    })
+}
+
+/// `lrctl use none`: sem escolha global; com `--layer`, sem efeito só naquele jogo.
+fn use_none(target: &Target) -> ExitCode {
+    match target {
+        Target::All(state) => {
+            state.clear_selection();
+            println!("nenhum efeito escolhido (a layer volta a usar LINUX_RESHADE_BUNDLE, se o jogo tiver)");
+        }
+        Target::Game { channel, .. } => {
+            channel.publish_no_effect();
+            println!("{}: sem efeito (mesmo que haja um escolhido para todos)", target.label());
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+/// `lrctl use inherit --layer X`: o jogo volta a seguir a escolha de todos.
+fn inherit(target: &Target) -> ExitCode {
+    if let Target::Game { channel, .. } = target {
+        channel.inherit();
+        println!("{}: volta a seguir a escolha de todos os jogos", target.label());
+    }
+    ExitCode::SUCCESS
+}
+
 /// `lrctl use <dir>`: confere que o bundle é válido antes de pedir à layer que o carregue.
-fn select(dir: &Path, state: &ipc::Writer) -> ExitCode {
+fn select(dir: &Path, target: &Target) -> ExitCode {
     let abs = match std::fs::canonicalize(dir) {
         Ok(p) => p,
         Err(e) => return fail(format!("{}: {e}", dir.display())),
@@ -185,10 +276,10 @@ fn select(dir: &Path, state: &ipc::Writer) -> ExitCode {
         Err(e) => return fail(e),
     };
     let Some(text) = abs.to_str() else { return fail("o caminho do bundle não é UTF-8") };
-    if let Err(e) = state.publish_selection(text) {
+    if let Err(e) = target.selection_store().publish_selection(text) {
         return fail(format!("não consegui publicar a escolha: {e}"));
     }
-    println!("efeito escolhido: {}", describe_bundle(&bundle));
+    println!("efeito escolhido para {}: {}", target.label(), describe_bundle(&bundle));
     println!("a layer o carrega no próximo frame com os efeitos ligados (o tamanho precisa ser o do jogo)");
     ExitCode::SUCCESS
 }
@@ -196,19 +287,19 @@ fn select(dir: &Path, state: &ipc::Writer) -> ExitCode {
 /// `lrctl use Sepia`: escolhe um efeito pelo nome. Compila já para as resoluções dos jogos abertos
 /// (assim aparece sem esperar) e publica o modelo `<cache>/Sepia-{W}x{H}`; o vigia cuida das resoluções
 /// que surgirem depois.
-fn select_by_name(name: &str, state: &ipc::Writer) -> ExitCode {
+fn select_by_name(name: &str, target: &Target) -> ExitCode {
     let compiler = match Compiler::from_env() {
         Ok(c) => c,
         Err(e) => return fail(e),
     };
-    let outcome = match select::by_name(&compiler, state, name) {
+    let outcome = match select::by_name(&compiler, target.selection_store(), name, &target.layers()) {
         Ok(o) => o,
         Err(e) => return fail(e),
     };
     for (w, h, fresh) in &outcome.prepared {
         println!("{name} {w}x{h}: {}", if *fresh { "compilado" } else { "já estava compilado" });
     }
-    println!("efeito escolhido: {name}");
+    println!("efeito escolhido para {}: {name}", target.label());
     if outcome.prepared.is_empty() {
         println!("nenhum jogo com a layer aberto agora; ele é compilado quando um aparecer (o 'lrctl daemon' ou 'lrctl watch' precisa estar rodando)");
     } else {
@@ -217,8 +308,26 @@ fn select_by_name(name: &str, state: &ipc::Writer) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn current(state: &ipc::Writer) -> ExitCode {
-    match state.selection() {
+fn current(target: &Target) -> ExitCode {
+    if let Target::Game { layer, global, .. } = target {
+        match global.layer_selection(&layer.id) {
+            ChannelSelection::Path(_) => println!("{}: escolha própria", target.label()),
+            ChannelSelection::NoEffect => {
+                println!("{}: sem efeito (escolha própria)", target.label());
+                return ExitCode::SUCCESS;
+            }
+            ChannelSelection::Inherit | ChannelSelection::Unstable => println!("{}: sem escolha própria; segue a de todos os jogos", target.label()),
+        }
+    }
+    match target.selection() {
+        Ok(selection) => describe_selection(selection),
+        Err(e) => return fail(e),
+    }
+    ExitCode::SUCCESS
+}
+
+fn describe_selection(selection: SelectionRead) {
+    match selection {
         SelectionRead::Path(path) if path.contains("{W}") => match Compiler::from_env().ok().and_then(|c| c.name_from_template(&path)) {
             Some(name) => println!("{name} (por nome; um bundle por resolução em {path})"),
             None => println!("{path} (modelo por resolução)"),
@@ -235,5 +344,4 @@ fn current(state: &ipc::Writer) -> ExitCode {
         }
         SelectionRead::Unstable => println!("a escolha está sendo atualizada; tente de novo"),
     }
-    ExitCode::SUCCESS
 }

@@ -11,7 +11,8 @@ uso: lrctl <comando> [opções]
   use <Nome>                      escolhe um efeito pelo nome (ex.: Sepia); é compilado para a
                                   resolução de cada jogo aberto, e para as novas que aparecerem
   use <diretório-do-bundle>       escolhe um bundle já compilado (fixo numa resolução)
-  use none                        desfaz a escolha
+  use none                        desfaz a escolha (com --layer: sem efeito só naquele jogo)
+  use inherit --layer <jogo>      o jogo volta a seguir a escolha de todos
   current                         mostra o efeito escolhido
   effects                         lista os efeitos que podem ser escolhidos por nome
   layers                          mostra os jogos com a layer ativa: resolução, formato, estado
@@ -26,9 +27,13 @@ uso: lrctl <comando> [opções]
   set <nome> <valor...>           altera um parâmetro (vetores: 0.1 0.2 0.3 ou 0.1,0.2,0.3)
   reset                           volta todos os parâmetros aos valores padrão
 
-opções dos comandos de parâmetros:
-  --bundle <diretório>            o efeito; sem isso, vale o escolhido com 'use' e, na falta dele,
-                                  a variável LINUX_RESHADE_BUNDLE";
+opções:
+  --layer <jogo>                  vale só para um jogo aberto, dado por número do processo (coluna PID
+                                  de 'lrctl layers') ou nome; vale em use, current, uniforms, get, set
+                                  e reset. Sem isso o comando vale para todos os jogos. A escolha e os
+                                  parâmetros do jogo têm prioridade sobre os de todos.
+  --bundle <diretório>            o efeito dos comandos de parâmetros; sem isso, vale o escolhido com
+                                  'use' e, na falta dele, a variável LINUX_RESHADE_BUNDLE";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
@@ -42,14 +47,16 @@ pub enum Command {
     Effects,
     /// Mostra a configuração de pastas (`init: None`) ou prepara uma pasta de dados.
     Config { init: Option<PathBuf> },
-    /// Escolhe o efeito (`Some`) ou desfaz a escolha (`None`).
-    Use { bundle: Option<PathBuf> },
-    Current,
+    /// Escolhe o efeito (`Some`) ou desfaz a escolha (`None`). Com `layer`, só para aquele jogo.
+    Use { bundle: Option<PathBuf>, layer: Option<String> },
+    /// O jogo `layer` volta a seguir a escolha global.
+    Inherit { layer: String },
+    Current { layer: Option<String> },
     /// Os comandos de parâmetros levam o `--bundle` explícito, se houve; quem decide o padrão é [`resolve_bundle`].
-    Uniforms { bundle: Option<PathBuf> },
-    Get { bundle: Option<PathBuf>, name: String },
-    Set { bundle: Option<PathBuf>, name: String, values: Vec<String> },
-    Reset { bundle: Option<PathBuf> },
+    Uniforms { bundle: Option<PathBuf>, layer: Option<String> },
+    Get { bundle: Option<PathBuf>, layer: Option<String>, name: String },
+    Set { bundle: Option<PathBuf>, layer: Option<String>, name: String, values: Vec<String> },
+    Reset { bundle: Option<PathBuf>, layer: Option<String> },
 }
 
 /// `lrctl use X` escolhe por *nome* ou por *diretório*? Um diretório que existe, ou qualquer coisa com
@@ -72,8 +79,9 @@ pub fn resolve_bundle(explicit: Option<PathBuf>, selected: ipc::SelectionRead, e
 
 /// `args` sem o nome do programa.
 pub fn parse(args: &[String]) -> Result<Command, String> {
-    // Separa `--bundle X` (em qualquer posição) do resto.
+    // Separa `--bundle X` e `--layer X` (em qualquer posição) do resto.
     let mut bundle: Option<PathBuf> = None;
+    let mut layer: Option<String> = None;
     let mut rest = Vec::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -81,19 +89,26 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
             bundle = Some(PathBuf::from(it.next().ok_or("--bundle precisa de um diretório")?));
         } else if let Some(dir) = a.strip_prefix("--bundle=") {
             bundle = Some(PathBuf::from(dir));
+        } else if a == "--layer" {
+            layer = Some(it.next().ok_or("--layer precisa do número do processo ou do nome do jogo (veja 'lrctl layers')")?.clone());
+        } else if let Some(game) = a.strip_prefix("--layer=") {
+            layer = Some(game.to_string());
         } else {
             rest.push(a.clone());
         }
     }
     let Some((command, tail)) = rest.split_first() else { return Ok(Command::Status) };
     let no_args = |c: Command| if tail.is_empty() { Ok(c) } else { Err(format!("'{command}' não aceita argumentos")) };
+    if layer.is_some() && !matches!(command.as_str(), "use" | "current" | "uniforms" | "get" | "set" | "reset") {
+        return Err(format!("--layer não vale em '{command}'"));
+    }
     match command.as_str() {
         "status" => no_args(Command::Status),
         "on" => no_args(Command::On),
         "off" => no_args(Command::Off),
         "toggle" => no_args(Command::Toggle),
         "daemon" => no_args(Command::Daemon),
-        "current" => no_args(Command::Current),
+        "current" => no_args(Command::Current { layer }),
         "layers" => no_args(Command::Layers),
         "effects" => no_args(Command::Effects),
         "watch" => no_args(Command::Watch),
@@ -103,19 +118,23 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
             _ => Err("uso: lrctl config | lrctl config init <pasta>".into()),
         },
         "use" => match tail {
-            [none] if none == "none" => Ok(Command::Use { bundle: None }),
-            [dir] => Ok(Command::Use { bundle: Some(PathBuf::from(dir)) }),
-            _ => Err("uso: lrctl use <diretório-do-bundle> | lrctl use none".into()),
+            [none] if none == "none" => Ok(Command::Use { bundle: None, layer }),
+            [inherit] if inherit == "inherit" => match layer {
+                Some(layer) => Ok(Command::Inherit { layer }),
+                None => Err("'use inherit' precisa de --layer <jogo>".into()),
+            },
+            [dir] => Ok(Command::Use { bundle: Some(PathBuf::from(dir)), layer }),
+            _ => Err("uso: lrctl use <Nome|diretório-do-bundle> | lrctl use none | lrctl use inherit --layer <jogo>".into()),
         },
-        "uniforms" => no_args(Command::Uniforms { bundle }),
-        "reset" => no_args(Command::Reset { bundle }),
+        "uniforms" => no_args(Command::Uniforms { bundle, layer }),
+        "reset" => no_args(Command::Reset { bundle, layer }),
         "get" => match tail {
-            [name] => Ok(Command::Get { bundle, name: name.clone() }),
+            [name] => Ok(Command::Get { bundle, layer, name: name.clone() }),
             _ => Err("uso: lrctl get <nome>".into()),
         },
         "set" => match tail {
             [name, values @ ..] if !values.is_empty() => {
-                Ok(Command::Set { bundle, name: name.clone(), values: values.to_vec() })
+                Ok(Command::Set { bundle, layer, name: name.clone(), values: values.to_vec() })
             }
             _ => Err("uso: lrctl set <nome> <valor...>".into()),
         },
@@ -145,7 +164,7 @@ mod tests {
     fn simple_commands_take_no_arguments() {
         assert_eq!(parse(&args(&["toggle"])), Ok(Command::Toggle));
         assert_eq!(parse(&args(&["daemon"])), Ok(Command::Daemon));
-        assert_eq!(parse(&args(&["current"])), Ok(Command::Current));
+        assert_eq!(parse(&args(&["current"])), Ok(Command::Current { layer: None }));
         assert!(parse(&args(&["on", "x"])).is_err());
     }
 
@@ -177,17 +196,44 @@ mod tests {
 
     #[test]
     fn use_selects_or_clears_the_effect() {
-        assert_eq!(parse(&args(&["use", "/b/Sepia"])), Ok(Command::Use { bundle: p("/b/Sepia") }));
-        assert_eq!(parse(&args(&["use", "none"])), Ok(Command::Use { bundle: None }));
+        assert_eq!(parse(&args(&["use", "/b/Sepia"])), Ok(Command::Use { bundle: p("/b/Sepia"), layer: None }));
+        assert_eq!(parse(&args(&["use", "none"])), Ok(Command::Use { bundle: None, layer: None }));
         assert!(parse(&args(&["use"])).is_err());
         assert!(parse(&args(&["use", "a", "b"])).is_err());
     }
 
+    fn game(name: &str) -> Option<String> {
+        Some(name.to_string())
+    }
+
+    #[test]
+    fn layer_targets_one_game_in_every_command_that_takes_it() {
+        assert_eq!(parse(&args(&["use", "Sepia", "--layer", "1234"])), Ok(Command::Use { bundle: p("Sepia"), layer: game("1234") }));
+        assert_eq!(parse(&args(&["--layer=vkcube", "use", "none"])), Ok(Command::Use { bundle: None, layer: game("vkcube") }));
+        assert_eq!(parse(&args(&["use", "inherit", "--layer", "7"])), Ok(Command::Inherit { layer: "7".into() }));
+        assert_eq!(parse(&args(&["current", "--layer", "7"])), Ok(Command::Current { layer: game("7") }));
+        assert_eq!(parse(&args(&["uniforms", "--layer", "7"])), Ok(Command::Uniforms { bundle: None, layer: game("7") }));
+        assert_eq!(parse(&args(&["get", "X", "--layer", "7"])), Ok(Command::Get { bundle: None, layer: game("7"), name: "X".into() }));
+        assert_eq!(
+            parse(&args(&["set", "X", "1", "--layer", "7", "--bundle", "/b"])),
+            Ok(Command::Set { bundle: p("/b"), layer: game("7"), name: "X".into(), values: args(&["1"]) })
+        );
+        assert_eq!(parse(&args(&["reset", "--layer", "7"])), Ok(Command::Reset { bundle: None, layer: game("7") }));
+    }
+
+    #[test]
+    fn layer_is_refused_where_it_means_nothing_and_inherit_needs_it() {
+        assert!(parse(&args(&["toggle", "--layer", "7"])).is_err());
+        assert!(parse(&args(&["layers", "--layer", "7"])).is_err());
+        assert!(parse(&args(&["use", "inherit"])).is_err(), "herdar não faz sentido para todos os jogos");
+        assert!(parse(&args(&["use", "Sepia", "--layer"])).is_err(), "falta o jogo");
+    }
+
     #[test]
     fn the_explicit_bundle_flag_is_kept_for_the_parameter_commands() {
-        assert_eq!(parse(&args(&["uniforms"])), Ok(Command::Uniforms { bundle: None }));
-        assert_eq!(parse(&args(&["--bundle", "/x", "uniforms"])), Ok(Command::Uniforms { bundle: p("/x") }));
-        assert_eq!(parse(&args(&["uniforms", "--bundle=/y"])), Ok(Command::Uniforms { bundle: p("/y") }));
+        assert_eq!(parse(&args(&["uniforms"])), Ok(Command::Uniforms { bundle: None, layer: None }));
+        assert_eq!(parse(&args(&["--bundle", "/x", "uniforms"])), Ok(Command::Uniforms { bundle: p("/x"), layer: None }));
+        assert_eq!(parse(&args(&["uniforms", "--bundle=/y"])), Ok(Command::Uniforms { bundle: p("/y"), layer: None }));
     }
 
     #[test]
@@ -205,7 +251,7 @@ mod tests {
     fn set_keeps_every_value_as_text() {
         assert_eq!(
             parse(&args(&["set", "Color", "0.1", "0.2,0.3"])),
-            Ok(Command::Set { bundle: None, name: "Color".into(), values: args(&["0.1", "0.2,0.3"]) })
+            Ok(Command::Set { bundle: None, layer: None, name: "Color".into(), values: args(&["0.1", "0.2,0.3"]) })
         );
         assert!(parse(&args(&["set", "Color"])).is_err(), "sem valor");
         assert!(parse(&args(&["get"])).is_err());
