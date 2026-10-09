@@ -13,6 +13,7 @@ uso: lrctl <comando> [opções]
   use <diretório-do-bundle>       escolhe um bundle já compilado (fixo numa resolução)
   use none                        desfaz a escolha
   current                         mostra o efeito escolhido
+  effects                         lista os efeitos que podem ser escolhidos por nome
   layers                          mostra os jogos com a layer ativa: resolução, formato, estado
   watch                           só compila, sem atalho global (o daemon já faz isso)
 
@@ -34,6 +35,7 @@ pub enum Command {
     Daemon,
     Layers,
     Watch,
+    Effects,
     /// Escolhe o efeito (`Some`) ou desfaz a escolha (`None`).
     Use { bundle: Option<PathBuf> },
     Current,
@@ -87,6 +89,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "daemon" => no_args(Command::Daemon),
         "current" => no_args(Command::Current),
         "layers" => no_args(Command::Layers),
+        "effects" => no_args(Command::Effects),
         "watch" => no_args(Command::Watch),
         "use" => match tail {
             [none] if none == "none" => Ok(Command::Use { bundle: None }),
@@ -139,6 +142,7 @@ mod tests {
     fn layers_and_watch_take_no_arguments() {
         assert_eq!(parse(&args(&["layers"])), Ok(Command::Layers));
         assert_eq!(parse(&args(&["watch"])), Ok(Command::Watch));
+        assert_eq!(parse(&args(&["effects"])), Ok(Command::Effects));
         assert!(parse(&args(&["layers", "x"])).is_err());
     }
 

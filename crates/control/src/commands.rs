@@ -59,6 +59,19 @@ pub fn run(command: Command, state: &ipc::Writer) -> ExitCode {
             }
             ExitCode::SUCCESS
         }
+        Command::Effects => match Compiler::from_env() {
+            Ok(compiler) => {
+                let available = compiler.available();
+                if available.is_empty() {
+                    println!("nenhum efeito encontrado em: {}", compiler.effects.iter().map(|d| d.display().to_string()).collect::<Vec<_>>().join(", "));
+                }
+                for (name, dir) in available {
+                    println!("{name:<24} {}", dir.display());
+                }
+                ExitCode::SUCCESS
+            }
+            Err(e) => fail(e),
+        },
         Command::Watch => match Compiler::from_env() {
             Ok(compiler) => {
                 println!("vigiando os jogos com a layer (Ctrl+C para sair)");

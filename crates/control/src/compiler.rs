@@ -134,6 +134,24 @@ impl Compiler {
             .ok_or_else(|| CompileError::UnknownEffect { name: name.to_string(), searched: self.effects.clone() })
     }
 
+    /// Os nomes de efeito disponíveis (arquivos `.fx` nos diretórios configurados), sem repetição e em ordem.
+    /// Cada nome vem com o diretório de onde sai, para o usuário saber qual versão será usada.
+    pub fn available(&self) -> Vec<(String, PathBuf)> {
+        let mut found: std::collections::BTreeMap<String, PathBuf> = std::collections::BTreeMap::new();
+        for dir in &self.effects {
+            let Ok(entries) = std::fs::read_dir(dir) else { continue };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let Some(name) = path.file_name().and_then(|n| n.to_str()).and_then(|n| n.strip_suffix(".fx")) else { continue };
+                // O primeiro diretório da lista vence, como em `source`.
+                if valid_name(name) && path.is_file() {
+                    found.entry(name.to_string()).or_insert_with(|| dir.clone());
+                }
+            }
+        }
+        found.into_iter().collect()
+    }
+
     pub fn bundle_dir(&self, name: &str, width: u32, height: u32) -> PathBuf {
         self.cache.join(format!("{name}-{width}x{height}"))
     }
@@ -309,6 +327,22 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert!(!f.compiler.bundle_dir("Sepia", 10, 10).join("manifest.json").exists());
+    }
+
+    #[test]
+    fn available_lists_effects_once_and_prefers_the_first_directory() {
+        let f = fake("available", OK_TOOL);
+        let second = f.root.join("outros");
+        fs::create_dir_all(&second).unwrap();
+        fs::write(second.join("Sepia.fx"), "// repetido").unwrap();
+        fs::write(second.join("Vibrance.fx"), "//").unwrap();
+        fs::write(second.join("ReShade.fxh"), "// header, não é um efeito").unwrap();
+        fs::write(second.join("notas.txt"), "x").unwrap();
+        fs::write(second.join(".oculto.fx"), "x").unwrap();
+        let mut compiler = f.compiler;
+        compiler.effects.push(second.clone());
+        let names: Vec<_> = compiler.available().into_iter().map(|(n, d)| (n, d == second)).collect();
+        assert_eq!(names, vec![("Sepia".to_string(), false), ("Vibrance".to_string(), true)]);
     }
 
     #[test]
