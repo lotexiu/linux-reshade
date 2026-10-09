@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Utilitário de desenvolvimento. Idempotente; serve para trocar de máquina sem esforço.
-# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|hotkey|fx-tool|fx-test|fx-golden|placement|logs> [args]
+# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-golden|placement|logs> [args]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -206,6 +206,17 @@ cmd_hotkey() {
 
 # Ferramenta fx2spv (C++): compila efeitos .fx para bundles. Usa git e g++ (sem cmake).
 cmd_fx_tool() { "$ROOT/tools/fx2spv/build.sh"; }
+# Imprime a linha para as opções de lançamento do Steam (Propriedades > Geral > Opções de lançamento).
+# Sem argumento: só a layer ligada e o log (sonda: descobre a API e a resolução, sem alterar o jogo).
+# Com um diretório de bundle: o efeito fica disponível (ligue/desligue com Ctrl+Shift+F10).
+cmd_game_options() {
+  local line="$ENABLE_VAR=1 LINUX_RESHADE_LOG=\"$LOG_FILE\""
+  [ $# -gt 0 ] && line="$line LINUX_RESHADE_BUNDLE=\"$(realpath "$1")\""
+  echo "$line %command%"
+}
+
+# Compila um efeito para uma resolução: fx-compile <Efeito|arquivo.fx> <largura> <altura>. Imprime o bundle.
+cmd_fx_compile() { "$ROOT/tools/fx2spv/compile.sh" "$@"; }
 # Compila efeitos de exemplo (próprios e da comunidade) e valida os módulos SPIR-V.
 cmd_fx_test() { "$ROOT/tools/fx2spv/test.sh" "$@"; }
 
@@ -255,9 +266,11 @@ case "${1:-}" in
   smoke-steam) cmd_smoke_steam ;;
   hotkey)    cmd_hotkey ;;
   fx-tool)   cmd_fx_tool ;;
+  game-options) shift; cmd_game_options "$@" ;;
+  fx-compile) shift; cmd_fx_compile "$@" ;;
   fx-test)   shift; cmd_fx_test "$@" ;;
   fx-golden) cmd_fx_golden ;;
   placement) shift; cmd_placement "$@" ;;
   logs)      shift; cmd_logs "$@" ;;
-  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|hotkey|fx-tool|fx-test|fx-golden|placement|logs>" >&2; exit 2 ;;
+  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-golden|placement|logs>" >&2; exit 2 ;;
 esac
