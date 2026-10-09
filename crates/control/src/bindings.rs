@@ -5,7 +5,7 @@
 //! proprietária no Wayland isso já travou a máquina de desenvolvimento (2026-10-09, hipótese).
 //! Atenção ao digitar: `CTRL+SHIFT+F10` (o nosso) e `CTRL+ALT+F10` (tty10) ficam lado a lado.
 
-use crate::action::Action;
+use control_core::action::Action;
 use shortcuts::{Binding, Dispatcher, Error, Scope, Shortcut};
 
 fn shortcut(id: &str, description: &str, trigger: &str) -> Shortcut {

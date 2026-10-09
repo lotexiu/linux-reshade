@@ -1,0 +1,10 @@
+[package]
+name = "control-core"
+description = "Lógica do app de controle independente de interface: compilar efeitos, parâmetros, jogos com a layer, vigia"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+ipc = { path = "../ipc" }
+fx-bundle = { path = "../fx-bundle" }

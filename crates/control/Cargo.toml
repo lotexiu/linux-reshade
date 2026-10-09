@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 ipc = { path = "../ipc" }
+control-core = { path = "../control-core" }
 shortcuts = { path = "../shortcuts" }
 shortcuts-portal = { path = "../shortcuts-portal" }
 fx-bundle = { path = "../fx-bundle" }

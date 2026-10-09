@@ -1,10 +1,11 @@
 //! Execução de cada comando do `lrctl`. Cada função devolve o código de saída e escreve na saída padrão
 //! ou de erro; a lógica que merece teste vive em `params` e `cli`.
 
-use crate::action::{self, Action};
+use control_core::action::{self, Action};
 use crate::cli::{self, Command};
-use crate::compiler::Compiler;
-use crate::{daemon, layers, params, watch};
+use control_core::compiler::Compiler;
+use crate::daemon;
+use control_core::{layers, params, watch};
 use fx_bundle::Bundle;
 use ipc::SelectionRead;
 use std::path::{Path, PathBuf};
@@ -186,7 +187,7 @@ fn select_by_name(name: &str, state: &ipc::Writer) -> ExitCode {
     resolutions.dedup();
     for (w, h) in &resolutions {
         match compiler.ensure(name, *w, *h) {
-            Ok(done) => println!("{name} {w}x{h}: {}", if matches!(done, crate::compiler::Ensured::Compiled(_)) { "compilado" } else { "já estava compilado" }),
+            Ok(done) => println!("{name} {w}x{h}: {}", if matches!(done, control_core::compiler::Ensured::Compiled(_)) { "compilado" } else { "já estava compilado" }),
             Err(e) => return fail(e),
         }
     }

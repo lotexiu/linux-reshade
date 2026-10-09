@@ -5,16 +5,11 @@
 //! - `lrctl use|current`: escolhe o efeito que a layer carrega.
 //! - `lrctl uniforms|get|set|reset`: lê e altera os parâmetros do efeito em tempo real.
 
-mod action;
 mod backend;
 mod bindings;
 mod cli;
 mod commands;
-mod compiler;
 mod daemon;
-mod layers;
-mod params;
-mod watch;
 
 use std::process::ExitCode;
 

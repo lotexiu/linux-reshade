@@ -1,8 +1,9 @@
 //! Modo residente: registra os atalhos globais, aplica a ação de cada evento e, em paralelo, mantém
 //! compilados os efeitos que os jogos abertos precisam.
 
-use crate::compiler::Compiler;
-use crate::{action::Action, backend, bindings, watch};
+use control_core::compiler::Compiler;
+use crate::{backend, bindings};
+use control_core::{action::Action, watch};
 use shortcuts::{Context, Error};
 
 pub fn run(state: &ipc::Writer) -> Result<(), Error> {
