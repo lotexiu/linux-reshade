@@ -71,6 +71,19 @@ fn bundle_id_is_stable_and_tracks_the_manifest() {
 }
 
 #[test]
+fn bundle_id_notices_a_change_that_only_touches_a_shader() {
+    // Recompilar um efeito com o corpo de um shader diferente deixa o manifesto igual; o id tem de mudar.
+    let a = Bundle::load(&golden()).unwrap().id;
+    let copy = scratch("shader-id");
+    let spv = copy.join("E__PS_Sepia.spv");
+    let mut bytes = fs::read(&spv).unwrap();
+    let last = bytes.len() - 1;
+    bytes[last] ^= 0x01; // altera o conteúdo sem estragar o cabeçalho (o magic number continua válido)
+    fs::write(&spv, &bytes).unwrap();
+    assert_ne!(a, Bundle::load(&copy).unwrap().id);
+}
+
+#[test]
 fn ignores_unknown_fields() {
     assert!(mutated(|v| {
         v["campo_novo"] = json!({"a": 1});

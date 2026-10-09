@@ -14,8 +14,9 @@ const SPIRV_MAGIC: u32 = 0x0723_0203;
 #[derive(Debug)]
 pub struct Bundle {
     pub manifest: Manifest,
-    /// Identifica este bundle entre processos (a layer e o app de controle): hash do `manifest.json`.
-    /// Muda quando o efeito é recompilado, por exemplo para outra resolução.
+    /// Identifica este bundle entre processos (a layer e o app de controle): hash do `manifest.json` e
+    /// de todo o SPIR-V. Muda quando o efeito é recompilado com qualquer diferença, inclusive só no
+    /// corpo de um shader (que deixa o manifesto idêntico).
     pub id: u64,
     shaders: HashMap<String, Vec<u32>>,
 }
@@ -32,10 +33,16 @@ fn read_limited(path: &Path, max: u64) -> Result<Vec<u8>, Error> {
     fs::read(path).map_err(|e| io(path, e))
 }
 
-/// FNV-1a de 64 bits: simples, estável entre versões e sem dependências. Não é criptográfico; só
-/// precisa distinguir bundles diferentes.
+const FNV_OFFSET: u64 = 0xCBF2_9CE4_8422_2325;
+
+/// Continua um FNV-1a de 64 bits sobre `bytes`: simples, estável entre versões e sem dependências.
+/// Não é criptográfico; só precisa distinguir bundles diferentes.
+fn fnv1a64_extend(hash: u64, bytes: &[u8]) -> u64 {
+    bytes.iter().fold(hash, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01B3))
+}
+
 pub fn fnv1a64(bytes: &[u8]) -> u64 {
-    bytes.iter().fold(0xCBF2_9CE4_8422_2325, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01B3))
+    fnv1a64_extend(FNV_OFFSET, bytes)
 }
 
 /// Converte bytes de um `.spv` (little endian) em palavras, conferindo o tamanho e o magic number.
@@ -55,7 +62,7 @@ impl Bundle {
     pub fn load(dir: &Path) -> Result<Self, Error> {
         let manifest_path: PathBuf = dir.join("manifest.json");
         let bytes = read_limited(&manifest_path, MAX_MANIFEST_BYTES)?;
-        let id = fnv1a64(&bytes);
+        let mut id = fnv1a64(&bytes);
         let text = String::from_utf8(bytes).map_err(|_| Error::Parse("não é UTF-8".into()))?;
         let manifest = Manifest::parse(&text)?;
         manifest.validate()?;
@@ -67,6 +74,12 @@ impl Bundle {
             let words = spirv_words(&read_limited(&path, MAX_SPIRV_BYTES)?)
                 .map_err(|e| Error::Invalid(format!("{}: {e}", entry.file)))?;
             shaders.insert(entry.name.clone(), words);
+        }
+        // O SPIR-V entra no id em ordem fixa (a do manifesto), para o id ser determinístico.
+        for entry in &manifest.entry_points {
+            for word in &shaders[&entry.name] {
+                id = fnv1a64_extend(id, &word.to_le_bytes());
+            }
         }
         Ok(Self { manifest, id, shaders })
     }
