@@ -1,6 +1,7 @@
 # Roadmap
 
 Marcos em ordem. Cada um deve rodar de ponta a ponta antes do próximo. Atualizar incrementalmente.
+Para retomar o trabalho (onde paramos, próximos passos, combinados): `docs/CONTINUAR.md`.
 
 0. **Ambiente.** Instalar Rust (rustup), SDK/ferramentas Vulkan (`vulkaninfo`, `glslc`, `spirv-val`),
    e um jogo ou demo Vulkan simples para teste. Opcional agora: `gamescope`. Criar o workspace Cargo

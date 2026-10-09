@@ -50,6 +50,10 @@ a interface ficar ligada ao GTK. Para isso não virar retrabalho, a lógica da i
 controles de cada parâmetro, atualização do estado) fica num crate **independente de toolkit**, testável sem
 display; trocar o toolkit, ou ter um segundo (por exemplo, para Windows um dia), só exige reescrever a casca.
 
+## Crates próprios sem dependências de terceiros (2026-10-09)
+
+`ini` (leitura e escrita de `.ini` que preserva comentários e chaves desconhecidas) e `config` (pasta de dados, `config.ini`, caminhos de busca) usam só a biblioteca padrão e o `ini`. Candidatos a viver fora deste repositório quando a API estabilizar.
+
 ## Terceiros candidatos (nada instalado ainda; confirmar versão/estado antes de adotar)
 
 | Uso | Candidata | Observação |
