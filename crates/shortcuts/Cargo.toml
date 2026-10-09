@@ -1,0 +1,6 @@
+[package]
+name = "shortcuts"
+description = "Modelo de atalhos, regra de scopes e trait de backend (sem dependências)"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
