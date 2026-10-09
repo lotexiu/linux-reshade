@@ -1,0 +1,10 @@
+[package]
+name = "fx-bundle"
+description = "Leitor e validador do bundle de efeito (manifest.json + módulos SPIR-V) gerado pelo fx2spv"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde = { version = "1", default-features = false, features = ["std", "derive"] }
+serde_json = { version = "1", default-features = false, features = ["std"] }

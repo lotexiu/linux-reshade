@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Utilitário de desenvolvimento. Idempotente; serve para trocar de máquina sem esforço.
-# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|hotkey|shaders|fx-tool|fx-test|placement|logs> [args]
+# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|hotkey|shaders|fx-tool|fx-test|fx-golden|placement|logs> [args]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -214,6 +214,12 @@ cmd_fx_tool() { "$ROOT/tools/fx2spv/build.sh"; }
 # Compila efeitos de exemplo (próprios e da comunidade) e valida os módulos SPIR-V.
 cmd_fx_test() { "$ROOT/tools/fx2spv/test.sh" "$@"; }
 
+# Regenera o bundle de referência (golden) usado pelos testes do fx-bundle, a partir de effects/Sepia.fx.
+cmd_fx_golden() {
+  [ -x "$ROOT/build/fx2spv/fx2spv" ] || cmd_fx_tool
+  "$ROOT/build/fx2spv/fx2spv" --width 500 --height 500 -o "$ROOT/crates/fx-bundle/tests/data/Sepia" "$ROOT/effects/Sepia.fx"
+}
+
 # Extensão do GNOME Shell que posiciona o vkcube (no Wayland o cliente não escolhe a posição).
 PLACEMENT_UUID="vkcube-placement@linux-reshade.dev"
 PLACEMENT_DIR="$DATA_HOME/gnome-shell/extensions/$PLACEMENT_UUID"
@@ -249,7 +255,8 @@ case "${1:-}" in
   shaders)   cmd_shaders ;;
   fx-tool)   cmd_fx_tool ;;
   fx-test)   shift; cmd_fx_test "$@" ;;
+  fx-golden) cmd_fx_golden ;;
   placement) shift; cmd_placement "$@" ;;
   logs)      shift; cmd_logs "$@" ;;
-  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|hotkey|shaders|fx-tool|fx-test|placement|logs>" >&2; exit 2 ;;
+  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|hotkey|shaders|fx-tool|fx-test|fx-golden|placement|logs>" >&2; exit 2 ;;
 esac
