@@ -10,9 +10,11 @@
 //! arquivo que também seja do próprio usuário.
 
 mod blob;
+mod channel;
 mod status;
 
 pub use blob::{MAX_PARAM_BYTES, MAX_SELECTION_BYTES, PublishError};
+pub use channel::{ChannelReader, ChannelSelection, ChannelWriter, NO_EFFECT, channel_name, prune as prune_channels, prune_in as prune_channels_in};
 pub use status::{EffectState, LayerStatus, LiveLayer, StatusWriter, SwapchainStatus, live_layers};
 
 use blob::{Params, Selection, Snapshot};
@@ -62,7 +64,7 @@ pub enum SelectionRead {
     Unstable,
 }
 
-fn read_selection(blob: &Selection) -> SelectionRead {
+pub(crate) fn read_selection(blob: &Selection) -> SelectionRead {
     let mut buf = [0u8; MAX_SELECTION_BYTES];
     match blob.snapshot(SELECTION_TAG, &mut buf) {
         Snapshot::Torn => SelectionRead::Unstable,
@@ -72,6 +74,25 @@ fn read_selection(blob: &Selection) -> SelectionRead {
             Err(_) => SelectionRead::Cleared, // só o nosso escritor grava aqui, e só UTF-8
         },
     }
+}
+
+/// De onde se leem os parâmetros publicados (o canal global ou o de uma layer), por qualquer dos dois lados.
+pub trait ParamSource {
+    /// Copia para `out` o bloco publicado para o efeito `bundle_id`. `None` se não há bloco desse efeito
+    /// ou se a leitura não foi consistente.
+    fn read_params(&self, bundle_id: u64, out: &mut [u8]) -> Option<usize>;
+    /// Para qual efeito está publicado o bloco (0 se nenhum).
+    fn published_bundle(&self) -> u64;
+}
+
+/// Onde o app de controle publica parâmetros: o canal global ou o de uma layer.
+pub trait ParamStore: ParamSource {
+    fn publish_params(&self, bundle_id: u64, data: &[u8]) -> Result<(), PublishError>;
+}
+
+/// Onde o app de controle publica a escolha de efeito: o canal global ou o de uma layer.
+pub trait SelectionStore {
+    fn publish_selection(&self, text: &str) -> Result<(), PublishError>;
 }
 
 /// Caminho do arquivo de estado.
@@ -226,6 +247,28 @@ impl Writer {
     }
 }
 
+impl ParamSource for Writer {
+    fn read_params(&self, bundle_id: u64, out: &mut [u8]) -> Option<usize> {
+        Writer::read_params(self, bundle_id, out)
+    }
+
+    fn published_bundle(&self) -> u64 {
+        Writer::published_bundle(self)
+    }
+}
+
+impl ParamStore for Writer {
+    fn publish_params(&self, bundle_id: u64, data: &[u8]) -> Result<(), PublishError> {
+        Writer::publish_params(self, bundle_id, data)
+    }
+}
+
+impl SelectionStore for Writer {
+    fn publish_selection(&self, text: &str) -> Result<(), PublishError> {
+        Writer::publish_selection(self, text)
+    }
+}
+
 /// Lado da layer. Somente leitura.
 pub struct Reader {
     map: Mapping<Shared>,
@@ -286,6 +329,16 @@ impl Reader {
     /// O efeito selecionado pelo app de controle.
     pub fn read_selection(&self) -> SelectionRead {
         read_selection(self.map.selection())
+    }
+}
+
+impl ParamSource for Reader {
+    fn read_params(&self, bundle_id: u64, out: &mut [u8]) -> Option<usize> {
+        Reader::read_params(self, bundle_id, out)
+    }
+
+    fn published_bundle(&self) -> u64 {
+        Reader::published_bundle(self)
     }
 }
 
