@@ -9,6 +9,11 @@
 //! o diretório do estado precisa ser do próprio usuário (modo 0700) e o leitor só aceita um
 //! arquivo que também seja do próprio usuário.
 
+mod params;
+
+pub use params::{MAX_PARAM_BYTES, PublishError};
+
+use params::Params;
 use rustix::mm::{MapFlags, ProtFlags, mmap, munmap};
 use std::ffi::c_void;
 use std::fs::{self, File, OpenOptions};
@@ -19,7 +24,7 @@ use std::ptr::{self, NonNull};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 const MAGIC: u32 = 0x4C52_5348; // "LRSH"
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 
 pub const FLAG_EFFECTS_ENABLED: u32 = 1 << 0;
 
@@ -32,7 +37,14 @@ struct State {
     flags: AtomicU32,
 }
 
-const SIZE: usize = size_of::<State>();
+/// O arquivo inteiro: estado geral e bloco de parâmetros.
+#[repr(C)]
+struct Shared {
+    state: State,
+    params: Params,
+}
+
+const SIZE: usize = size_of::<Shared>();
 
 /// Caminho do arquivo de estado.
 pub fn state_path() -> PathBuf {
@@ -55,7 +67,7 @@ fn ensure_private_dir(dir: &std::path::Path) -> io::Result<()> {
 
 /// Mapeamento de `SIZE` bytes. `munmap` no `Drop`.
 struct Mapping {
-    ptr: NonNull<State>,
+    ptr: NonNull<Shared>,
 }
 
 // SAFETY: o conteúdo só é acessado por operações atômicas.
@@ -67,13 +79,21 @@ impl Mapping {
         let prot = if writable { ProtFlags::READ | ProtFlags::WRITE } else { ProtFlags::READ };
         // SAFETY: mapeamento novo (ptr nulo) de um arquivo com pelo menos `SIZE` bytes.
         let raw = unsafe { mmap(ptr::null_mut(), SIZE, prot, MapFlags::SHARED, file, 0) }?;
-        let ptr = NonNull::new(raw.cast::<State>()).ok_or_else(|| io::Error::other("mmap nulo"))?;
+        let ptr = NonNull::new(raw.cast::<Shared>()).ok_or_else(|| io::Error::other("mmap nulo"))?;
         Ok(Self { ptr })
     }
 
-    fn state(&self) -> &State {
+    fn shared(&self) -> &Shared {
         // SAFETY: o mapeamento vive enquanto `self` e é alinhado (mmap devolve página inteira).
         unsafe { self.ptr.as_ref() }
+    }
+
+    fn state(&self) -> &State {
+        &self.shared().state
+    }
+
+    fn params(&self) -> &Params {
+        &self.shared().params
     }
 }
 
@@ -134,6 +154,21 @@ impl Writer {
     pub fn effects_enabled(&self) -> bool {
         self.map.state().flags.load(Ordering::Acquire) & FLAG_EFFECTS_ENABLED != 0
     }
+
+    /// Publica a imagem do buffer de uniforms do efeito `bundle_id` (ver `fx_bundle::Bundle::id`).
+    pub fn publish_params(&self, bundle_id: u64, data: &[u8]) -> Result<(), PublishError> {
+        self.map.params().publish(bundle_id, data)
+    }
+
+    /// O bloco atualmente publicado para `bundle_id`, para o app de controle alterar só um valor.
+    pub fn read_params(&self, bundle_id: u64, out: &mut [u8]) -> Option<usize> {
+        self.map.params().read(bundle_id, out)
+    }
+
+    /// Para qual efeito está publicado o bloco de parâmetros (0 se nenhum).
+    pub fn published_bundle(&self) -> u64 {
+        self.map.params().published_id()
+    }
 }
 
 /// Lado da layer. Somente leitura.
@@ -173,6 +208,12 @@ impl Reader {
 
     pub fn effects_enabled(&self) -> bool {
         self.map.state().flags.load(Ordering::Acquire) & FLAG_EFFECTS_ENABLED != 0
+    }
+
+    /// Copia para `out` o bloco de parâmetros publicado para o efeito `bundle_id`. `None` se não há
+    /// bloco desse efeito ou se a leitura não foi consistente (tente no próximo frame).
+    pub fn read_params(&self, bundle_id: u64, out: &mut [u8]) -> Option<usize> {
+        self.map.params().read(bundle_id, out)
     }
 }
 
@@ -217,6 +258,57 @@ mod tests {
         assert!(second.effects_enabled(), "estado preservado");
         second.set_effects_enabled(false);
         assert!(!reader.effects_enabled(), "o leitor antigo continua válido");
+    }
+
+    #[test]
+    fn params_travel_from_writer_to_reader_through_the_file() {
+        let path = temp_path("params");
+        let writer = Writer::create_at(&path).unwrap();
+        let reader = Reader::open_at(&path).unwrap().unwrap();
+        let mut out = [0u8; 8];
+        assert_eq!(reader.read_params(9, &mut out), None, "nada publicado ainda");
+
+        writer.publish_params(9, &[1, 2, 3, 4, 5, 6, 7, 8]).unwrap();
+        assert_eq!(reader.read_params(9, &mut out), Some(8));
+        assert_eq!(out, [1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(reader.read_params(10, &mut out), None, "outro efeito");
+        assert_eq!(writer.published_bundle(), 9);
+
+        // O escritor também lê o que publicou (é como o `lrctl set` altera só um valor).
+        let mut again = [0u8; 8];
+        assert_eq!(writer.read_params(9, &mut again), Some(8));
+        assert_eq!(again, out);
+    }
+
+    #[test]
+    fn params_survive_a_writer_restart() {
+        let path = temp_path("params-restart");
+        let first = Writer::create_at(&path).unwrap();
+        first.publish_params(3, &[7; 4]).unwrap();
+        drop(first);
+        let second = Writer::create_at(&path).unwrap();
+        let mut out = [0u8; 4];
+        assert_eq!(second.read_params(3, &mut out), Some(4));
+        assert_eq!(out, [7; 4]);
+    }
+
+    #[test]
+    fn an_old_smaller_state_file_is_upgraded() {
+        // Um arquivo de uma versão anterior (menor, só com o estado) deixado em /dev/shm.
+        let path = temp_path("old");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut old = Vec::new();
+        for word in [MAGIC, 1u32, FLAG_EFFECTS_ENABLED] {
+            old.extend_from_slice(&word.to_ne_bytes());
+        }
+        fs::write(&path, &old).unwrap();
+        assert!(Reader::open_at(&path).unwrap().is_none(), "ainda pequeno demais para o layout novo");
+
+        let writer = Writer::create_at(&path).unwrap();
+        writer.publish_params(1, &[5; 4]).unwrap();
+        let reader = Reader::open_at(&path).unwrap().expect("agora é do tamanho certo");
+        assert!(!reader.effects_enabled(), "o arquivo antigo é reinicializado");
+        assert_eq!(reader.read_params(1, &mut [0u8; 4]), Some(4));
     }
 
     #[test]
