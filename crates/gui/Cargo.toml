@@ -1,0 +1,16 @@
+[package]
+name = "linux-reshade-gui"
+description = "Interface gráfica (GTK4) do linux-reshade: escolher o efeito, ajustar os parâmetros e ver os jogos"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "lrpanel"
+path = "src/main.rs"
+
+[dependencies]
+panel = { path = "../panel" }
+control-core = { path = "../control-core" }
+ipc = { path = "../ipc" }
+gtk4 = { version = "0.11", features = ["v4_10"] }
