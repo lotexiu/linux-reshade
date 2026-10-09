@@ -8,12 +8,13 @@ use std::ffi::c_void;
 unsafe fn find<T>(
     mut next: *const c_void,
     s_type: vk::StructureType,
+    function: u32,
     function_of: impl Fn(*const T) -> u32,
 ) -> Option<*mut T> {
     while !next.is_null() {
         // SAFETY: toda struct da cadeia começa com `sType` e `pNext` (VkBaseInStructure).
         let base = next as *const vk::BaseInStructure<'_>;
-        if unsafe { (*base).s_type } == s_type && function_of(next as *const T) == LAYER_LINK_INFO {
+        if unsafe { (*base).s_type } == s_type && function_of(next as *const T) == function {
             return Some(next as *mut T);
         }
         next = unsafe { (*base).p_next } as *const c_void;
@@ -28,6 +29,7 @@ pub unsafe fn instance_link(info: *const vk::InstanceCreateInfo<'_>) -> Option<*
         find(
             (*info).p_next,
             STRUCTURE_TYPE_LOADER_INSTANCE_CREATE_INFO,
+            LAYER_LINK_INFO,
             |p: *const LayerInstanceCreateInfo| (*p).function,
         )
     }
@@ -40,8 +42,26 @@ pub unsafe fn device_link(info: *const vk::DeviceCreateInfo<'_>) -> Option<*mut 
         find(
             (*info).p_next,
             STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO,
+            LAYER_LINK_INFO,
             |p: *const LayerDeviceCreateInfo| (*p).function,
         )
+    }
+}
+
+/// O callback que o loader oferece para inicializar objetos despacháveis criados pela layer
+/// (por exemplo `VkCommandBuffer`). Sem ele, as layers abaixo não reconhecem o objeto.
+///
+/// # Safety
+/// `info` deve apontar para um `VkDeviceCreateInfo` válido recebido do loader.
+pub unsafe fn device_loader_data(info: *const vk::DeviceCreateInfo<'_>) -> Option<PfnSetDeviceLoaderData> {
+    unsafe {
+        let found: *mut LayerDeviceCreateInfo = find(
+            (*info).p_next,
+            STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO,
+            LOADER_DATA_CALLBACK,
+            |p: *const LayerDeviceCreateInfo| (*p).function,
+        )?;
+        Some((*found).u.pfn_set_device_loader_data)
     }
 }
 
@@ -74,6 +94,33 @@ mod tests {
 
         let found = unsafe { instance_link(&info) }.expect("deveria achar");
         assert_eq!(found as *const _, &loader as *const _);
+    }
+
+    #[test]
+    fn finds_loader_data_callback_next_to_the_link_info() {
+        unsafe extern "system" fn set_data(_: vk::Device, _: *mut c_void) -> vk::Result {
+            vk::Result::SUCCESS
+        }
+        let callback = LayerDeviceCreateInfo {
+            s_type: STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO,
+            p_next: ptr::null(),
+            function: LOADER_DATA_CALLBACK,
+            u: LayerDeviceCreateInfoData { pfn_set_device_loader_data: set_data },
+        };
+        let link = LayerDeviceCreateInfo {
+            s_type: STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO,
+            p_next: &callback as *const _ as *const c_void,
+            function: LAYER_LINK_INFO,
+            u: LayerDeviceCreateInfoData { p_layer_info: ptr::null_mut() },
+        };
+        let mut info = vk::DeviceCreateInfo::default();
+        info.p_next = &link as *const _ as *const c_void;
+
+        let found = unsafe { device_loader_data(&info) }.expect("deveria achar o callback");
+        let expected: PfnSetDeviceLoaderData = set_data;
+        assert_eq!(found as usize, expected as usize);
+        // O link continua achável pela outra função, e cada busca distingue o `function`.
+        assert_eq!(unsafe { device_link(&info) }.unwrap() as *const _, &link as *const _);
     }
 
     #[test]

@@ -17,6 +17,11 @@ pub const STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO: vk::StructureType =
 pub const NEGOTIATE_INTERFACE_STRUCT: u32 = 1;
 /// `VK_LAYER_LINK_INFO`.
 pub const LAYER_LINK_INFO: u32 = 0;
+/// `VK_LOADER_DATA_CALLBACK`.
+pub const LOADER_DATA_CALLBACK: u32 = 1;
+
+/// `PFN_vkSetDeviceLoaderData`: grava no objeto despachável o ponteiro de dispatch do loader.
+pub type PfnSetDeviceLoaderData = unsafe extern "system" fn(vk::Device, *mut c_void) -> vk::Result;
 
 pub type PfnGetPhysicalDeviceProcAddr =
     unsafe extern "system" fn(vk::Instance, *const c_char) -> vk::PFN_vkVoidFunction;
@@ -63,6 +68,7 @@ pub struct LayerDeviceLink {
 #[repr(C)]
 pub union LayerDeviceCreateInfoData {
     pub p_layer_info: *mut LayerDeviceLink,
+    pub pfn_set_device_loader_data: PfnSetDeviceLoaderData,
     _size: usize,
 }
 
