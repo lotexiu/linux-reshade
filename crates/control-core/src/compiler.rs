@@ -249,6 +249,22 @@ impl Compiler {
         self.source(name).ok().and_then(|p| modified(&p))
     }
 
+    /// Algum bundle já compilado de `name` (o mais recente), em qualquer resolução. Serve para ler os
+    /// controles do efeito sem compilar nada.
+    pub fn any_bundle(&self, name: &str) -> Option<PathBuf> {
+        std::fs::read_dir(&self.cache)
+            .ok()?
+            .flatten()
+            .filter_map(|e| {
+                let path = e.path();
+                let (n, _, _) = parse_bundle_name(path.file_name()?.to_str()?)?;
+                (n == name).then_some(())?;
+                Some((modified(&path.join("manifest.json"))?, path))
+            })
+            .max()
+            .map(|(_, path)| path)
+    }
+
     /// Um bundle do efeito escolhido por modelo (`.../Sepia-{W}x{H}`), para ler os controles dele. Os
     /// controles são os mesmos em toda resolução, então serve o de um jogo aberto; sem nenhum, usa
     /// [`DEFAULT_SIZE`] (compilando se preciso).
@@ -500,6 +516,21 @@ mod tests {
         assert_eq!(f.compiler.schema_bundle(&template, &live).unwrap(), f.compiler.bundle_dir("Sepia", 1280, 720));
         // Uma escolha que não é por nome não tem o que resolver.
         assert!(f.compiler.schema_bundle("/qualquer/bundle", &[]).is_err());
+    }
+
+    #[test]
+    fn any_bundle_finds_the_most_recent_compiled_resolution() {
+        let f = fake("any", OK_TOOL);
+        assert_eq!(f.compiler.any_bundle("Sepia"), None, "nada compilado");
+        for (i, (w, h)) in [(100, 100), (200, 200)].into_iter().enumerate() {
+            f.compiler.ensure("Sepia", w, h).unwrap();
+            let manifest = f.compiler.bundle_dir("Sepia", w, h).join("manifest.json");
+            let at = SystemTime::now() - Duration::from_secs(500 - i as u64 * 100);
+            fs::File::options().write(true).open(&manifest).unwrap().set_modified(at).unwrap();
+        }
+        f.compiler.ensure("Invert", 1, 1).ok(); // outro efeito (sem .fx: erro ignorado) não atrapalha
+        assert_eq!(f.compiler.any_bundle("Sepia"), Some(f.compiler.bundle_dir("Sepia", 200, 200)));
+        assert_eq!(f.compiler.any_bundle("Invert"), None);
     }
 
     #[test]

@@ -5,10 +5,12 @@
 //! - [`compiler`]: compilação sob demanda dos efeitos por resolução, com cache
 //! - [`layers`]: a lista de jogos com a layer ativa
 //! - [`params`]: listar e alterar os parâmetros de um efeito
+//! - [`select`]: escolher o efeito que a layer executa
 //! - [`watch`]: o vigia, que mantém compilado o que os jogos abertos precisam
 
 pub mod action;
 pub mod compiler;
 pub mod layers;
 pub mod params;
+pub mod select;
 pub mod watch;

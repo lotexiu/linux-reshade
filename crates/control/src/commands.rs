@@ -5,7 +5,7 @@ use control_core::action::{self, Action};
 use crate::cli::{self, Command};
 use control_core::compiler::Compiler;
 use crate::daemon;
-use control_core::{layers, params, watch};
+use control_core::{layers, params, select, watch};
 use fx_bundle::Bundle;
 use ipc::SelectionRead;
 use std::path::{Path, PathBuf};
@@ -173,29 +173,15 @@ fn select_by_name(name: &str, state: &ipc::Writer) -> ExitCode {
         Ok(c) => c,
         Err(e) => return fail(e),
     };
-    if let Err(e) = compiler.source(name) {
-        return fail(e);
-    }
-    let live = ipc::live_layers().unwrap_or_default();
-    let mut resolutions: Vec<(u32, u32)> = live
-        .iter()
-        .flat_map(|l| &l.status.swapchains)
-        .filter(|s| !matches!(s.effect, ipc::EffectState::Unavailable(_)))
-        .map(|s| (s.width, s.height))
-        .collect();
-    resolutions.sort_unstable();
-    resolutions.dedup();
-    for (w, h) in &resolutions {
-        match compiler.ensure(name, *w, *h) {
-            Ok(done) => println!("{name} {w}x{h}: {}", if matches!(done, control_core::compiler::Ensured::Compiled(_)) { "compilado" } else { "já estava compilado" }),
-            Err(e) => return fail(e),
-        }
-    }
-    if let Err(e) = state.publish_selection(&compiler.template(name)) {
-        return fail(format!("não consegui publicar a escolha: {e}"));
+    let outcome = match select::by_name(&compiler, state, name) {
+        Ok(o) => o,
+        Err(e) => return fail(e),
+    };
+    for (w, h, fresh) in &outcome.prepared {
+        println!("{name} {w}x{h}: {}", if *fresh { "compilado" } else { "já estava compilado" });
     }
     println!("efeito escolhido: {name}");
-    if resolutions.is_empty() {
+    if outcome.prepared.is_empty() {
         println!("nenhum jogo com a layer aberto agora; ele é compilado quando um aparecer (o 'lrctl daemon' ou 'lrctl watch' precisa estar rodando)");
     } else {
         println!("o vigia (daemon ou watch) compila as resoluções novas que aparecerem");
