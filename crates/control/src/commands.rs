@@ -5,7 +5,7 @@ use control_core::action::{self, Action};
 use crate::cli::{self, Command};
 use control_core::compiler::Compiler;
 use crate::daemon;
-use control_core::{layers, params, select, watch};
+use control_core::{layers, location, params, select, watch};
 use fx_bundle::Bundle;
 use ipc::SelectionRead;
 use std::path::{Path, PathBuf};
@@ -31,6 +31,33 @@ fn bundle_for(explicit: Option<PathBuf>, state: &ipc::Writer) -> Result<Bundle, 
         return load(&schema);
     }
     load(&dir)
+}
+
+/// `lrctl config` e `lrctl config init <pasta>`.
+fn config_command(init: Option<PathBuf>) -> ExitCode {
+    let env = |name: &str| std::env::var_os(name);
+    if let Some(dir) = init {
+        let dir = match std::path::absolute(&dir) {
+            Ok(d) => d,
+            Err(e) => return fail(format!("{}: {e}", dir.display())),
+        };
+        match config::init(&dir, &env) {
+            Ok(done) => {
+                for path in &done.created {
+                    println!("criado: {}", path.display());
+                }
+                match &done.location {
+                    Some(file) => println!("escolhida como pasta de dados (ponteiro em {})", file.display()),
+                    None => println!("pasta pronta, mas não achei onde gravar o ponteiro (HOME/XDG_CONFIG_HOME): use LINUX_RESHADE_DATA={}", dir.display()),
+                }
+                println!("coloque os efeitos em {}/Shaders e as imagens em {}/Textures", dir.display(), dir.display());
+            }
+            Err(e) => return fail(format!("{}: {e}", dir.display())),
+        }
+        return ExitCode::SUCCESS;
+    }
+    print!("{}", location::describe(&config::Config::load(), config::location_file(&env).as_deref()));
+    ExitCode::SUCCESS
 }
 
 fn describe_bundle(bundle: &Bundle) -> String {
@@ -67,6 +94,7 @@ pub fn run(command: Command, state: &ipc::Writer) -> ExitCode {
             }
             ExitCode::SUCCESS
         }
+        Command::Config { init } => config_command(init),
         Command::Effects => match Compiler::from_env() {
             Ok(compiler) => {
                 let available = compiler.available();

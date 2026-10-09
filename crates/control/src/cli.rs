@@ -17,6 +17,10 @@ uso: lrctl <comando> [opções]
   layers                          mostra os jogos com a layer ativa: resolução, formato, estado
   watch                           só compila, sem atalho global (o daemon já faz isso)
 
+  config                          mostra onde estão os efeitos, texturas, presets e cache
+  config init <pasta>             prepara uma pasta de dados (Shaders, Textures, Presets, config.ini)
+                                  e a escolhe; sobrevive a reinstalar o jogo ou a máquina
+
   uniforms                        lista os parâmetros do efeito, com valor atual e faixa
   get <nome>                      mostra o valor atual de um parâmetro
   set <nome> <valor...>           altera um parâmetro (vetores: 0.1 0.2 0.3 ou 0.1,0.2,0.3)
@@ -36,6 +40,8 @@ pub enum Command {
     Layers,
     Watch,
     Effects,
+    /// Mostra a configuração de pastas (`init: None`) ou prepara uma pasta de dados.
+    Config { init: Option<PathBuf> },
     /// Escolhe o efeito (`Some`) ou desfaz a escolha (`None`).
     Use { bundle: Option<PathBuf> },
     Current,
@@ -91,6 +97,11 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "layers" => no_args(Command::Layers),
         "effects" => no_args(Command::Effects),
         "watch" => no_args(Command::Watch),
+        "config" => match tail {
+            [] => Ok(Command::Config { init: None }),
+            [init, dir] if init == "init" => Ok(Command::Config { init: Some(PathBuf::from(dir)) }),
+            _ => Err("uso: lrctl config | lrctl config init <pasta>".into()),
+        },
         "use" => match tail {
             [none] if none == "none" => Ok(Command::Use { bundle: None }),
             [dir] => Ok(Command::Use { bundle: Some(PathBuf::from(dir)) }),
@@ -144,6 +155,14 @@ mod tests {
         assert_eq!(parse(&args(&["watch"])), Ok(Command::Watch));
         assert_eq!(parse(&args(&["effects"])), Ok(Command::Effects));
         assert!(parse(&args(&["layers", "x"])).is_err());
+    }
+
+    #[test]
+    fn config_shows_or_initialises() {
+        assert_eq!(parse(&args(&["config"])), Ok(Command::Config { init: None }));
+        assert_eq!(parse(&args(&["config", "init", "/mnt/D/reshade"])), Ok(Command::Config { init: p("/mnt/D/reshade") }));
+        assert!(parse(&args(&["config", "init"])).is_err());
+        assert!(parse(&args(&["config", "x"])).is_err());
     }
 
     #[test]

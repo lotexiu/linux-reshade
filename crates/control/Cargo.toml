@@ -10,6 +10,7 @@ name = "lrctl"
 path = "src/main.rs"
 
 [dependencies]
+config = { path = "../config" }
 ipc = { path = "../ipc" }
 control-core = { path = "../control-core" }
 shortcuts = { path = "../shortcuts" }

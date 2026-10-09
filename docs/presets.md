@@ -1,6 +1,6 @@
 # Presets, shaders, jogos e cadeia de efeitos
 
-Estado: **proposta, revisão 2** (2026-10-09), ainda sem código. A base factual (o que o ReShade faz, com a
+Estado: **proposta, revisão 2** (2026-10-09); F0 implementada, o resto ainda sem código. A base factual (o que o ReShade faz, com a
 fonte) está em [reshade-estudo.md](reshade-estudo.md); este documento diz o que copiamos e o que muda.
 
 Pedidos que moldam o desenho: efeito e parâmetros **por jogo**; nada gravado na pasta do jogo; **shaders
@@ -95,8 +95,10 @@ depois. Compute shaders e mipmaps também não existem no nosso `postfx` e ficam
 
 ## Fases (commits pequenos, cada fase com testes próprios)
 
-- **F0 — configuração e caminhos.** Crate para `location.ini`/`config.ini`, caminhos em camadas, `**`,
-  relativos ao arquivo; o compilador passa a usá-los (hoje usa variáveis de ambiente). Útil sozinho.
+- **F0 — configuração e caminhos.** *(feita em 2026-10-09: crates `ini` e `config`; `lrctl config` e
+  `lrctl config init <pasta>`; o compilador usa a configuração e vê shaders novos sem reiniciar. Falta: a
+  busca em camadas por jogo só é usada quando existir jogo identificado, na F4.)* Crate para
+  `location.ini`/`config.ini`, caminhos em camadas, `**`, relativos ao arquivo.
 - **F1 — plano por processo no ipc.** Escolha e parâmetros por layer; `lrctl use|set|get --layer <id>`.
 - **F2 — crate `preset`.** Parser/gravador do formato acima, testado com presets reais; resolução jogo →
   arquivo.
