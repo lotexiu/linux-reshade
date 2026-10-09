@@ -215,6 +215,12 @@ impl Reader {
     pub fn read_params(&self, bundle_id: u64, out: &mut [u8]) -> Option<usize> {
         self.map.params().read(bundle_id, out)
     }
+
+    /// Para qual efeito está publicado o bloco de parâmetros (0 se nenhum). Permite distinguir "o bloco
+    /// é de outro efeito" de "a leitura caiu no meio de uma escrita".
+    pub fn published_bundle(&self) -> u64 {
+        self.map.params().published_id()
+    }
 }
 
 #[cfg(test)]

@@ -5,6 +5,7 @@ use crate::log::log;
 use crate::state::DeviceData;
 use ash::vk::{self, Handle};
 use postfx::effect::{FrameInfo, Target, utc_date};
+use crate::params::ParamState;
 use postfx::Effect;
 use std::sync::LazyLock;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -26,6 +27,9 @@ fn frame_info(now: Instant, previous: Option<Instant>, frame_count: u64) -> Fram
 /// Recursos que só existem depois do primeiro present com os efeitos ligados.
 struct Built {
     effect: Effect,
+    /// Identifica o bundle nos parâmetros publicados pelo app de controle.
+    bundle_id: u64,
+    params: crate::params::ParamState,
     /// Um semáforo por imagem do swapchain: o da imagem sinaliza que o efeito terminou nela.
     semaphores: Vec<vk::Semaphore>,
     /// Uma fence por imagem, sinalizada quando o command buffer dela termina. Garante que o buffer
@@ -132,13 +136,14 @@ impl SwapchainFx {
                         if let Ok(f) = f {
                             data.device.destroy_fence(f, None);
                         }
-                        let mut partial = Fx::Ready(Built { effect, semaphores, fences });
+                        let mut partial = Fx::Ready(Built { effect, bundle_id: bundle.id, params: ParamState::new(Vec::new()), semaphores, fences });
                         Self::destroy_fx(&mut partial, &data.device);
                         return Err(format!("falha ao criar semáforo/fence (erro {})", error.as_raw()));
                     }
                 }
             }
-            Ok(Built { effect, semaphores, fences })
+            let params = ParamState::new(fx_bundle::uniforms::default_block(&bundle.manifest));
+            Ok(Built { effect, bundle_id: bundle.id, params, semaphores, fences })
         }
     }
 }
@@ -190,6 +195,13 @@ pub unsafe fn apply(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInfoK
         }
 
         // A fence garante que a GPU terminou com o buffer de uniforms desta imagem: pode reescrevê-lo.
+        // Primeiro os parâmetros do app de controle (a imagem inteira do buffer)...
+        if let Some(reader) = crate::control::reader() {
+            if let Some(bytes) = built.params.next(reader, built.bundle_id) {
+                built.effect.write_uniforms(index, 0, bytes);
+            }
+        }
+        // ...depois os valores do runtime (tempo etc.), que valem mais que qualquer parâmetro.
         built.effect.update_sources(index, &frame_info(now, previous, data.presents.load(std::sync::atomic::Ordering::Relaxed)));
 
         let waits = std::slice::from_raw_parts(info.p_wait_semaphores, info.wait_semaphore_count as usize);

@@ -11,6 +11,7 @@ mod device;
 mod effect;
 mod instance;
 mod log;
+mod params;
 mod present;
 mod proc_addr;
 mod state;

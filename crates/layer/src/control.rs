@@ -10,6 +10,11 @@ const STATE_RETRY_EVERY: u64 = 120;
 /// Depois de aberto, é lido por `load` atômico, sem lock.
 static CONTROL: OnceLock<ipc::Reader> = OnceLock::new();
 
+/// O canal com o app de controle, se já foi aberto (por `effects_enabled`, a cada present).
+pub fn reader() -> Option<&'static ipc::Reader> {
+    CONTROL.get()
+}
+
 /// Valor atual da flag de efeitos. Enquanto o app de controle não existe, os efeitos ficam desligados.
 pub fn effects_enabled(present_number: u64) -> bool {
     if let Some(reader) = CONTROL.get() {
