@@ -9,8 +9,13 @@ use ipc::{EffectState, LiveLayer, SelectionRead};
 use std::collections::{BTreeSet, HashMap};
 use std::time::{Duration, SystemTime};
 
-/// Intervalo entre duas olhadas nas layers.
-pub const INTERVAL: Duration = Duration::from_millis(500);
+/// Intervalo entre duas olhadas nas layers. Olhar é barato (listar um diretório e ler alguns bytes), e
+/// quanto menor, mais cedo o efeito aparece depois de uma mudança de tamanho de janela.
+pub const INTERVAL: Duration = Duration::from_millis(200);
+/// A poda do cache roda no máximo com esta frequência.
+const PRUNE_EVERY: Duration = Duration::from_secs(30);
+/// Quantos bundles recentes de cada efeito ficam no cache (fora os que um jogo aberto usa).
+const KEEP_PER_EFFECT: usize = 16;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Job {
@@ -41,6 +46,13 @@ pub fn plan(compiler: &Compiler, selection: &SelectionRead, layers: &[LiveLayer]
         // Uma falha anterior só é repetida se o `.fx` mudou desde então.
         .filter(|job| failures.get(job).is_none_or(|at_failure| *at_failure != edited))
         .collect()
+}
+
+/// As resoluções que jogos abertos usam do efeito escolhido: o que a poda do cache não pode apagar.
+pub fn in_use(compiler: &Compiler, selection: &SelectionRead, layers: &[LiveLayer]) -> std::collections::HashSet<(String, u32, u32)> {
+    let SelectionRead::Path(template) = selection else { return Default::default() };
+    let Some(name) = compiler.name_from_template(template) else { return Default::default() };
+    layers.iter().flat_map(|l| &l.status.swapchains).map(|s| (name.clone(), s.width, s.height)).collect()
 }
 
 /// O resultado de um `tick`, para o chamador mostrar ao usuário.
@@ -84,9 +96,17 @@ fn describe(e: &CompileError) -> String {
 /// Vigia para sempre: a cada [`INTERVAL`] olha as layers vivas e compila o que falta, contando o que fez.
 pub fn run(compiler: &Compiler, state: &ipc::Writer) -> ! {
     let mut failures = Failures::new();
+    let mut last_prune = std::time::Instant::now();
     loop {
         let layers = ipc::live_layers().unwrap_or_default();
         let report = tick(compiler, state, &layers, &mut failures);
+        if last_prune.elapsed() >= PRUNE_EVERY {
+            last_prune = std::time::Instant::now();
+            let removed = compiler.prune(&in_use(compiler, &state.selection(), &layers), KEEP_PER_EFFECT);
+            if removed > 0 {
+                println!("cache: {removed} bundle(s) antigo(s) removido(s)");
+            }
+        }
         for job in &report.compiled {
             println!("compilado {} para {}x{}", job.name, job.width, job.height);
         }
@@ -181,6 +201,15 @@ mod tests {
         let later = SystemTime::now() + Duration::from_secs(60);
         fs::File::options().write(true).open(f.root.join("effects/Sepia.fx")).unwrap().set_modified(later).unwrap();
         assert_eq!(plan(&f.compiler, &selection, &layers, &failures), vec![job(800, 600)], "o .fx foi editado: tenta de novo");
+    }
+
+    #[test]
+    fn in_use_is_every_resolution_of_the_selected_effect_on_open_games() {
+        let f = fake("in-use", OK_TOOL);
+        let layers = [layer("A", &[(100, 100, EffectState::Ready), (200, 200, EffectState::Idle)]), layer("B", &[(100, 100, EffectState::Ready)])];
+        let used = in_use(&f.compiler, &by_name(&f.compiler, "Sepia"), &layers);
+        assert_eq!(used, std::collections::HashSet::from([("Sepia".to_string(), 100, 100), ("Sepia".to_string(), 200, 200)]));
+        assert!(in_use(&f.compiler, &SelectionRead::Cleared, &layers).is_empty());
     }
 
     #[test]

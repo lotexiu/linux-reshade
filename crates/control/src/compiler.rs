@@ -64,6 +64,43 @@ impl Ensured {
     }
 }
 
+/// Um diretório do cache, como o `prune` o vê.
+pub(crate) struct CacheEntry {
+    pub path: PathBuf,
+    pub file_name: String,
+    pub modified: SystemTime,
+}
+
+/// `Nome-1920x1080` -> `("Nome", 1920, 1080)`.
+fn parse_bundle_name(file_name: &str) -> Option<(String, u32, u32)> {
+    let (name, size) = file_name.rsplit_once('-')?;
+    let (w, h) = size.split_once('x')?;
+    valid_name(name).then_some(())?;
+    Some((name.to_string(), w.parse().ok()?, h.parse().ok()?))
+}
+
+/// Quais diretórios do cache apagar. Pura: recebe o que existe e devolve o que sobra de lado.
+pub(crate) fn prune_plan(entries: &[CacheEntry], in_use: &std::collections::HashSet<(String, u32, u32)>, keep_per_effect: usize) -> Vec<PathBuf> {
+    let mut doomed = Vec::new();
+    let mut by_effect: std::collections::BTreeMap<String, Vec<&CacheEntry>> = std::collections::BTreeMap::new();
+    for entry in entries {
+        if entry.file_name.ends_with(".tmp") {
+            doomed.push(entry.path.clone()); // sobra de uma compilação interrompida
+        } else if let Some((name, _, _)) = parse_bundle_name(&entry.file_name) {
+            by_effect.entry(name).or_default().push(entry);
+        } // o que não é um bundle nosso não é tocado
+    }
+    for (_, mut bundles) in by_effect {
+        bundles.sort_by_key(|e| std::cmp::Reverse(e.modified)); // os mais novos primeiro
+        for entry in bundles.into_iter().skip(keep_per_effect) {
+            if !in_use.contains(&parse_bundle_name(&entry.file_name).expect("já foi lido")) {
+                doomed.push(entry.path.clone());
+            }
+        }
+    }
+    doomed
+}
+
 /// Um nome de efeito é só letras, números, `_`, `-` e `.` (e não começa com ponto). Isso impede que
 /// `../x` ou um caminho absoluto escapem do cache ao virarem um diretório.
 pub fn valid_name(name: &str) -> bool {
@@ -150,6 +187,26 @@ impl Compiler {
             }
         }
         found.into_iter().collect()
+    }
+
+    /// Apaga do cache os bundles antigos: de cada efeito ficam os `keep_per_effect` mais recentes, e nunca
+    /// se apaga um que esteja em `in_use` (resoluções de jogos abertos). Também remove restos de
+    /// compilações interrompidas (`*.tmp`). Devolve quantos diretórios apagou.
+    ///
+    /// Redimensionar uma janela cria dezenas de resoluções de passagem; sem isto o cache só cresceria.
+    pub fn prune(&self, in_use: &std::collections::HashSet<(String, u32, u32)>, keep_per_effect: usize) -> usize {
+        let Ok(entries) = std::fs::read_dir(&self.cache) else { return 0 };
+        let found: Vec<CacheEntry> = entries
+            .flatten()
+            .filter_map(|e| {
+                let path = e.path();
+                let file_name = path.file_name()?.to_str()?.to_string();
+                let age_key = modified(&path.join("manifest.json")).or_else(|| modified(&path));
+                Some(CacheEntry { path, file_name, modified: age_key? })
+            })
+            .collect();
+        let doomed = prune_plan(&found, in_use, keep_per_effect);
+        doomed.iter().filter(|p| std::fs::remove_dir_all(p).is_ok()).count()
     }
 
     pub fn bundle_dir(&self, name: &str, width: u32, height: u32) -> PathBuf {
@@ -343,6 +400,67 @@ mod tests {
         compiler.effects.push(second.clone());
         let names: Vec<_> = compiler.available().into_iter().map(|(n, d)| (n, d == second)).collect();
         assert_eq!(names, vec![("Sepia".to_string(), false), ("Vibrance".to_string(), true)]);
+    }
+
+    fn entry(name: &str, age_secs: u64) -> CacheEntry {
+        CacheEntry {
+            path: PathBuf::from("/cache").join(name),
+            file_name: name.to_string(),
+            modified: SystemTime::now() - Duration::from_secs(age_secs),
+        }
+    }
+
+    fn doomed(entries: &[CacheEntry], in_use: &[(&str, u32, u32)], keep: usize) -> Vec<String> {
+        let in_use = in_use.iter().map(|(n, w, h)| (n.to_string(), *w, *h)).collect();
+        let mut names: Vec<_> =
+            prune_plan(entries, &in_use, keep).iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn prune_keeps_the_newest_of_each_effect() {
+        let entries = [
+            entry("Sepia-100x100", 400),
+            entry("Sepia-200x200", 300),
+            entry("Sepia-300x300", 200),
+            entry("Sepia-400x400", 100),
+            entry("Invert-100x100", 900), // outro efeito: tem a própria cota
+        ];
+        assert_eq!(doomed(&entries, &[], 2), ["Sepia-100x100", "Sepia-200x200"]);
+        assert!(doomed(&entries, &[], 4).is_empty(), "dentro da cota nada é apagado");
+    }
+
+    #[test]
+    fn prune_never_removes_what_an_open_game_uses() {
+        let entries = [entry("Sepia-100x100", 400), entry("Sepia-200x200", 300), entry("Sepia-300x300", 200)];
+        assert_eq!(doomed(&entries, &[("Sepia", 100, 100)], 1), ["Sepia-200x200"], "o mais velho está em uso e fica");
+    }
+
+    #[test]
+    fn prune_clears_interrupted_compilations_and_ignores_strangers() {
+        let entries = [entry("Sepia-100x100.tmp", 10), entry("anotacoes", 999), entry("Sepia-1x", 999), entry("../Sepia-5x5", 999)];
+        assert_eq!(doomed(&entries, &[], 0), ["Sepia-100x100.tmp"], "só o .tmp; o que não é bundle nosso não se toca");
+    }
+
+    #[test]
+    fn prune_removes_real_directories_and_reports_how_many() {
+        let f = fake("prune-real", OK_TOOL);
+        for (i, (w, h)) in [(100, 100), (200, 200), (300, 300)].into_iter().enumerate() {
+            f.compiler.ensure("Sepia", w, h).unwrap();
+            // Envelhece em ordem: o 100x100 é o mais antigo e o 300x300, o mais novo.
+            let manifest = f.compiler.bundle_dir("Sepia", w, h).join("manifest.json");
+            let at = SystemTime::now() - Duration::from_secs(1000 - i as u64 * 100);
+            fs::File::options().write(true).open(&manifest).unwrap().set_modified(at).unwrap();
+        }
+        // Fica 1 por cota (o 300x300, o mais novo), e o 100x100, o mais velho, está em uso por um jogo.
+        let in_use = std::collections::HashSet::from([("Sepia".to_string(), 100, 100)]);
+        assert_eq!(f.compiler.prune(&in_use, 1), 1, "só o 200x200 é apagado");
+        let exists = |w, h| f.compiler.bundle_dir("Sepia", w, h).exists();
+        assert!(exists(100, 100), "em uso");
+        assert!(!exists(200, 200), "velho e sem uso");
+        assert!(exists(300, 300), "o mais novo");
+        assert_eq!(f.compiler.prune(&in_use, 1), 0, "uma segunda passada não acha mais nada");
     }
 
     #[test]
