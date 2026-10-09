@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Utilitário de desenvolvimento. Idempotente; serve para trocar de máquina sem esforço.
-# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|hotkey|placement|logs> [args]
+# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|smoke-steam|hotkey|placement|logs> [args]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -10,7 +10,10 @@ ENABLE_VAR="LINUX_RESHADE"
 DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 MANIFEST_DIR="$DATA_HOME/vulkan/implicit_layer.d"
 MANIFEST="$MANIFEST_DIR/${LAYER_NAME}.json"
-LOG_FILE="${LINUX_RESHADE_LOG:-${XDG_RUNTIME_DIR:-/tmp}/linux-reshade.log}"
+# O log fica no $HOME porque os containers da Steam compartilham o $HOME, mas não o /run/user.
+LOG_FILE="${LINUX_RESHADE_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/linux-reshade/layer.log}"
+mkdir -p "$(dirname "$LOG_FILE")"
+STEAM_SOLDIER="${STEAM_ROOT:-$HOME/.local/share/Steam}/steamapps/common/SteamLinuxRuntime_soldier/run-in-soldier"
 
 # Rust vem do asdf (versão fixada em .tool-versions); sem asdf, cai no rustup.
 # shellcheck disable=SC1091
@@ -115,28 +118,41 @@ cmd_run() {
   cat "$LOG_FILE"
 }
 
-# Build + instala + roda o vkcube; liga e desliga a flag com o lrctl no meio da execução e
-# confere que a layer foi carregada, viu os presents e reagiu às duas mudanças.
-cmd_smoke() {
-  say "o vkcube abre na tela em foco por ~15 s; evite mexer em janelas até terminar"
+# Build + instala + roda o vkcube (comando em "$@"); liga e desliga a flag com o lrctl no meio da
+# execução e confere que a layer foi carregada, viu os presents e reagiu às duas mudanças.
+# smoke_with <rótulo> <exige-término-limpo 0|1> <timeout-s> <comando...>
+smoke_with() {
+  local label="$1" strict="$2" limit="$3"; shift 3
+  say "smoke ($label): o vkcube abre na tela em foco por ~15 s; evite mexer em janelas até terminar"
   cmd_install
   cmd_build -p linux-reshade-control
   local lrctl="$ROOT/target/release/lrctl"
   "$lrctl" off >/dev/null
   : >"$LOG_FILE"
-  env "$ENABLE_VAR=1" LINUX_RESHADE_LOG="$LOG_FILE" timeout 60 vkcube --c 1800 >/dev/null 2>&1 &
+  env "$ENABLE_VAR=1" LINUX_RESHADE_LOG="$LOG_FILE" timeout "$limit" "$@" --c 1800 >/dev/null 2>&1 &
   local pid=$!
-  # espera o primeiro present (até ~10 s) antes de mexer na flag
-  for _ in $(seq 1 100); do grep -q "vkQueuePresentKHR #1$" "$LOG_FILE" 2>/dev/null && break; sleep 0.1; done
+  # espera o primeiro present (até ~15 s) antes de mexer na flag
+  for _ in $(seq 1 150); do grep -q "vkQueuePresentKHR #1$" "$LOG_FILE" 2>/dev/null && break; sleep 0.1; done
   sleep 1; "$lrctl" on >/dev/null
   sleep 2; "$lrctl" off >/dev/null
-  wait "$pid" || true
-  local ok=1
-  for pat in "vkCreateInstance ok" "vkCreateDevice ok" "vkQueuePresentKHR #1$" \
-             "estado compartilhado aberto" "efeitos LIGADOS" "efeitos DESLIGADOS" "vkDestroyInstance"; do
+  local rc=0; wait "$pid" || rc=$?
+  [ "$rc" = 0 ] || warn "o vkcube terminou com código $rc (124 = estourou o timeout; 143/137 = morto por sinal)"
+  local ok=1 patterns=("vkCreateInstance ok" "vkCreateDevice ok" "vkQueuePresentKHR #1$" \
+             "estado compartilhado aberto" "efeitos LIGADOS" "efeitos DESLIGADOS")
+  [ "$strict" = 1 ] && patterns+=("vkDestroyInstance")
+  for pat in "${patterns[@]}"; do
     if grep -q "$pat" "$LOG_FILE"; then printf '  ok     %s\n' "$pat"; else printf '  FALHOU %s\n' "$pat"; ok=0; fi
   done
-  [ "$ok" = 1 ] && say "smoke: passou" || { warn "smoke: falhou (log em $LOG_FILE)"; exit 1; }
+  [ "$ok" = 1 ] && say "smoke ($label): passou" || { warn "smoke ($label): falhou (log em $LOG_FILE)"; exit 1; }
+}
+
+# --wsi wayland explícito: o caminho XWayland (--wsi xcb) trava nesta máquina mesmo sem a layer.
+cmd_smoke() { smoke_with "host" 1 60 vkcube --wsi wayland; }
+
+# Mesmo teste, mas dentro do container soldier da Steam (pressure-vessel).
+cmd_smoke_steam() {
+  [ -x "$STEAM_SOLDIER" ] || { warn "não achei $STEAM_SOLDIER (Steam Linux Runtime soldier instalado?)"; exit 1; }
+  smoke_with "container soldier" 1 60 "$STEAM_SOLDIER" -- vkcube-wayland
 }
 
 # Teste interativo do atalho global: o vkcube roda, o lrctl daemon escuta, e você aperta o atalho.
@@ -198,8 +214,9 @@ case "${1:-}" in
   uninstall) cmd_uninstall ;;
   run)       shift; cmd_run "$@" ;;
   smoke)     cmd_smoke ;;
+  smoke-steam) cmd_smoke_steam ;;
   hotkey)    cmd_hotkey ;;
   placement) shift; cmd_placement "$@" ;;
   logs)      shift; cmd_logs "$@" ;;
-  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|hotkey|placement|logs>" >&2; exit 2 ;;
+  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|smoke-steam|hotkey|placement|logs>" >&2; exit 2 ;;
 esac

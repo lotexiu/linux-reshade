@@ -66,6 +66,20 @@ invertido, formatos variados e MSAA. É heurística por jogo, e deve ter módulo
 - **Não instalados:** `cargo`/`rustc`/`rustup`, `vulkaninfo`, `gamescope`, `glslc`, `dxc`,
   `spirv-val`, `cmake`, `g++`/`clang`. Instalar antes do primeiro marco.
 
+## Achados de ambiente (2026-10-09, Ubuntu 26.04 / GNOME 50.1 / NVIDIA 595)
+
+- **Containers da Steam (pressure-vessel):** a layer carrega e funciona dentro do runtime `soldier`
+  (o pressure-vessel usa a glibc do host quando ela é mais nova; a layer exige `GLIBC_2.34`, então
+  hosts anteriores a isso não servem). O `/run/user/<uid>` **não** é visível no container; `/dev/shm`,
+  `/tmp`, `$HOME` e `/mnt` são. Por isso o estado compartilhado fica em `/dev/shm/linux-reshade-<uid>/`
+  e o log da layer, em `~/.local/state/linux-reshade/`.
+- **XWayland trava na apresentação:** `vkcube --wsi xcb` não termina (nem sem a layer, no host e no
+  container); `--wsi wayland` termina normalmente. É problema do ambiente, não do projeto, mas
+  importa: jogos no Proton usam X11 por padrão. Testar com um jogo real antes de concluir algo.
+- **Ctrl+Alt+F1..F12 troca de terminal virtual** e travou a máquina uma vez; nunca sugerir esses atalhos.
+- Um travamento do PC pode deixar artefatos de build zerados (o Cargo não os refaz);
+  `scripts/dev.sh install` detecta e refaz o `.so`.
+
 ## Perguntas em aberto
 
 - Nome definitivo do projeto e licença.
