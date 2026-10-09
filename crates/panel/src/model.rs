@@ -135,7 +135,10 @@ impl Model {
                     .collect();
                 resolutions.sort_unstable();
                 resolutions.dedup();
-                select::prepare(compiler, &self.state, name, &resolutions).map_err(|e| e.to_string())
+                select::prepare(compiler, &self.state, name, &resolutions)
+                    // Sem jogo aberto nada foi compilado, e os controles precisam de um bundle de onde ler os parâmetros do efeito.
+                    .and_then(|_| compiler.schema_bundle(&compiler.template(name), &(self.layers)()).map(drop))
+                    .map_err(|e| e.to_string())
             }
         };
         self.schema = None; // os controles são de outro efeito
@@ -253,6 +256,17 @@ mod tests {
         assert_eq!(c.len(), 1);
         assert_eq!((c[0].label.as_str(), c[0].value.clone()), ("Intensidade", vec![1.0]));
         assert!(matches!(c[0].kind, Kind::Slider { .. }));
+    }
+
+    #[test]
+    fn selecting_with_no_game_open_still_shows_the_controls() {
+        let e = env("nogame");
+        let reference = e.compiler.bundle_dir("Sepia", 1920, 1080);
+        let (mut m, _) = model(e, vec![]);
+        m.select_effect("Sepia");
+        assert!(reference.join("manifest.json").is_file(), "compilou um bundle de referência (1920x1080)");
+        assert!(m.snapshot().notice.is_none(), "{:?}", m.snapshot().notice);
+        assert_eq!(m.snapshot().controls.len(), 1, "os controles aparecem mesmo sem jogo aberto");
     }
 
     #[test]

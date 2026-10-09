@@ -49,10 +49,15 @@ fn text<'a>(a: &'a Annotations, key: &str) -> Option<&'a str> {
     }
 }
 
+/// O manifesto guarda os números como `f32` (`0.01` vira `0.00999999978`); aqui voltam ao que o autor escreveu.
+fn clean(n: f64) -> f64 {
+    (n as f32).to_string().parse().unwrap_or(n)
+}
+
 fn number(a: &Annotations, key: &str) -> Option<f64> {
     match a.get(key) {
-        Some(Value::Scalar(Scalar::Number(n))) => Some(*n),
-        Some(Value::List(l)) => l.iter().find_map(|s| if let Scalar::Number(n) = s { Some(*n) } else { None }),
+        Some(Value::Scalar(Scalar::Number(n))) => Some(clean(*n)),
+        Some(Value::List(l)) => l.iter().find_map(|s| if let Scalar::Number(n) = s { Some(clean(*n)) } else { None }),
         _ => None,
     }
 }
@@ -172,6 +177,16 @@ mod tests {
         assert_eq!(int, Some(Kind::Slider { min: 1.0, max: 10.0, step: 1.0 }), "sem ui_type, mas com faixa");
         let custom = kind_of(&uniform("float", 1, r#"{"ui_min":0,"ui_max":1,"ui_step":0.25}"#));
         assert_eq!(custom, Some(Kind::Slider { min: 0.0, max: 1.0, step: 0.25 }), "o passo do autor vale");
+    }
+
+    #[test]
+    fn numbers_written_by_the_author_come_back_as_written() {
+        // Como o fx2spv os grava: floats de 32 bits em 9 dígitos.
+        let k = kind_of(&uniform("float", 1, r#"{"ui_min":0.100000001,"ui_max":1,"ui_step":0.00999999978}"#));
+        assert_eq!(k, Some(Kind::Slider { min: 0.1, max: 1.0, step: 0.01 }));
+        assert_eq!(clean(0.699999988), 0.7);
+        assert_eq!(clean(8.0), 8.0);
+        assert_eq!(clean(-1.0), -1.0);
     }
 
     #[test]
