@@ -120,49 +120,69 @@ cmd_run() {
 
 # Build + instala + roda o vkcube (comando em "$@"); liga e desliga a flag com o lrctl no meio da
 # execução e confere que a layer foi carregada, viu os presents e reagiu às duas mudanças.
-# Compila o efeito Sépia para a janela de 500x500 do vkcube e devolve o diretório do bundle.
-SMOKE_BUNDLE="$ROOT/build/bundles/Sepia"
+# Compila dois efeitos para a janela de 500x500 do vkcube (o Sépia, com um parâmetro, e a Inversão).
+SMOKE_BUNDLE="$ROOT/build/bundles/Sepia-500x500"
+SMOKE_BUNDLE_2="$ROOT/build/bundles/Invert-500x500"
 prepare_smoke_bundle() {
   [ -x "$ROOT/build/fx2spv/fx2spv" ] || cmd_fx_tool >&2
-  "$ROOT/build/fx2spv/fx2spv" --width 500 --height 500 -o "$SMOKE_BUNDLE" "$ROOT/effects/Sepia.fx" >&2
+  "$ROOT/tools/fx2spv/compile.sh" Sepia 500 500 >/dev/null
+  "$ROOT/tools/fx2spv/compile.sh" "$ROOT/crates/postfx/tests/fx/Invert.fx" 500 500 >/dev/null
+}
+
+# Deixa o canal com a layer como estava antes do teste: nenhum efeito escolhido e efeitos desligados.
+smoke_cleanup() {
+  local lrctl="$ROOT/target/release/lrctl"
+  [ -x "$lrctl" ] || return 0
+  "$lrctl" use none >/dev/null 2>&1 || true
+  "$lrctl" off >/dev/null 2>&1 || true
 }
 
 # smoke_with <rótulo> <exige-término-limpo 0|1> <timeout-s> <comando...>
 smoke_with() {
   local label="$1" strict="$2" limit="$3"; shift 3
-  say "smoke ($label): o vkcube abre na tela em foco por ~15 s; evite mexer em janelas até terminar"
+  say "smoke ($label): o vkcube abre na tela em foco por ~20 s; evite mexer em janelas até terminar"
   cmd_install
   cmd_build -p linux-reshade-control
   prepare_smoke_bundle
   local lrctl="$ROOT/target/release/lrctl"
+  # Sempre deixa o canal limpo ao sair (inclusive em falha): uma escolha esquecida valeria para os jogos de verdade.
+  trap smoke_cleanup EXIT
   "$lrctl" off >/dev/null
+  "$lrctl" use none >/dev/null
   : >"$LOG_FILE"
-  # SMOKE_VALIDATE=1 liga a validation layer do Vulkan; a saída do vkcube fica em $LOG_FILE.out
+  # SMOKE_VALIDATE=1 liga a validation layer do Vulkan; a saída do vkcube fica em $LOG_FILE.out.
+  # O bundle NÃO vai pelo ambiente: quem escolhe o efeito é o app de controle (lrctl use).
   local validate_env=()
   [ "${SMOKE_VALIDATE:-0}" = 1 ] && validate_env=("VK_LOADER_LAYERS_ENABLE=*validation*")
-  env "$ENABLE_VAR=1" LINUX_RESHADE_LOG="$LOG_FILE" LINUX_RESHADE_BUNDLE="$SMOKE_BUNDLE" "${validate_env[@]}" timeout "$limit" "$@" --c 1800 >"$LOG_FILE.out" 2>&1 &
+  env -u LINUX_RESHADE_BUNDLE "$ENABLE_VAR=1" LINUX_RESHADE_LOG="$LOG_FILE" "${validate_env[@]}" timeout "$limit" "$@" --c 2400 >"$LOG_FILE.out" 2>&1 &
   local pid=$!
-  # espera o primeiro present (até ~15 s) antes de mexer na flag
+  # espera o primeiro present (até ~15 s) antes de mexer no canal
   for _ in $(seq 1 150); do grep -q "vkQueuePresentKHR #1$" "$LOG_FILE" 2>/dev/null && break; sleep 0.1; done
+  "$lrctl" use "$SMOKE_BUNDLE" >/dev/null
   # publica um parâmetro antes de ligar: a layer precisa aplicá-lo ao criar o efeito
-  LINUX_RESHADE_BUNDLE="$SMOKE_BUNDLE" "$lrctl" set Strength 0.5 >/dev/null
+  "$lrctl" set Strength 0.5 >/dev/null
   # liga, desliga, liga de novo (reaproveita os recursos já criados) e desliga
   sleep 1; "$lrctl" on >/dev/null
   sleep 1.5; "$lrctl" off >/dev/null
   sleep 1; "$lrctl" on >/dev/null
-  sleep 1.5; "$lrctl" off >/dev/null
+  # troca de efeito com ele ligado: a layer descarta o Sépia e constrói a Inversão
+  sleep 1.5; "$lrctl" use "$SMOKE_BUNDLE_2" >/dev/null
+  sleep 2; "$lrctl" off >/dev/null
   local rc=0; wait "$pid" || rc=$?
-  LINUX_RESHADE_BUNDLE="$SMOKE_BUNDLE" "$lrctl" reset >/dev/null
+  "$lrctl" use "$SMOKE_BUNDLE" >/dev/null && "$lrctl" reset >/dev/null   # limpa o parâmetro do Sépia
   [ "$rc" = 0 ] || warn "o vkcube terminou com código $rc (124 = estourou o timeout; 143/137 = morto por sinal)"
   local ok=1 patterns=("vkCreateInstance ok" "vkCreateDevice ok" "vkQueuePresentKHR #1$" \
              "estado compartilhado aberto" "efeitos LIGADOS" "efeitos DESLIGADOS" "efeito criado"
-             "parâmetros do app de controle aplicados")
+             "parâmetros do app de controle aplicados" "o bundle mudou" "Invert-500x500")
   [ "$strict" = 1 ] && patterns+=("vkDestroyInstance")
   if [ "${SMOKE_VALIDATE:-0}" = 1 ]; then
     local issues; issues=$(grep -ciE "VUID|Validation (Error|Warning)" "$LOG_FILE.out" || true)
     if [ "$issues" = 0 ]; then printf '  ok     validation sem mensagens\n'; else
       printf '  FALHOU validation: %s mensagens (veja %s)\n' "$issues" "$LOG_FILE.out"; ok=0; fi
   fi
+  # dois efeitos precisam ter sido construídos: o Sépia e, depois da troca, a Inversão
+  local built; built=$(grep -c "efeito criado" "$LOG_FILE" || true)
+  if [ "$built" -ge 2 ]; then printf '  ok     efeitos construídos: %s\n' "$built"; else printf '  FALHOU efeitos construídos: %s (esperava 2 ou mais)\n' "$built"; ok=0; fi
   for pat in "${patterns[@]}"; do
     if grep -q "$pat" "$LOG_FILE"; then printf '  ok     %s\n' "$pat"; else printf '  FALHOU %s\n' "$pat"; ok=0; fi
   done
