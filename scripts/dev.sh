@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Utilitário de desenvolvimento. Idempotente; serve para trocar de máquina sem esforço.
-# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|hotkey|shaders|fx-tool|fx-test|fx-golden|placement|logs> [args]
+# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|hotkey|fx-tool|fx-test|fx-golden|placement|logs> [args]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -120,19 +120,27 @@ cmd_run() {
 
 # Build + instala + roda o vkcube (comando em "$@"); liga e desliga a flag com o lrctl no meio da
 # execução e confere que a layer foi carregada, viu os presents e reagiu às duas mudanças.
+# Compila o efeito Sépia para a janela de 500x500 do vkcube e devolve o diretório do bundle.
+SMOKE_BUNDLE="$ROOT/build/bundles/Sepia"
+prepare_smoke_bundle() {
+  [ -x "$ROOT/build/fx2spv/fx2spv" ] || cmd_fx_tool >&2
+  "$ROOT/build/fx2spv/fx2spv" --width 500 --height 500 -o "$SMOKE_BUNDLE" "$ROOT/effects/Sepia.fx" >&2
+}
+
 # smoke_with <rótulo> <exige-término-limpo 0|1> <timeout-s> <comando...>
 smoke_with() {
   local label="$1" strict="$2" limit="$3"; shift 3
   say "smoke ($label): o vkcube abre na tela em foco por ~15 s; evite mexer em janelas até terminar"
   cmd_install
   cmd_build -p linux-reshade-control
+  prepare_smoke_bundle
   local lrctl="$ROOT/target/release/lrctl"
   "$lrctl" off >/dev/null
   : >"$LOG_FILE"
   # SMOKE_VALIDATE=1 liga a validation layer do Vulkan; a saída do vkcube fica em $LOG_FILE.out
   local validate_env=()
   [ "${SMOKE_VALIDATE:-0}" = 1 ] && validate_env=("VK_LOADER_LAYERS_ENABLE=*validation*")
-  env "$ENABLE_VAR=1" LINUX_RESHADE_LOG="$LOG_FILE" "${validate_env[@]}" timeout "$limit" "$@" --c 1800 >"$LOG_FILE.out" 2>&1 &
+  env "$ENABLE_VAR=1" LINUX_RESHADE_LOG="$LOG_FILE" LINUX_RESHADE_BUNDLE="$SMOKE_BUNDLE" "${validate_env[@]}" timeout "$limit" "$@" --c 1800 >"$LOG_FILE.out" 2>&1 &
   local pid=$!
   # espera o primeiro present (até ~15 s) antes de mexer na flag
   for _ in $(seq 1 150); do grep -q "vkQueuePresentKHR #1$" "$LOG_FILE" 2>/dev/null && break; sleep 0.1; done
@@ -158,15 +166,15 @@ smoke_with() {
 }
 
 # --wsi wayland explícito: o caminho XWayland (--wsi xcb) trava nesta máquina mesmo sem a layer.
-cmd_smoke() { smoke_with "host" 1 60 vkcube --wsi wayland; }
+cmd_smoke() { smoke_with "host" 1 60 vkcube --wsi wayland --width 500 --height 500; }
 
 # O mesmo, com a validation layer: falha se ela acusar qualquer uso incorreto da API.
-cmd_validate() { SMOKE_VALIDATE=1 smoke_with "host + validation" 1 60 vkcube --wsi wayland; }
+cmd_validate() { SMOKE_VALIDATE=1 smoke_with "host + validation" 1 60 vkcube --wsi wayland --width 500 --height 500; }
 
 # Mesmo teste, mas dentro do container soldier da Steam (pressure-vessel).
 cmd_smoke_steam() {
   [ -x "$STEAM_SOLDIER" ] || { warn "não achei $STEAM_SOLDIER (Steam Linux Runtime soldier instalado?)"; exit 1; }
-  smoke_with "container soldier" 1 60 "$STEAM_SOLDIER" -- vkcube-wayland
+  smoke_with "container soldier" 1 60 "$STEAM_SOLDIER" -- vkcube-wayland --width 500 --height 500
 }
 
 # Teste interativo do atalho global: o vkcube roda, o lrctl daemon escuta, e você aperta o atalho.
@@ -194,19 +202,6 @@ cmd_hotkey() {
   echo "--- daemon"; cat "$daemon_log"; echo "--- layer"; grep -E "efeitos|estado" "$LOG_FILE"
   grep -q "efeitos LIGADOS" "$LOG_FILE" && grep -q "efeitos DESLIGADOS" "$LOG_FILE" \
     && say "hotkey: passou" || { warn "hotkey: não viu o ciclo ligar/desligar"; exit 1; }
-}
-
-# Compila os shaders GLSL do postfx para SPIR-V (os .spv são versionados).
-cmd_shaders() {
-  have glslangValidator || { warn "glslangValidator ausente (rode: scripts/dev.sh setup)"; exit 1; }
-  local dir="$ROOT/crates/postfx/shaders" f
-  for f in "$dir"/*.vert "$dir"/*.frag; do
-    if ! out=$(glslangValidator -V --target-env vulkan1.0 -o "$f.spv" "$f" 2>&1); then
-      echo "$out" >&2; warn "falhou: $(basename "$f")"; exit 1
-    fi
-    if have spirv-val; then spirv-val --target-env vulkan1.0 "$f.spv" || exit 1; fi
-    say "$(basename "$f").spv"
-  done
 }
 
 # Ferramenta fx2spv (C++): compila efeitos .fx para bundles. Usa git e g++ (sem cmake).
@@ -259,11 +254,10 @@ case "${1:-}" in
   validate)  cmd_validate ;;
   smoke-steam) cmd_smoke_steam ;;
   hotkey)    cmd_hotkey ;;
-  shaders)   cmd_shaders ;;
   fx-tool)   cmd_fx_tool ;;
   fx-test)   shift; cmd_fx_test "$@" ;;
   fx-golden) cmd_fx_golden ;;
   placement) shift; cmd_placement "$@" ;;
   logs)      shift; cmd_logs "$@" ;;
-  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|hotkey|shaders|fx-tool|fx-test|fx-golden|placement|logs>" >&2; exit 2 ;;
+  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|hotkey|fx-tool|fx-test|fx-golden|placement|logs>" >&2; exit 2 ;;
 esac
