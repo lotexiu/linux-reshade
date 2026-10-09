@@ -1,2 +1,4 @@
 /target
 /.tmp
+/third_party
+/build
