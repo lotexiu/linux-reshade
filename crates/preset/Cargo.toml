@@ -1,0 +1,9 @@
+[package]
+name = "preset"
+description = "Presets no formato do ReShade (ReShadePreset.ini): técnicas e ordem, macros em níveis, valores de uniform, atalhos"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+ini = { path = "../ini" }
