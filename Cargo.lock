@@ -419,6 +419,7 @@ name = "linux-reshade-layer"
 version = "0.0.1"
 dependencies = [
  "ash",
+ "fx-bundle",
  "ipc",
  "postfx",
  "vk-layer",

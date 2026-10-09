@@ -4,11 +4,12 @@
 use crate::log::log;
 use crate::state::DeviceData;
 use ash::vk::{self, Handle};
-use postfx::{InvertPass, Target};
+use postfx::effect::Target;
+use postfx::Effect;
 
 /// Recursos que só existem depois do primeiro present com os efeitos ligados.
 struct Built {
-    pass: InvertPass,
+    effect: Effect,
     /// Um semáforo por imagem do swapchain: o da imagem sinaliza que o efeito terminou nela.
     semaphores: Vec<vk::Semaphore>,
     /// Uma fence por imagem, sinalizada quando o command buffer dela termina. Garante que o buffer
@@ -57,7 +58,7 @@ impl SwapchainFx {
     unsafe fn destroy_fx(fx: &mut Fx, device: &ash::Device) {
         if let Fx::Ready(mut built) = std::mem::replace(fx, Fx::Failed) {
             unsafe {
-                built.pass.destroy(device);
+                built.effect.destroy(device);
                 for s in built.semaphores.drain(..) {
                     device.destroy_semaphore(s, None);
                 }
@@ -68,7 +69,15 @@ impl SwapchainFx {
         }
     }
 
-    unsafe fn build(&mut self, data: &DeviceData, queue_family: u32) -> Result<Built, vk::Result> {
+    unsafe fn build(&mut self, data: &DeviceData, queue: vk::Queue, queue_family: u32) -> Result<Built, String> {
+        let bundle = crate::bundle::get().ok_or("sem bundle configurado ou válido")?;
+        let t = bundle.manifest.target;
+        if (t.width, t.height) != (self.extent.width, self.extent.height) {
+            return Err(format!(
+                "o bundle foi compilado para {}x{} e o swapchain é {}x{}",
+                t.width, t.height, self.extent.width, self.extent.height
+            ));
+        }
         let target = Target {
             images: &self.images,
             format: self.format,
@@ -82,8 +91,9 @@ impl SwapchainFx {
             }),
         };
         unsafe {
-            let pass = InvertPass::new(&data.device, &data.memory, &target)?;
-            let mut built = Built { pass, semaphores: Vec::new(), fences: Vec::new() };
+            let effect = Effect::new(&data.device, &data.memory, bundle, 0, &target, queue).map_err(|e| e.to_string())?;
+            let mut semaphores = Vec::new();
+            let mut fences = Vec::new();
             for _ in &self.images {
                 let semaphore = data.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None);
                 // Nasce sinalizada: a primeira espera por ela não bloqueia.
@@ -92,25 +102,25 @@ impl SwapchainFx {
                     .create_fence(&vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED), None);
                 match (semaphore, fence) {
                     (Ok(s), Ok(f)) => {
-                        built.semaphores.push(s);
-                        built.fences.push(f);
+                        semaphores.push(s);
+                        fences.push(f);
                     }
                     (s, f) => {
                         // Libera o par que deu certo e tudo o que já foi criado.
+                        let error = s.as_ref().err().or(f.as_ref().err()).copied().unwrap_or(vk::Result::ERROR_UNKNOWN);
                         if let Ok(s) = s {
                             data.device.destroy_semaphore(s, None);
                         }
                         if let Ok(f) = f {
                             data.device.destroy_fence(f, None);
                         }
-                        let error = s.err().or(f.err()).unwrap_or(vk::Result::ERROR_UNKNOWN);
-                        let mut fx = Fx::Ready(built);
-                        Self::destroy_fx(&mut fx, &data.device);
-                        return Err(error);
+                        let mut partial = Fx::Ready(Built { effect, semaphores, fences });
+                        Self::destroy_fx(&mut partial, &data.device);
+                        return Err(format!("falha ao criar semáforo/fence (erro {})", error.as_raw()));
                     }
                 }
             }
-            Ok(built)
+            Ok(Built { effect, semaphores, fences })
         }
     }
 }
@@ -136,13 +146,13 @@ pub unsafe fn apply(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInfoK
             return None;
         }
         if matches!(fx.fx, Fx::Unbuilt) {
-            fx.fx = match fx.build(data, family) {
+            fx.fx = match fx.build(data, queue, family) {
                 Ok(built) => {
                     log!("efeito criado para o swapchain {:#x} ({} imagens)", swapchain.as_raw(), fx.images.len());
                     Fx::Ready(built)
                 }
-                Err(e) => {
-                    log!("falha ao criar o efeito do swapchain {:#x}: erro {}", swapchain.as_raw(), e.as_raw());
+                Err(why) => {
+                    log!("efeito indisponível no swapchain {:#x}: {why}", swapchain.as_raw());
                     Fx::Failed
                 }
             };
@@ -157,8 +167,9 @@ pub unsafe fn apply(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInfoK
         }
 
         let waits = std::slice::from_raw_parts(info.p_wait_semaphores, info.wait_semaphore_count as usize);
-        let stages = vec![vk::PipelineStageFlags::TRANSFER; waits.len()];
-        let command_buffers = [built.pass.command_buffer(index)];
+        // ALL_COMMANDS: nada do efeito pode começar antes de o jogo terminar de desenhar o frame.
+        let stages = vec![vk::PipelineStageFlags::ALL_COMMANDS; waits.len()];
+        let command_buffers = [built.effect.command_buffer(index)];
         let signal = [built.semaphores[index]];
         let submit = vk::SubmitInfo::default()
             .wait_semaphores(waits)

@@ -13,3 +13,4 @@ ash.workspace = true
 vk-layer = { path = "../vk-layer" }
 ipc = { path = "../ipc" }
 postfx = { path = "../postfx" }
+fx-bundle = { path = "../fx-bundle" }
