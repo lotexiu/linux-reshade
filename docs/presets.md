@@ -1,6 +1,6 @@
 # Presets, shaders, jogos e cadeia de efeitos
 
-Estado: **proposta, revisão 2** (2026-10-09); F0 implementada, o resto ainda sem código. A base factual (o que o ReShade faz, com a
+Estado: **proposta, revisão 2** (2026-10-09); F0 e F1 implementadas, o resto ainda sem código. A base factual (o que o ReShade faz, com a
 fonte) está em [reshade-estudo.md](reshade-estudo.md); este documento diz o que copiamos e o que muda.
 
 Pedidos que moldam o desenho: efeito e parâmetros **por jogo**; nada gravado na pasta do jogo; **shaders
@@ -99,7 +99,10 @@ depois. Compute shaders e mipmaps também não existem no nosso `postfx` e ficam
   `lrctl config init <pasta>`; o compilador usa a configuração e vê shaders novos sem reiniciar. Falta: a
   busca em camadas por jogo só é usada quando existir jogo identificado, na F4.)* Crate para
   `location.ini`/`config.ini`, caminhos em camadas, `**`, relativos ao arquivo.
-- **F1 — plano por processo no ipc.** Escolha e parâmetros por layer; `lrctl use|set|get --layer <id>`.
+- **F1 — plano por processo no ipc.** *(feita em 2026-10-09: canal `ctl-<id>` por layer com escolha e
+  parâmetros próprios, o vigia compila para a escolha efetiva de cada jogo, `lrctl ... --layer <pid|nome>`;
+  verificada com dois `vkcube` reais em `scripts/dev.sh smoke-layer`. Falta: a interface gráfica ainda
+  só mexe nos valores de todos; isso é a F5.)* Escolha e parâmetros por layer;
 - **F2 — crate `preset`.** Parser/gravador do formato acima, testado com presets reais; resolução jogo →
   arquivo.
 - **F3 — cadeia na layer.** Várias técnicas em ordem; `postfx` ganha o encadeamento e a escolha de técnica

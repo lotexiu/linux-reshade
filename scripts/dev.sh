@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Utilitário de desenvolvimento. Idempotente; serve para trocar de máquina sem esforço.
-# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-golden|placement|logs> [args]
+# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-golden|placement|logs> [args]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -255,7 +255,77 @@ cmd_smoke_auto() {
   check "bundle 320x240 no cache" '[ -f "$cache/Sepia-320x240/manifest.json" ]'
   check "o efeito foi construído nos dois jogos" '[ "$(grep -c "efeito criado" "$LOG_FILE")" -ge 2 ]'
   check "a layer de 320x240 esperou o bundle antes de ele existir" 'grep -q "swapchain 320x240: ainda não há bundle, esperando" "$LOG_FILE"'
+  "$lrctl" reset >/dev/null; "$lrctl" use none >/dev/null   # não deixa o Strength ajustado no estado de quem usa a máquina
   [ "$ok" = 1 ] && say "smoke (auto): passou" || { warn "smoke (auto): falhou (logs: $LOG_FILE e $cache/watch.log)"; exit 1; }
+}
+
+# Teste da escolha por jogo. Dois vkcube idênticos abertos juntos: o efeito é escolhido para UM deles
+# (`--layer <pid>`) e só ele pode ficar pronto; depois a escolha de todos não passa por cima da do jogo, `none`
+# tira o efeito só de um, `inherit` o devolve, e um parâmetro ajustado num jogo não chega ao outro.
+cmd_smoke_layer() {
+  say "smoke (por jogo): abre dois vkcube (400x300) por ~30 s; evite mexer em janelas até terminar"
+  cmd_install
+  cmd_build -p linux-reshade-control
+  local lrctl="$ROOT/target/release/lrctl" cache; cache="$(mktemp -d)"
+  export LINUX_RESHADE_CACHE="$cache"
+  SMOKE_PIDS=()
+  trap smoke_auto_cleanup EXIT
+  "$lrctl" off >/dev/null
+  # parte de um estado conhecido: o parâmetro de todos nos padrões do efeito
+  "$lrctl" use Sepia >/dev/null; "$lrctl" reset >/dev/null; "$lrctl" use none >/dev/null
+  : >"$LOG_FILE"
+  "$lrctl" watch >"$cache/watch.log" 2>&1 &
+  SMOKE_PIDS+=($!)
+  local cube_env=(env -u LINUX_RESHADE_BUNDLE "$ENABLE_VAR=1" LINUX_RESHADE_LOG="$LOG_FILE")
+  for _ in 1 2; do
+    "${cube_env[@]}" timeout 90 vkcube --wsi wayland --width 400 --height 300 --c 4000 >/dev/null 2>&1 &
+    SMOKE_PIDS+=($!)
+  done
+
+  local ok=1
+  check() { if eval "$2"; then printf '  ok     %s\n' "$1"; else printf '  FALHOU %s\n' "$1"; ok=0; fi; }
+  # state_of <pid> <texto>: o jogo <pid> mostra <texto> em `lrctl layers`
+  state_of() { "$lrctl" layers | awk -v p="$1" '$2==p' | grep -q "$2"; }
+  wait_state() { for _ in $(seq 1 200); do state_of "$1" "$2" && return 0; sleep 0.1; done; return 1; }
+  for _ in $(seq 1 150); do [ "$("$lrctl" layers | awk 'NR>1' | wc -l)" -ge 2 ] && break; sleep 0.1; done
+  local pids; pids=($("$lrctl" layers | awk 'NR>1{print $2}' | sort -n))
+  local A=${pids[0]:-0} B=${pids[1]:-0}
+  check "dois jogos com a layer (pids $A e $B)" '[ "$A" != 0 ] && [ "$B" != 0 ] && [ "$A" != "$B" ]'
+  "$lrctl" on >/dev/null
+
+  # 1. efeito só para A
+  "$lrctl" use Sepia --layer "$A" >/dev/null
+  check "A ficou pronto" 'wait_state "$A" pronto'
+  sleep 1
+  check "B continua sem efeito" 'state_of "$B" "nenhum efeito"'
+
+  # 2. escolha de todos: B passa a seguir; A mantém a sua
+  "$lrctl" use Sepia >/dev/null
+  check "B passou a seguir a escolha de todos" 'wait_state "$B" pronto'
+  check "A segue pronto" 'state_of "$A" pronto'
+
+  # 3. sem efeito só em B
+  "$lrctl" use none --layer "$B" >/dev/null
+  check "B ficou sem efeito (escolha de todos continua valendo)" 'wait_state "$B" "nenhum efeito"'
+  check "A segue pronto" 'state_of "$A" pronto'
+  check "o 'current' do jogo diz que é escolha própria" '"$lrctl" current --layer "$B" | grep -q "sem efeito"'
+
+  # 4. herdar de volta
+  "$lrctl" use inherit --layer "$B" >/dev/null
+  check "B voltou a seguir todos" 'wait_state "$B" pronto'
+
+  # 5. parâmetros por jogo: o ajuste de A não muda o valor de todos nem o de B
+  "$lrctl" set Strength 0.5 --layer "$A" >/dev/null
+  sleep 2
+  check "o parâmetro do jogo A foi aplicado em A" 'grep "parâmetros do app de controle aplicados" "$LOG_FILE" | grep -q "pid=$A"'
+  check "A vale 0.5" '[ "$("$lrctl" get Strength --layer "$A")" = 0.5 ]'
+  check "B e todos seguem no padrão do efeito (1)" '[ "$("$lrctl" get Strength --layer "$B")" = 1 ] && [ "$("$lrctl" get Strength)" = 1 ]'
+  # um ajuste global chega a B (que herda) mas não passa por cima do de A
+  "$lrctl" set Strength 0.2 >/dev/null
+  check "ajuste de todos chega a B e não muda A" '[ "$("$lrctl" get Strength --layer "$B")" = 0.2 ] && [ "$("$lrctl" get Strength --layer "$A")" = 0.5 ]'
+
+  "$lrctl" reset --layer "$A" >/dev/null; "$lrctl" reset >/dev/null; "$lrctl" use none >/dev/null; "$lrctl" off >/dev/null
+  [ "$ok" = 1 ] && say "smoke (por jogo): passou" || { warn "smoke (por jogo): falhou (logs: $LOG_FILE e $cache/watch.log)"; "$lrctl" layers; exit 1; }
 }
 
 # Abre a interface gráfica (compila se preciso).
@@ -398,6 +468,7 @@ case "${1:-}" in
   validate)  cmd_validate ;;
   smoke-steam) cmd_smoke_steam ;;
   smoke-auto) cmd_smoke_auto ;;
+  smoke-layer) cmd_smoke_layer ;;
   panel)     shift; cmd_panel "$@" ;;
   panel-smoke) cmd_panel_smoke ;;
   hotkey)    cmd_hotkey ;;
@@ -408,5 +479,5 @@ case "${1:-}" in
   fx-golden) cmd_fx_golden ;;
   placement) shift; cmd_placement "$@" ;;
   logs)      shift; cmd_logs "$@" ;;
-  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-golden|placement|logs>" >&2; exit 2 ;;
+  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-golden|placement|logs>" >&2; exit 2 ;;
 esac

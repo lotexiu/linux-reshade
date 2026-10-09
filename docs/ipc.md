@@ -50,6 +50,31 @@ essa geração (uma leitura atômica) e lê o caminho e o disco apenas quando el
 - Os comandos de parâmetros do `lrctl` usam, por padrão, o efeito escolhido (ordem: `--bundle`, efeito
   escolhido, `LINUX_RESHADE_BUNDLE`).
 
+## Canal de um jogo (`ctl-<id>`)
+
+Cada layer pode ter um canal só dela, `/dev/shm/linux-reshade-<uid>/ctl-<pid>-<instante>`, o mesmo sufixo do
+status `layer-<pid>-<instante>` (que é o *id* da layer, o que `lrctl layers` mostra como PID). Quem o cria é o
+app de controle, quando o usuário configura aquele jogo (`--layer`); a layer só mapeia para leitura, e o
+procura de tempos em tempos (a cada 30 presents) depois de criar o próprio status. Tem os mesmos dois blobs
+seqlock do canal global, a escolha de efeito e os parâmetros, e o próprio `magic`/`version` (versão 1).
+
+- **Escolha de efeito:** a do jogo vale primeiro; sem ela, a global; sem ela, `LINUX_RESHADE_BUNDLE`.
+  Três estados: vazio (herda), `!none` (sem efeito neste jogo, mesmo que haja um global; nem cai no
+  ambiente) ou o modelo de caminho. A layer olha as gerações dos dois canais e relê quando qualquer uma muda.
+- **Parâmetros:** o bloco do jogo vale antes do global, por efeito (`params_id`). O jogo que não tem bloco
+  próprio usa o global; o app de controle, ao ajustar um parâmetro do jogo, parte dos valores que ele já via
+  (os globais) e grava no canal do jogo. Os padrões do manifesto só voltam quando nenhum dos dois canais
+  tem bloco do efeito.
+- **Vigia:** calcula a escolha efetiva de cada layer (a própria ou a global), compila o que cada uma
+  precisa, e republica só a escolha de quem recebeu um bundle novo (o canal global para as que o seguem, o
+  canal do jogo para as que têm escolha própria). Também apaga os canais de jogos que fecharam (mesma
+  regra do status: o arquivo de status sumiu e o canal passou de 2 s).
+- **Linha de comando:** `lrctl use|current|uniforms|get|set|reset --layer <pid|nome>`; `use none --layer`
+  (sem efeito só ali) e `use inherit --layer` (volta a seguir todos).
+
+A flag de efeitos ligados continua **global** (o atalho liga e desliga tudo). A escolha do jogo é só do
+efeito e dos parâmetros; a F3 troca "um efeito" por uma lista ordenada de técnicas dentro do mesmo canal.
+
 ## Status das layers
 
 Cada processo com a layer cria o próprio arquivo `layer-<pid>-<instante>` no mesmo diretório e o atualiza
