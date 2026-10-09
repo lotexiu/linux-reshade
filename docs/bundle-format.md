@@ -73,3 +73,21 @@ Todos os nomes de campo são `snake_case`. Campos desconhecidos devem ser ignora
 
 **annotations** (em qualquer objeto): mapa `nome -> valor`, onde o valor é string, número, booleano
 ou lista de números. É o que a interface usa (`ui_label`, `ui_type`, `ui_min`, `ui_max`, …).
+
+## Uniforms alimentados pelo runtime (`source`)
+
+Um uniform com a anotação `source` não é um controle: o runtime o preenche a cada frame.
+
+| `source` | Valor |
+|---|---|
+| `timer` | milissegundos desde o início do jogo |
+| `frametime` | milissegundos que o frame anterior levou |
+| `framecount` | número do frame |
+| `date` | `float4(ano, mês, dia, segundos do dia)` em UTC |
+| `random` | inteiro ou float entre `min` e `max`, novo a cada frame |
+| `pingpong` | `float2(valor, direção)` oscilando entre `min` e `max` a `step` por segundo |
+
+Os demais (`key`, `mousebutton`, `mousepoint`, `mousedelta`, `mousewheel`, `overlay_*`,
+`bufready_depth`, `screenshot`) **não são alimentados** (a layer não lê entrada por decisão de
+projeto): ficam no valor padrão do manifesto, e a layer registra quais são.
+
