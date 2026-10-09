@@ -1,5 +1,9 @@
 //! Tabela de atalhos do app. Para acrescentar um atalho, acrescente uma linha aqui e, se for
 //! uma ação nova, uma variante em `Action`.
+//!
+//! Nunca sugerir `CTRL+ALT+F1`..`F12`: o kernel troca de terminal virtual (VT), e com NVIDIA
+//! proprietária no Wayland isso já travou a máquina de desenvolvimento (2026-10-09, hipótese).
+//! Atenção ao digitar: `CTRL+SHIFT+F10` (o nosso) e `CTRL+ALT+F10` (tty10) ficam lado a lado.
 
 use crate::action::Action;
 use shortcuts::{Binding, Dispatcher, Error, Scope, Shortcut};
