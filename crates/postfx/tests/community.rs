@@ -8,7 +8,7 @@ mod common;
 use ash::vk;
 use common::*;
 use fx_bundle::Bundle;
-use postfx::effect::Target;
+use postfx::effect::{FrameInfo, Target};
 use postfx::{Effect, Error};
 use std::fs;
 use std::path::Path;
@@ -52,8 +52,22 @@ fn every_compiled_bundle_either_runs_or_is_refused_explicitly() {
             let created = Effect::new(&gpu.device, &gpu.memory, &bundle, 0, &target, gpu.queue);
             match created {
                 Ok(mut effect) => {
+                    // Frame típico de um jogo rodando há 10 s: os uniforms com `source` precisam de valores.
+                    let frame = FrameInfo { time_ms: 10_000.0, frame_time_ms: 16.6, frame_count: 600, date: [2026.0, 10.0, 9.0, 43_200.0] };
                     for i in 0..targets.images.len() {
+                        effect.update_sources(i, &frame);
                         gpu.submit(effect.command_buffer(i));
+                    }
+                    // Regressão: o NightVision multiplica a imagem por smoothstep(.., timer). Sem o `timer`
+                    // alimentado ele saía todo preto no jogo; com o tempo andando tem de aparecer imagem.
+                    if name == "NightVision" {
+                        let lit = gpu.read(targets.images[0]).iter().filter(|p| p[..3].iter().any(|&c| c > 8)).count();
+                        assert!(lit > 0, "NightVision continua todo preto com o timer em 10 s");
+                        effect.update_sources(0, &FrameInfo::default());
+                        gpu.submit(effect.command_buffer(0));
+                        // Com timer = 0 ele ZERA a imagem (comportamento do próprio efeito), o que prova que o `timer` importa.
+                        let still_lit = gpu.read(targets.images[0]).iter().filter(|p| p[..3].iter().any(|&c| c > 8)).count();
+                        assert_eq!(still_lit, 0, "com timer = 0 o NightVision deveria sair preto");
                     }
                     effect.destroy(&gpu.device);
                     ran.push(name);

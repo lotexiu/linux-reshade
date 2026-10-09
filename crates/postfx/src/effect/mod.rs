@@ -12,7 +12,10 @@ mod convert;
 mod pipeline;
 mod record;
 mod resources;
+mod sources;
 mod uniforms;
+
+pub use sources::{FrameInfo, utc_date};
 
 use crate::backbuffer::BackbufferCopies;
 use crate::error::{Error, unsupported};
@@ -22,6 +25,7 @@ use fx_bundle::Bundle;
 use fx_bundle::manifest::Texture;
 use pipeline::Output;
 use resources::UniformBuffer;
+use sources::Sources;
 use std::collections::HashMap;
 
 /// O que o efeito processa.
@@ -72,6 +76,8 @@ pub struct Effect {
     target_views: Vec<vk::ImageView>,
     command_pool: vk::CommandPool,
     command_buffers: Vec<vk::CommandBuffer>,
+    /// Uniforms alimentados pelo runtime (`source = "timer"` etc.).
+    sources: Sources,
 }
 
 /// Textura que um sampler amostra: o frame (cópia) ou uma textura intermediária.
@@ -127,6 +133,27 @@ impl Effect {
         if let Some(ub) = self.uniform_buffers.get(index) {
             unsafe { ub.write(offset, bytes) };
         }
+    }
+
+    /// Escreve no buffer de uniforms da imagem `index` os valores que o runtime fornece neste frame
+    /// (tempo, número do frame, aleatório...). Chame depois de esperar a fence da imagem e antes de
+    /// submeter o command buffer.
+    ///
+    /// # Safety
+    /// A GPU não deve estar executando o command buffer dessa imagem.
+    pub unsafe fn update_sources(&mut self, index: usize, frame: &FrameInfo) {
+        if self.sources.is_empty() {
+            return;
+        }
+        for (offset, bytes) in self.sources.evaluate(frame) {
+            unsafe { self.write_uniforms(index, offset, &bytes) };
+        }
+    }
+
+    /// Uniforms com `source` que o runtime não alimenta (mouse, teclado, overlay...): ficam com o
+    /// valor padrão do manifesto. Útil para a layer registrar no log.
+    pub fn ignored_sources(&self) -> &[String] {
+        self.sources.ignored()
     }
 
     unsafe fn build(
@@ -205,6 +232,7 @@ impl Effect {
         for s in &m.samplers {
             self.samplers.push(unsafe { resources::create_sampler(device, s)? });
         }
+        self.sources = Sources::collect(m);
         let has_uniforms = m.total_uniform_size > 0;
         if has_uniforms {
             let defaults = uniforms::default_block(m);

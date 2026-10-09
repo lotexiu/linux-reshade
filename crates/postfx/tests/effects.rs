@@ -7,7 +7,7 @@ mod common;
 use ash::vk;
 use common::*;
 use fx_bundle::Bundle;
-use postfx::effect::Target;
+use postfx::effect::{FrameInfo, Target};
 use postfx::{Effect, Error};
 use std::path::Path;
 
@@ -132,6 +132,35 @@ fn unknown_technique_is_an_error() {
         let targets = gpu.targets(1, input);
         let r = Effect::new(&gpu.device, &gpu.memory, &bundle("Invert"), 7, &target(&targets.images, &gpu), gpu.queue);
         assert!(matches!(r, Err(Error::Invalid(_))));
+        gpu.destroy_targets(targets);
+    }
+}
+
+#[test]
+fn runtime_sources_feed_the_uniforms_each_frame() {
+    let gpu = gpu_or_skip!();
+    unsafe {
+        let targets = gpu.targets(1, input);
+        let mut effect = Effect::new(&gpu.device, &gpu.memory, &bundle("Timer"), 0, &target(&targets.images, &gpu), gpu.queue).expect("criar o efeito");
+
+        // O `mousepoint` não é alimentado pelo runtime: tem de aparecer como ignorado.
+        assert_eq!(effect.ignored_sources().len(), 1, "{:?}", effect.ignored_sources());
+        assert!(effect.ignored_sources()[0].contains("mousepoint"));
+
+        // Cada frame traz seus valores: o resultado muda com eles.
+        for (time_ms, count, frame_ms) in [(250.0f32, 51u32, 51.0f32), (1000.0, 255, 255.0), (500.0, 0, 0.0)] {
+            effect.update_sources(0, &FrameInfo { time_ms, frame_time_ms: frame_ms, frame_count: count, date: [0.0; 4] });
+            gpu.submit(effect.command_buffer(0));
+            let expected = [
+                (time_ms / 1000.0 * 255.0).round() as u8,
+                (count as f32 / 255.0 * 255.0).round() as u8,
+                (frame_ms / 255.0 * 255.0).round() as u8,
+            ];
+            for (n, got) in gpu.read(targets.images[0]).into_iter().enumerate() {
+                assert_pixel(got, [expected[0], expected[1], expected[2], 255], 2, &format!("t={time_ms} pixel {n}"));
+            }
+        }
+        effect.destroy(&gpu.device);
         gpu.destroy_targets(targets);
     }
 }
