@@ -29,7 +29,7 @@ em `.tmp/dep-eval/`. `cargo audit`/`cargo deny` ainda **não** foram rodados (n�
 | Testes do `postfx` (só dev) | `ash` com feature `loaded` (traz `libloading`) | Só em `[dev-dependencies]`; não entra na layer | Permite rodar o passe numa GPU de software (lavapipe) sem janela. |
 | Descartada | `libc` (1 crate) | Última estável é a 0.2.x; a 1.0 está em alpha | `rustix` dá API segura para criar/fechar mapeamentos com menos `unsafe` nosso. |
 
-## Avaliação: toolkit da interface gráfica (proposta, aguardando decisão)
+## Decisão: toolkit da interface gráfica (GTK4, adotado em 2026-10-09)
 
 Medido em 2026-10-09 com `cargo tree` (só dependências normais), em projetos de teste em `.tmp/dep-eval/ui/`.
 A interface roda **no app de controle** (fora do jogo), então o critério é o menos duro, mas o número de crates e
@@ -44,7 +44,7 @@ o comportamento no Wayland importam.
 | `egui` com as opções padrão (wgpu) | 256 | nenhum | Descartado pelo tamanho. |
 | Web local (`tiny_http`) | 6 | nenhum | Interface em HTML no navegador. Um servidor local é superfície de ataque (qualquer página aberta no navegador poderia tentar chamá-lo): exigiria token e checagem de `Host`. |
 
-**Proposta: GTK4**, por ter o menor número de crates entre os toolkits de janela e o melhor comportamento
+**Adotado: GTK4** (`gtk4` 0.11 com a feature `v4_10`, que só habilita o `ColorDialog`; sem crates a mais). Medido no `lrpanel`: **62 crates** no total (os ~50 do GTK mais os nossos). Motivo: ter o menor número de crates entre os toolkits de janela e o melhor comportamento
 nativo no GNOME/Wayland. O custo é um pacote de sistema (`libgtk-4-dev`, entra no `scripts/dev.sh setup`) e
 a interface ficar ligada ao GTK. Para isso não virar retrabalho, a lógica da interface (lista de efeitos,
 controles de cada parâmetro, atualização do estado) fica num crate **independente de toolkit**, testável sem
