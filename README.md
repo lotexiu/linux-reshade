@@ -3,7 +3,7 @@
 Pós-processamento de jogos **nativo no Linux**, com uso quase idêntico ao ReShade do Windows, e
 com acesso ao **depth buffer** (o ponto que as alternativas atuais no Linux não cobrem bem).
 
-> Estado: **marco 1 em andamento** (2026-10-09): a layer passthrough já carrega no `vkcube`. Rust 1.99 via asdf (`.tool-versions`), `scripts/dev.sh` criado; workspace Cargo com `vk-layer` e `layer`. Ver `ROADMAP.md` e `DEPENDENCIAS.md`.
+> Estado: **marco 3 funcionando** (2026-10-09): a layer executa um efeito FX real (compilado para bundle) no `vkcube`. Rust 1.99 via asdf (`.tool-versions`), `scripts/dev.sh` criado; workspace Cargo com `vk-layer` e `layer`. Ver `ROADMAP.md` e `DEPENDENCIAS.md`.
 
 ## Por que existe
 

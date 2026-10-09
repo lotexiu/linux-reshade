@@ -13,7 +13,7 @@ Marcos em ordem. Cada um deve rodar de ponta a ponta antes do próximo. Atualiza
    (inverter cores quando ligada) com atalho global. Inclui manifesto JSON, ativação por variável de ambiente (para não rodar em todo processo
    Vulkan) e teste dentro do container do Steam (pressure-vessel).
 2. **Passe fullscreen fixo.** *(feito em 2026-10-09: crate `postfx` + integração na layer; Ctrl+Shift+F10 alterna entre normal e invertido no `vkcube`; `scripts/dev.sh validate` roda com a validation layer sem mensagens. Pendente: espaço de cor sRGB, desempenho medido, jogos reais.)* Ler o swapchain e escrever nele (por exemplo inverter cores).
-3. **Bundle + um `.fx` simples** (só cor, sem depth). Define o formato do manifesto: passes,
+3. **Bundle + um `.fx` simples** *(feito em 2026-10-09: formato v1 em `docs/bundle-format.md`; `tools/fx2spv` (C++, reshadefx BSD-3) compila FX para bundle; crate `fx-bundle` lê e valida; `postfx::Effect` executa; a layer roda o bundle de `LINUX_RESHADE_BUNDLE`. 15 efeitos executam na GPU de software com a validation layer sem mensagens (13 da comunidade, Sépia e Inversão); 5 são recusados com motivo explícito: 3 usam depth (marco 5) e 2 precisam carregar imagem de arquivo. Pendente: carregador de imagens, mipmaps, swapchain sRGB, recompilar o bundle quando a resolução muda.)* (só cor, sem depth). Define o formato do manifesto: passes,
    texturas, samplers, uniforms, técnicas, anotações para a UI, semânticas `COLOR` e `DEPTH`.
 4. **App de controle** conversando por socket: parâmetros, presets, recompilação quando um
    `#define` muda (hot reload do bundle).
