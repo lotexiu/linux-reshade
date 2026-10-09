@@ -1,7 +1,7 @@
 //! Qual bundle de efeito cada swapchain executa.
 //!
-//! A escolha é um *modelo* de caminho: o que o app de controle publicou com `lrctl use` e, na falta
-//! dele, a variável `LINUX_RESHADE_BUNDLE`. O modelo pode conter `{W}` e `{H}`, trocados pela
+//! A escolha é um *modelo* de caminho: o que o app de controle publicou para este jogo (canal próprio)
+//! ou, na falta, para todos (canal global, `lrctl use`) e, por último, a variável `LINUX_RESHADE_BUNDLE`. O modelo pode conter `{W}` e `{H}`, trocados pela
 //! resolução do swapchain, e assim um mesmo efeito escolhido serve a jogos de resoluções diferentes
 //! (cada resolução tem o seu bundle compilado).
 //!
@@ -11,7 +11,7 @@
 
 use crate::log::log;
 use fx_bundle::Bundle;
-use ipc::SelectionRead;
+use ipc::{ChannelSelection, SelectionRead};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -19,8 +19,8 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 /// Valor de `LAST_GENERATION` antes de a seleção ter sido lida.
 const NEVER: u64 = u64::MAX;
-/// Valor de `LAST_GENERATION` enquanto o app de controle ainda não criou o canal.
-const NO_CHANNEL: u64 = u64::MAX - 1;
+/// A geração de um canal que ainda não existe. Gerações de verdade são `seq / 2` e nunca chegam perto.
+const ABSENT: u32 = u32::MAX - 1;
 
 /// Última geração da seleção que já foi processada.
 static LAST_GENERATION: AtomicU64 = AtomicU64::new(NEVER);
@@ -57,18 +57,43 @@ fn from_environment() -> Option<String> {
     std::env::var_os("LINUX_RESHADE_BUNDLE").map(|p| p.to_string_lossy().into_owned())
 }
 
+/// O que as escolhas dão juntas.
+#[derive(Debug, PartialEq, Eq)]
+enum Choice {
+    /// Uma leitura caiu no meio de uma escrita: tenta no próximo frame.
+    Unstable,
+    /// O modelo vigente (`None` = nenhum efeito).
+    Template(Option<String>),
+}
+
+/// Quem manda: a escolha do próprio jogo; sem ela, a global; sem ela, o ambiente. `NoEffect` do jogo vence
+/// tudo (não cai no ambiente).
+fn choose(own: Option<ChannelSelection>, global: impl FnOnce() -> SelectionRead, environment: impl FnOnce() -> Option<String>) -> Choice {
+    match own {
+        Some(ChannelSelection::Unstable) => return Choice::Unstable,
+        Some(ChannelSelection::NoEffect) => return Choice::Template(None),
+        Some(ChannelSelection::Path(path)) => return Choice::Template(Some(path)),
+        Some(ChannelSelection::Inherit) | None => {}
+    }
+    match global() {
+        SelectionRead::Unstable => Choice::Unstable,
+        SelectionRead::Path(path) => Choice::Template(Some(path)),
+        SelectionRead::Cleared => Choice::Template(environment()),
+    }
+}
+
 /// A época atual da escolha. Barata quando nada mudou; relê a escolha quando ela foi republicada.
 pub fn epoch() -> u64 {
-    let reader = crate::control::reader();
-    let generation = reader.map_or(NO_CHANNEL, |r| u64::from(r.selection_generation()));
+    let global = crate::control::reader();
+    let own = crate::control::channel();
+    // As gerações dos dois canais viram uma só chave: qualquer publicação em qualquer um a muda.
+    let generation = u64::from(global.map_or(ABSENT, |r| r.selection_generation())) << 32 | u64::from(own.map_or(ABSENT, |c| c.selection_generation()));
     if generation == LAST_GENERATION.load(Ordering::Acquire) {
         return EPOCH.load(Ordering::Acquire);
     }
-    let template = match reader.map_or(SelectionRead::Cleared, |r| r.read_selection()) {
-        // A leitura caiu no meio de uma escrita: tenta no próximo frame.
-        SelectionRead::Unstable => return EPOCH.load(Ordering::Acquire),
-        SelectionRead::Path(path) => Some(path),
-        SelectionRead::Cleared => from_environment(),
+    let template = match choose(own.map(|c| c.read_selection()), || global.map_or(SelectionRead::Cleared, |r| r.read_selection()), from_environment) {
+        Choice::Unstable => return EPOCH.load(Ordering::Acquire),
+        Choice::Template(template) => template,
     };
     let mut state = STATE.lock().unwrap();
     if state.template != template {
@@ -117,6 +142,45 @@ mod tests {
     fn the_template_is_filled_with_the_swapchain_size() {
         assert_eq!(expand("/c/Sepia-{W}x{H}", 1920, 1080), PathBuf::from("/c/Sepia-1920x1080"));
         assert_eq!(expand("/c/{W}/{H}/Sepia", 1914, 1048), PathBuf::from("/c/1914/1048/Sepia"));
+    }
+
+    fn path(p: &str) -> SelectionRead {
+        SelectionRead::Path(p.into())
+    }
+
+    fn template(c: Choice) -> Option<String> {
+        match c {
+            Choice::Template(t) => t,
+            Choice::Unstable => panic!("instável"),
+        }
+    }
+
+    #[test]
+    fn the_games_own_choice_wins_over_the_global_one() {
+        let own = Some(ChannelSelection::Path("/meu".into()));
+        assert_eq!(template(choose(own, || path("/global"), || Some("/env".into()))), Some("/meu".into()));
+    }
+
+    #[test]
+    fn without_an_own_choice_the_global_and_then_the_environment_apply() {
+        for own in [None, Some(ChannelSelection::Inherit)] {
+            assert_eq!(template(choose(own, || path("/global"), || Some("/env".into()))), Some("/global".into()));
+        }
+        assert_eq!(template(choose(None, || SelectionRead::Cleared, || Some("/env".into()))), Some("/env".into()));
+        assert_eq!(template(choose(None, || SelectionRead::Cleared, || None)), None);
+    }
+
+    #[test]
+    fn no_effect_for_this_game_beats_everything_and_skips_the_environment() {
+        assert_eq!(template(choose(Some(ChannelSelection::NoEffect), || path("/global"), || Some("/env".into()))), None);
+    }
+
+    #[test]
+    fn a_torn_read_in_either_channel_means_try_again_later() {
+        assert_eq!(choose(Some(ChannelSelection::Unstable), || path("/g"), || None), Choice::Unstable);
+        assert_eq!(choose(None, || SelectionRead::Unstable, || None), Choice::Unstable);
+        // O próprio jogo decidido: uma leitura instável do global não importa.
+        assert_eq!(template(choose(Some(ChannelSelection::NoEffect), || SelectionRead::Unstable, || None)), None);
     }
 
     #[test]

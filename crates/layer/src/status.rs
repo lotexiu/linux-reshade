@@ -61,6 +61,11 @@ fn publish(state: &mut State) {
     }
 }
 
+/// O identificador desta layer para o app de controle; só existe depois do primeiro swapchain.
+pub fn id() -> Option<String> {
+    STATE.lock().unwrap().writer.as_ref().map(StatusWriter::id)
+}
+
 /// Registra ou atualiza o estado de um swapchain. Não escreve se nada mudou.
 pub fn update(handle: u64, status: SwapchainStatus) {
     let mut state = STATE.lock().unwrap();

@@ -281,10 +281,10 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
 
         // A fence garante que a GPU terminou com o buffer de uniforms desta imagem: pode reescrevê-lo.
         // Primeiro os parâmetros do app de controle (a imagem inteira do buffer)...
-        if let Some(reader) = crate::control::reader() {
-            if let Some(bytes) = built.params.next(reader, built.params_id) {
-                built.effect.write_uniforms(index, 0, bytes);
-            }
+        let own = crate::control::channel().map(|c| c as &dyn ipc::ParamSource);
+        let global = crate::control::reader().map(|r| r as &dyn ipc::ParamSource);
+        if (own.is_some() || global.is_some()) && let Some(bytes) = built.params.next(own, global, built.params_id) {
+            built.effect.write_uniforms(index, 0, bytes);
         }
         // ...depois os valores do runtime (tempo etc.), que valem mais que qualquer parâmetro.
         built.effect.update_sources(index, &frame_info(now, previous, data.presents.load(std::sync::atomic::Ordering::Relaxed)));

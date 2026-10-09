@@ -164,6 +164,11 @@ impl StatusWriter {
         Ok(Self { map, path, _lock: file, cleanup: true })
     }
 
+    /// O identificador desta layer (o nome do arquivo de status): o que o app de controle usa para falar com ela.
+    pub fn id(&self) -> String {
+        self.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+    }
+
     /// Publica o status atual (substitui o anterior).
     pub fn publish(&self, status: &LayerStatus) -> Result<(), PublishError> {
         self.map.get().text.publish(TAG, status.encode().as_bytes())
