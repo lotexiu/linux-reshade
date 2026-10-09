@@ -6,8 +6,8 @@ mod log;
 use ash::vk::{self, Handle};
 use log::log;
 use std::ffi::{CStr, c_char};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::LazyLock;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{LazyLock, OnceLock};
 use vk_layer::abi::*;
 use vk_layer::chain;
 use vk_layer::dispatch::{Registry, dispatch_key};
@@ -16,6 +16,9 @@ use vk_layer::dispatch::{Registry, dispatch_key};
 const PRESENT_LOG_EVERY: u64 = 300;
 /// Quantos presents com resultado diferente de SUCCESS registrar (evita inundar o log).
 const ODD_PRESENT_LOG_MAX: u64 = 20;
+/// De quantos em quantos presents tentar abrir o estado compartilhado enquanto o app de controle
+/// ainda não o criou (uma chamada `stat`/`open`, barata).
+const STATE_RETRY_EVERY: u64 = 120;
 
 struct InstanceData {
     instance: u64,
@@ -31,10 +34,32 @@ struct DeviceData {
     presents: AtomicU64,
     /// Presents que não devolveram SUCCESS (inclui SUBOPTIMAL e OUT_OF_DATE).
     odd_presents: AtomicU64,
+    /// Último valor visto da flag de efeitos, só para registrar as mudanças.
+    last_effects: AtomicBool,
 }
 
 static INSTANCES: LazyLock<Registry<InstanceData>> = LazyLock::new(Registry::new);
 static DEVICES: LazyLock<Registry<DeviceData>> = LazyLock::new(Registry::new);
+/// Estado escrito pelo app de controle. Depois de aberto, é lido por `load` atômico, sem lock.
+static CONTROL: OnceLock<ipc::Reader> = OnceLock::new();
+
+/// Valor atual da flag de efeitos. Enquanto o app de controle não existe, os efeitos ficam desligados.
+fn effects_enabled(present_number: u64) -> bool {
+    if let Some(reader) = CONTROL.get() {
+        return reader.effects_enabled();
+    }
+    if present_number % STATE_RETRY_EVERY == 1 {
+        match ipc::Reader::open() {
+            Ok(Some(reader)) => {
+                log!("estado compartilhado aberto: {}", ipc::state_path().display());
+                return CONTROL.get_or_init(|| reader).effects_enabled();
+            }
+            Ok(None) => {}
+            Err(e) => log!("falha ao abrir o estado compartilhado: {e}"),
+        }
+    }
+    false
+}
 
 /// Apaga o tipo de um ponteiro de função para devolvê-lo como `PFN_vkVoidFunction`.
 fn erase<F: Copy>(f: F) -> vk::PFN_vkVoidFunction {
@@ -264,6 +289,7 @@ unsafe extern "system" fn create_device(
                 queue_present,
                 presents: AtomicU64::new(0),
                 odd_presents: AtomicU64::new(0),
+                last_effects: AtomicBool::new(false),
             },
         );
         log!("vkCreateDevice ok: swapchain={}", queue_present.is_some());
@@ -324,6 +350,10 @@ unsafe extern "system" fn queue_present(
         let n = data.presents.fetch_add(1, Ordering::Relaxed) + 1;
         if n == 1 || n % PRESENT_LOG_EVERY == 0 {
             log!("vkQueuePresentKHR #{n}");
+        }
+        let enabled = effects_enabled(n);
+        if data.last_effects.swap(enabled, Ordering::Relaxed) != enabled {
+            log!("efeitos {} (present #{n})", if enabled { "LIGADOS" } else { "DESLIGADOS" });
         }
         let result = next(queue, p_present_info);
         if result != vk::Result::SUCCESS && data.odd_presents.fetch_add(1, Ordering::Relaxed) < ODD_PRESENT_LOG_MAX {

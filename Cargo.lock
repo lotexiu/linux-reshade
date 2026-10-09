@@ -44,10 +44,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
+name = "linux-reshade-control"
+version = "0.0.1"
+dependencies = [
+ "ipc",
+]
+
+[[package]]
 name = "linux-reshade-layer"
 version = "0.0.1"
 dependencies = [
  "ash",
+ "ipc",
  "vk-layer",
 ]
 

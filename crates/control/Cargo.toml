@@ -1,0 +1,13 @@
+[package]
+name = "linux-reshade-control"
+description = "App de controle do linux-reshade (por enquanto, só a CLI de estado)"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "lrctl"
+path = "src/main.rs"
+
+[dependencies]
+ipc = { path = "../ipc" }

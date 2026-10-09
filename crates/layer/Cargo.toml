@@ -11,3 +11,4 @@ crate-type = ["cdylib"]
 [dependencies]
 ash.workspace = true
 vk-layer = { path = "../vk-layer" }
+ipc = { path = "../ipc" }
