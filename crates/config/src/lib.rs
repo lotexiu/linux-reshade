@@ -27,6 +27,11 @@ pub struct SearchPath {
 }
 
 impl SearchPath {
+    /// Só esta pasta, sem subpastas.
+    pub fn flat(dir: impl Into<PathBuf>) -> Self {
+        Self { dir: dir.into(), recursive: false }
+    }
+
     /// Interpreta uma entrada do `config.ini`: `~/` vira a home, relativo é medido a partir de `base`, e um
     /// `/**` ou `\**` no fim liga a busca recursiva.
     pub fn parse(text: &str, base: &Path, home: Option<&Path>) -> Self {

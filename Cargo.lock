@@ -238,6 +238,7 @@ dependencies = [
 name = "control-core"
 version = "0.0.1"
 dependencies = [
+ "config",
  "fx-bundle",
  "ipc",
 ]
@@ -817,6 +818,7 @@ dependencies = [
 name = "panel"
 version = "0.0.1"
 dependencies = [
+ "config",
  "control-core",
  "fx-bundle",
  "ipc",

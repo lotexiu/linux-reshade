@@ -210,7 +210,7 @@ mod tests {
         );
         fs::write(&tool, script).unwrap();
         fs::set_permissions(&tool, fs::Permissions::from_mode(0o755)).unwrap();
-        let compiler = Compiler { fx2spv: tool, effects: vec![root.join("effects")], includes: vec![], cache: root.join("cache") };
+        let compiler = Compiler { fx2spv: tool, effects: vec![config::SearchPath::flat(root.join("effects"))], includes: vec![], cache: root.join("cache") };
         Env { root, compiler }
     }
 

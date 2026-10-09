@@ -4,6 +4,7 @@
 //! Um bundle só serve à resolução para a qual foi compilado, então o diretório do cache leva o tamanho
 //! no nome (`Sepia-1920x1080`). A escolha que a layer recebe é o *modelo* `<cache>/Sepia-{W}x{H}`.
 
+use config::{Config, SearchPath};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -12,10 +13,11 @@ use std::time::SystemTime;
 pub struct Compiler {
     /// O executável do `fx2spv`.
     pub fx2spv: PathBuf,
-    /// Onde procurar `Nome.fx`, em ordem.
-    pub effects: Vec<PathBuf>,
+    /// Onde procurar `Nome.fx`, em ordem. As pastas `**` são expandidas a cada uso: um shader novo aparece
+    /// sem reiniciar o programa.
+    pub effects: Vec<SearchPath>,
     /// Diretórios de `#include` (por exemplo, o do `ReShade.fxh`).
-    pub includes: Vec<PathBuf>,
+    pub includes: Vec<SearchPath>,
     /// Onde ficam os bundles compilados.
     pub cache: PathBuf,
 }
@@ -139,33 +141,46 @@ fn modified(path: &Path) -> Option<SystemTime> {
 }
 
 impl Compiler {
-    /// Lê a configuração do ambiente, com padrões para o uso a partir de um clone do repositório
-    /// (`target/release/lrctl` dentro dele). Variáveis: `LINUX_RESHADE_FX2SPV`, `LINUX_RESHADE_EFFECTS`,
-    /// `LINUX_RESHADE_INCLUDES` (listas separadas por `:`) e `LINUX_RESHADE_CACHE`.
+    /// A configuração do processo atual: ver [`from_config`](Self::from_config).
     pub fn from_env() -> Result<Self, String> {
+        Self::from_config(&Config::load())
+    }
+
+    /// Monta o compilador a partir da configuração do usuário (`docs/presets.md`). Sem pasta de dados nem
+    /// lista de efeitos, usa os padrões de um clone do repositório (`target/release/lrctl` dentro dele).
+    /// Variáveis próprias daqui: `LINUX_RESHADE_FX2SPV` e `LINUX_RESHADE_INCLUDES` (lista separada por `:`).
+    pub fn from_config(config: &Config) -> Result<Self, String> {
         let repo = std::env::current_exe().ok().and_then(|exe| exe.ancestors().nth(3).map(Path::to_path_buf));
         let in_repo = |rel: &str| repo.as_ref().map(|r| r.join(rel)).filter(|p| p.exists());
-        let list = |var: &str| std::env::var_os(var).map(|v| std::env::split_paths(&v).collect::<Vec<_>>());
 
         let fx2spv = std::env::var_os("LINUX_RESHADE_FX2SPV")
             .map(PathBuf::from)
             .or_else(|| in_repo("build/fx2spv/fx2spv"))
             .ok_or("não achei o fx2spv: rode 'scripts/dev.sh fx-tool' ou defina LINUX_RESHADE_FX2SPV")?;
-        let community: Vec<PathBuf> = ["third_party/reshade-shaders-legacy/Shaders", "third_party/reshade-shaders-slim/Shaders"]
-            .iter()
-            .filter_map(|p| in_repo(p))
-            .collect();
-        let effects = list("LINUX_RESHADE_EFFECTS").unwrap_or_else(|| in_repo("effects").into_iter().chain(community.clone()).collect());
-        // Os headers ficam no ramo "slim"; os efeitos clássicos, no "legacy" (ver tools/fx2spv/deps.sh).
-        let includes = list("LINUX_RESHADE_INCLUDES").unwrap_or_else(|| community.iter().rev().cloned().collect());
-        let cache = std::env::var_os("LINUX_RESHADE_CACHE").map(PathBuf::from).unwrap_or_else(|| {
-            let base = std::env::var_os("XDG_CACHE_HOME")
-                .map(PathBuf::from)
-                .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
-                .unwrap_or_else(|| PathBuf::from("/tmp"));
-            base.join("linux-reshade").join("bundles")
-        });
-        Ok(Self { fx2spv, effects, includes, cache })
+
+        let (effects, default_includes) = if config.is_configured() {
+            // Os `#include` (ReShade.fxh e cia.) moram junto dos efeitos, como no ReShade.
+            (config.effect_paths.clone(), config.effect_paths.clone())
+        } else {
+            let community: Vec<SearchPath> = ["third_party/reshade-shaders-legacy/Shaders", "third_party/reshade-shaders-slim/Shaders"]
+                .iter()
+                .filter_map(|p| in_repo(p))
+                .map(SearchPath::flat)
+                .collect();
+            // Os headers ficam no ramo "slim"; os efeitos clássicos, no "legacy" (ver tools/fx2spv/deps.sh).
+            let effects = in_repo("effects").map(SearchPath::flat).into_iter().chain(community.clone()).collect();
+            (effects, community.into_iter().rev().collect())
+        };
+        let includes = match std::env::var_os("LINUX_RESHADE_INCLUDES") {
+            Some(v) => std::env::split_paths(&v).map(SearchPath::flat).collect(),
+            None => default_includes,
+        };
+        Ok(Self { fx2spv, effects, includes, cache: config.cache_dir.clone() })
+    }
+
+    /// As pastas de efeitos de verdade (com as subpastas das entradas `**`), na ordem de busca.
+    pub fn effect_dirs(&self) -> Vec<PathBuf> {
+        config::expand(&self.effects)
     }
 
     /// O `.fx` de um efeito, procurando nos diretórios configurados.
@@ -173,18 +188,18 @@ impl Compiler {
         if !valid_name(name) {
             return Err(CompileError::BadName(name.to_string()));
         }
-        self.effects
-            .iter()
+        let dirs = self.effect_dirs();
+        dirs.iter()
             .map(|d| d.join(format!("{name}.fx")))
             .find(|p| p.is_file())
-            .ok_or_else(|| CompileError::UnknownEffect { name: name.to_string(), searched: self.effects.clone() })
+            .ok_or_else(|| CompileError::UnknownEffect { name: name.to_string(), searched: dirs })
     }
 
     /// Os nomes de efeito disponíveis (arquivos `.fx` nos diretórios configurados), sem repetição e em ordem.
     /// Cada nome vem com o diretório de onde sai, para o usuário saber qual versão será usada.
     pub fn available(&self) -> Vec<(String, PathBuf)> {
         let mut found: std::collections::BTreeMap<String, PathBuf> = std::collections::BTreeMap::new();
-        for dir in &self.effects {
+        for dir in &self.effect_dirs() {
             let Ok(entries) = std::fs::read_dir(dir) else { continue };
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -289,7 +304,7 @@ impl Compiler {
         std::fs::create_dir_all(&self.cache).map_err(|e| CompileError::Io(format!("{}: {e}", self.cache.display())))?;
         let mut command = Command::new(&self.fx2spv);
         command.arg("--width").arg(width.to_string()).arg("--height").arg(height.to_string());
-        for include in &self.includes {
+        for include in config::expand(&self.includes) {
             command.arg("-I").arg(include);
         }
         command.arg("-o").arg(&dir).arg(&source);
@@ -338,8 +353,8 @@ mkdir -p "$out" && echo '{}' > "$out/manifest.json"
         fs::set_permissions(&tool, fs::Permissions::from_mode(0o755)).unwrap();
         let compiler = Compiler {
             fx2spv: tool,
-            effects: vec![root.join("effects")],
-            includes: vec![root.join("inc")],
+            effects: vec![SearchPath::flat(root.join("effects"))],
+            includes: vec![SearchPath::flat(root.join("inc"))],
             cache: root.join("cache"),
         };
         Fake { root, compiler }
@@ -435,9 +450,30 @@ mod tests {
         fs::write(second.join("notas.txt"), "x").unwrap();
         fs::write(second.join(".oculto.fx"), "x").unwrap();
         let mut compiler = f.compiler;
-        compiler.effects.push(second.clone());
+        compiler.effects.push(SearchPath::flat(second.clone()));
         let names: Vec<_> = compiler.available().into_iter().map(|(n, d)| (n, d == second)).collect();
         assert_eq!(names, vec![("Sepia".to_string(), false), ("Vibrance".to_string(), true)]);
+    }
+
+    #[test]
+    fn recursive_search_path_finds_effects_in_subfolders_and_sees_new_ones() {
+        let f = fake("recursive", OK_TOOL);
+        let pack = f.root.join("pacote");
+        fs::create_dir_all(pack.join("cores")).unwrap();
+        fs::create_dir_all(pack.join(".git")).unwrap();
+        fs::write(pack.join("cores/Vibrance.fx"), "//").unwrap();
+        fs::write(pack.join(".git/Oculto.fx"), "//").unwrap();
+        let mut compiler = f.compiler;
+        compiler.effects = vec![SearchPath { dir: pack.clone(), recursive: true }];
+        assert_eq!(compiler.source("Vibrance").unwrap(), pack.join("cores/Vibrance.fx"));
+        assert!(compiler.source("Oculto").is_err(), "pastas ocultas ficam de fora");
+        // Um efeito colocado depois que o compilador existe é visto sem recriá-lo (o daemon vive muito tempo).
+        assert!(compiler.source("Novo").is_err());
+        fs::create_dir_all(pack.join("novos")).unwrap();
+        fs::write(pack.join("novos/Novo.fx"), "//").unwrap();
+        assert_eq!(compiler.source("Novo").unwrap(), pack.join("novos/Novo.fx"));
+        let names: Vec<_> = compiler.available().into_iter().map(|(n, _)| n).collect();
+        assert_eq!(names, ["Novo", "Vibrance"]);
     }
 
     fn entry(name: &str, age_secs: u64) -> CacheEntry {
@@ -537,7 +573,7 @@ mod tests {
     fn an_unknown_effect_lists_where_it_looked() {
         let f = fake("unknown", OK_TOOL);
         match f.compiler.ensure("Nada", 10, 10) {
-            Err(CompileError::UnknownEffect { searched, .. }) => assert_eq!(searched, f.compiler.effects),
+            Err(CompileError::UnknownEffect { searched, .. }) => assert_eq!(searched, f.compiler.effect_dirs()),
             other => panic!("{other:?}"),
         }
     }
@@ -560,7 +596,7 @@ mod tests {
         }
         let cache = std::env::temp_dir().join(format!("lr-compiler-{}-real", std::process::id()));
         let _ = fs::remove_dir_all(&cache);
-        let compiler = Compiler { fx2spv: tool, effects: vec![repo.join("effects")], includes: vec![], cache };
+        let compiler = Compiler { fx2spv: tool, effects: vec![SearchPath::flat(repo.join("effects"))], includes: vec![], cache };
         let ensured = compiler.ensure("Sepia", 64, 48).expect("compilar o Sépia de verdade");
         let bundle = fx_bundle::Bundle::load(ensured.dir()).expect("o bundle compilado carrega");
         assert_eq!((bundle.manifest.target.width, bundle.manifest.target.height), (64, 48));

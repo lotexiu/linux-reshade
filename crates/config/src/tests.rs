@@ -53,7 +53,7 @@ fn search_path_parsing() {
     assert_eq!(p("~/fx/**"), SearchPath { dir: "/home/u/fx".into(), recursive: true });
     assert_eq!(p("../outro"), SearchPath { dir: "/outro".into(), recursive: false });
     assert_eq!(p("**"), SearchPath { dir: "/dados".into(), recursive: true });
-    assert_eq!(p(".\\Shaders\\**").recursive, true, "barra invertida do ReShade também vale");
+    assert!(p(".\\Shaders\\**").recursive, "barra invertida do ReShade também vale");
 }
 
 #[test]

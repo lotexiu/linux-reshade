@@ -71,7 +71,7 @@ pub fn run(command: Command, state: &ipc::Writer) -> ExitCode {
             Ok(compiler) => {
                 let available = compiler.available();
                 if available.is_empty() {
-                    println!("nenhum efeito encontrado em: {}", compiler.effects.iter().map(|d| d.display().to_string()).collect::<Vec<_>>().join(", "));
+                    println!("nenhum efeito encontrado em: {}", compiler.effect_dirs().iter().map(|d| d.display().to_string()).collect::<Vec<_>>().join(", "));
                 }
                 for (name, dir) in available {
                     println!("{name:<24} {}", dir.display());
