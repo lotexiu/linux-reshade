@@ -30,8 +30,11 @@ fn frame_info(now: Instant, previous: Option<Instant>, frame_count: u64) -> Fram
 /// Recursos que só existem depois do primeiro present com os efeitos ligados.
 struct Built {
     effect: Effect,
-    /// Identifica o bundle nos parâmetros publicados pelo app de controle.
+    /// Identifica o bundle (muda a cada resolução); serve para saber se o efeito construído ainda vale.
     bundle_id: u64,
+    /// Identifica os parâmetros do efeito nos blocos publicados pelo app de controle: igual em todas as
+    /// resoluções, para um valor ajustado valer para todos os jogos.
+    params_id: u64,
     params: crate::params::ParamState,
     /// Um semáforo por imagem do swapchain: o da imagem sinaliza que o efeito terminou nela.
     semaphores: Vec<vk::Semaphore>,
@@ -207,14 +210,14 @@ impl SwapchainFx {
                         if let Ok(f) = f {
                             data.device.destroy_fence(f, None);
                         }
-                        let mut partial = Fx::Ready(Built { effect, bundle_id: bundle.id, params: ParamState::new(Vec::new()), semaphores, fences });
+                        let mut partial = Fx::Ready(Built { effect, bundle_id: bundle.id, params_id: bundle.params_id(), params: ParamState::new(Vec::new()), semaphores, fences });
                         Self::destroy_fx(&mut partial, &data.device);
                         return Err(format!("falha ao criar semáforo/fence (erro {})", error.as_raw()));
                     }
                 }
             }
             let params = ParamState::new(fx_bundle::uniforms::default_block(&bundle.manifest));
-            Ok(Built { effect, bundle_id: bundle.id, params, semaphores, fences })
+            Ok(Built { effect, bundle_id: bundle.id, params_id: bundle.params_id(), params, semaphores, fences })
         }
     }
 }
@@ -279,7 +282,7 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
         // A fence garante que a GPU terminou com o buffer de uniforms desta imagem: pode reescrevê-lo.
         // Primeiro os parâmetros do app de controle (a imagem inteira do buffer)...
         if let Some(reader) = crate::control::reader() {
-            if let Some(bytes) = built.params.next(reader, built.bundle_id) {
+            if let Some(bytes) = built.params.next(reader, built.params_id) {
                 built.effect.write_uniforms(index, 0, bytes);
             }
         }

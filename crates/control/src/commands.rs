@@ -22,7 +22,14 @@ fn load(dir: &Path) -> Result<Bundle, String> {
 /// O bundle dos comandos de parâmetros: `--bundle`, senão o escolhido com `use`, senão o do ambiente.
 fn bundle_for(explicit: Option<PathBuf>, state: &ipc::Writer) -> Result<Bundle, String> {
     let env = std::env::var_os("LINUX_RESHADE_BUNDLE").map(PathBuf::from);
-    load(&cli::resolve_bundle(explicit, state.selection(), env)?)
+    let dir = cli::resolve_bundle(explicit, state.selection(), env)?;
+    // Uma escolha por nome é um modelo com {W}x{H}: para ler os controles basta o bundle de uma resolução.
+    if dir.to_string_lossy().contains("{W}") {
+        let compiler = Compiler::from_env()?;
+        let schema = compiler.schema_bundle(&dir.to_string_lossy(), &ipc::live_layers().unwrap_or_default()).map_err(|e| e.to_string())?;
+        return load(&schema);
+    }
+    load(&dir)
 }
 
 fn describe_bundle(bundle: &Bundle) -> String {

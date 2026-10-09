@@ -91,7 +91,7 @@ fn type_name(u: &Uniform) -> String {
 pub fn current_block(bundle: &Bundle, state: &ipc::Writer) -> Vec<u8> {
     let total = bundle.manifest.total_uniform_size as usize;
     let mut block = vec![0u8; total];
-    match state.read_params(bundle.id, &mut block) {
+    match state.read_params(bundle.params_id(), &mut block) {
         Some(n) if n == total => block,
         _ => uniforms::default_block(&bundle.manifest),
     }
@@ -150,7 +150,7 @@ pub fn set(bundle: &Bundle, state: &ipc::Writer, name: &str, values: &[f64]) -> 
     let old = uniforms::decode(u, &block).unwrap_or_default();
     let at = u.offset as usize;
     block.get_mut(at..at + bytes.len()).ok_or_else(|| Error::BadValue("o uniform não cabe no buffer".into()))?.copy_from_slice(&bytes);
-    state.publish_params(bundle.id, &block).map_err(Error::Publish)?;
+    state.publish_params(bundle.params_id(), &block).map_err(Error::Publish)?;
 
     let mut warnings = Vec::new();
     if let Some((min, max)) = first_number(u, "ui_min").zip(first_number(u, "ui_max")) {
@@ -165,7 +165,7 @@ pub fn set(bundle: &Bundle, state: &ipc::Writer, name: &str, values: &[f64]) -> 
 
 /// Volta todos os parâmetros aos padrões do manifesto.
 pub fn reset(bundle: &Bundle, state: &ipc::Writer) -> Result<(), Error> {
-    state.publish_params(bundle.id, &uniforms::default_block(&bundle.manifest)).map_err(Error::Publish)
+    state.publish_params(bundle.params_id(), &uniforms::default_block(&bundle.manifest)).map_err(Error::Publish)
 }
 
 /// Número como o usuário espera ler: inteiros sem casas e floats no menor texto que volta ao mesmo f32
@@ -235,7 +235,7 @@ mod tests {
 
         // O que a layer leria: o bloco inteiro do buffer de uniforms, deste efeito.
         let mut seen = vec![0u8; bundle.manifest.total_uniform_size as usize];
-        assert_eq!(state.read_params(bundle.id, &mut seen), Some(seen.len()));
+        assert_eq!(state.read_params(bundle.params_id(), &mut seen), Some(seen.len()));
         assert_eq!(f32::from_le_bytes(seen[..4].try_into().unwrap()), 0.25);
         assert_eq!(get(&bundle, &state, "Strength").unwrap(), vec![0.25]);
     }
@@ -265,7 +265,7 @@ mod tests {
             other => panic!("{other:?}"),
         }
         // Sem o bloco publicado para outro efeito: o do Sépia só vale para o Sépia.
-        assert_eq!(state.read_params(bundle.id ^ 1, &mut [0u8; 4]), None);
+        assert_eq!(state.read_params(bundle.params_id() ^ 1, &mut [0u8; 4]), None);
     }
 
     #[test]

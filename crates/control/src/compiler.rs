@@ -56,6 +56,12 @@ pub enum Ensured {
 }
 
 impl Ensured {
+    pub fn dir_owned(self) -> PathBuf {
+        match self {
+            Ensured::Cached(d) | Ensured::Compiled(d) => d,
+        }
+    }
+
     #[cfg(test)]
     pub fn dir(&self) -> &Path {
         match self {
@@ -63,6 +69,9 @@ impl Ensured {
         }
     }
 }
+
+/// Resolução usada para compilar um bundle só para ler os controles quando não há jogo aberto.
+pub const DEFAULT_SIZE: (u32, u32) = (1920, 1080);
 
 /// Um diretório do cache, como o `prune` o vê.
 pub(crate) struct CacheEntry {
@@ -238,6 +247,19 @@ impl Compiler {
     /// Quando o `.fx` do efeito foi editado pela última vez.
     pub fn source_modified(&self, name: &str) -> Option<SystemTime> {
         self.source(name).ok().and_then(|p| modified(&p))
+    }
+
+    /// Um bundle do efeito escolhido por modelo (`.../Sepia-{W}x{H}`), para ler os controles dele. Os
+    /// controles são os mesmos em toda resolução, então serve o de um jogo aberto; sem nenhum, usa
+    /// [`DEFAULT_SIZE`] (compilando se preciso).
+    pub fn schema_bundle(&self, template: &str, live: &[ipc::LiveLayer]) -> Result<PathBuf, CompileError> {
+        let name = self.name_from_template(template).ok_or_else(|| CompileError::Io(format!("{template}: não é uma escolha por nome")))?;
+        let (width, height) = live
+            .iter()
+            .flat_map(|l| &l.status.swapchains)
+            .find(|s| !matches!(s.effect, ipc::EffectState::Unavailable(_)))
+            .map_or(DEFAULT_SIZE, |s| (s.width, s.height));
+        Ok(self.ensure(&name, width, height)?.dir_owned())
     }
 
     /// Garante um bundle atual de `name` para `width`x`height`: usa o do cache se o `.fx` não mudou
@@ -461,6 +483,23 @@ mod tests {
         assert!(!exists(200, 200), "velho e sem uso");
         assert!(exists(300, 300), "o mais novo");
         assert_eq!(f.compiler.prune(&in_use, 1), 0, "uma segunda passada não acha mais nada");
+    }
+
+    #[test]
+    fn the_schema_bundle_comes_from_an_open_game_or_falls_back_to_the_default_size() {
+        use ipc::{EffectState, LayerStatus, LiveLayer, SwapchainStatus};
+        let f = fake("schema", OK_TOOL);
+        let template = f.compiler.template("Sepia");
+        let sc = |w, h, e| SwapchainStatus { width: w, height: h, format: 44, images: 3, effect: e };
+        let game = |sw: Vec<SwapchainStatus>| LiveLayer { id: "x".into(), status: LayerStatus { app: "A".into(), swapchains: sw } };
+
+        // Sem jogo aberto: o tamanho padrão.
+        assert_eq!(f.compiler.schema_bundle(&template, &[]).unwrap(), f.compiler.bundle_dir("Sepia", 1920, 1080));
+        // Com jogo: a resolução dele (ignorando swapchains que não aceitam efeito).
+        let live = [game(vec![sc(640, 480, EffectState::Unavailable("sRGB".into())), sc(1280, 720, EffectState::Waiting)])];
+        assert_eq!(f.compiler.schema_bundle(&template, &live).unwrap(), f.compiler.bundle_dir("Sepia", 1280, 720));
+        // Uma escolha que não é por nome não tem o que resolver.
+        assert!(f.compiler.schema_bundle("/qualquer/bundle", &[]).is_err());
     }
 
     #[test]
