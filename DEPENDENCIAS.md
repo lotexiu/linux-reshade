@@ -16,6 +16,17 @@ Critérios (todos, ou justificativa escrita):
 - Passa em `cargo audit` e `cargo deny`, e cada versão nova é fixada (`Cargo.lock` commitado).
 - Código dentro do processo do jogo (a layer) exige critério mais duro que o app de controle.
 
+## Decisões registradas
+
+Medido em 2026-10-09 com `cargo tree` (só dependências normais, sem dev/build) em projetos de teste
+em `.tmp/dep-eval/`. `cargo audit`/`cargo deny` ainda **não** foram rodados (não instalados).
+
+| Uso | Escolha | Dados | Motivo |
+|---|---|---|---|
+| Memória compartilhada na **layer** (dentro do jogo) | **`rustix` 1.x**, só feature `mm` | 3 crates (`rustix`, `linux-raw-sys`, `bitflags`); Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT; Bytecode Alliance; 1.x | Superfície mínima no processo do jogo. Abrir o arquivo é com `std`; o `rustix` entra só para `mmap`/`munmap`. |
+| D-Bus no **app de controle** (portal de atalhos) | **`zbus` 5.x** direto, sem `ashpd` | `zbus` 5.19, MIT; ~70 crates transitivas (inclui proc-macros: `serde_derive`, `syn`, `zvariant_derive`); o `ashpd` 0.13 soma ~7 a mais | Fica fora do jogo, então o critério é menos duro. O `ashpd` é 0.x (quebra de API frequente) e é um invólucro fino do `zbus`; o protocolo do portal que usamos são 3 chamadas. A adoção real fica para quando o app de controle for escrito. |
+| Descartada | `libc` (1 crate) | Última estável é a 0.2.x; a 1.0 está em alpha | `rustix` dá API segura para criar/fechar mapeamentos com menos `unsafe` nosso. |
+
 ## Terceiros candidatos (nada instalado ainda; confirmar versão/estado antes de adotar)
 
 | Uso | Candidata | Observação |
