@@ -1,29 +1,51 @@
-//! `lrctl`: escreve o estado compartilhado lido pela layer. Será substituído/estendido pelo app
-//! de controle com atalhos globais; a CLI continua útil para testes e scripts.
+//! `lrctl`: escreve o estado compartilhado lido pela layer.
+//!
+//! - `lrctl on|off|toggle|status`: age uma vez e sai.
+//! - `lrctl daemon`: fica residente e reage aos atalhos globais.
 
+mod action;
+mod backend;
+mod bindings;
+mod daemon;
+
+use action::Action;
 use std::process::ExitCode;
 
+const USAGE: &str = "uso: lrctl <on|off|toggle|status|daemon>";
+
 fn main() -> ExitCode {
-    let command = std::env::args().nth(1).unwrap_or_default();
-    let writer = match ipc::Writer::create() {
+    let command = std::env::args().nth(1).unwrap_or_else(|| "status".into());
+    let state = match ipc::Writer::create() {
         Ok(w) => w,
         Err(e) => {
             eprintln!("lrctl: não consegui abrir {}: {e}", ipc::state_path().display());
             return ExitCode::FAILURE;
         }
     };
-    match command.as_str() {
-        "on" => writer.set_effects_enabled(true),
-        "off" => writer.set_effects_enabled(false),
-        "toggle" => {
-            writer.toggle_effects();
+
+    let action = match command.as_str() {
+        "on" => Some(Action::EffectsOn),
+        "off" => Some(Action::EffectsOff),
+        "toggle" => Some(Action::ToggleEffects),
+        "status" => None,
+        "daemon" => {
+            return match daemon::run(&state) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    eprintln!("lrctl: {e}");
+                    ExitCode::FAILURE
+                }
+            };
         }
-        "status" | "" => {}
-        other => {
-            eprintln!("lrctl: comando desconhecido {other:?}. Uso: lrctl <on|off|toggle|status>");
+        _ => {
+            eprintln!("lrctl: comando desconhecido {command:?}\n{USAGE}");
             return ExitCode::from(2);
         }
+    };
+
+    match action {
+        Some(action) => println!("{}", action.apply(&state)),
+        None => println!("{}", action::Applied { effects_enabled: state.effects_enabled() }),
     }
-    println!("efeitos: {}", if writer.effects_enabled() { "ligados" } else { "desligados" });
     ExitCode::SUCCESS
 }

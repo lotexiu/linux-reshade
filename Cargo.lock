@@ -383,6 +383,8 @@ name = "linux-reshade-control"
 version = "0.0.1"
 dependencies = [
  "ipc",
+ "shortcuts",
+ "shortcuts-portal",
 ]
 
 [[package]]
