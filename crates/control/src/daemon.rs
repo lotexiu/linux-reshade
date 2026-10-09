@@ -1,6 +1,8 @@
-//! Modo residente: registra os atalhos globais e aplica a ação de cada evento.
+//! Modo residente: registra os atalhos globais, aplica a ação de cada evento e, em paralelo, mantém
+//! compilados os efeitos que os jogos abertos precisam.
 
-use crate::{action::Action, backend, bindings};
+use crate::compiler::Compiler;
+use crate::{action::Action, backend, bindings, watch};
 use shortcuts::{Context, Error};
 
 pub fn run(state: &ipc::Writer) -> Result<(), Error> {
@@ -13,14 +15,25 @@ pub fn run(state: &ipc::Writer) -> Result<(), Error> {
         println!("atalho {:?}: {}", bound.id, bound.trigger_description);
     }
 
-    // Ainda não há janela: só atalhos globais valem.
-    let ctx = Context { window_visible: false };
-    loop {
-        let event = backend.next_event()?;
-        if let Some(action) = dispatcher.resolve(&event, &ctx) {
-            report(*action, state);
+    std::thread::scope(|scope| {
+        // O vigia precisa do fx2spv; sem ele o atalho continua funcionando e só a compilação automática fica de fora.
+        match Compiler::from_env() {
+            Ok(compiler) => {
+                println!("vigiando os jogos com a layer: compila os efeitos escolhidos por nome para cada resolução");
+                scope.spawn(move || watch::run(&compiler, state));
+            }
+            Err(e) => eprintln!("aviso: sem compilação automática de efeitos ({e})"),
         }
-    }
+
+        // Ainda não há janela: só atalhos globais valem.
+        let ctx = Context { window_visible: false };
+        loop {
+            let event = backend.next_event()?;
+            if let Some(action) = dispatcher.resolve(&event, &ctx) {
+                report(*action, state);
+            }
+        }
+    })
 }
 
 fn report(action: Action, state: &ipc::Writer) {

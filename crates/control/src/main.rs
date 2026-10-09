@@ -10,8 +10,11 @@ mod backend;
 mod bindings;
 mod cli;
 mod commands;
+mod compiler;
 mod daemon;
+mod layers;
 mod params;
+mod watch;
 
 use std::process::ExitCode;
 

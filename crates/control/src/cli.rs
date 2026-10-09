@@ -8,9 +8,13 @@ uso: lrctl <comando> [opções]
   on | off | toggle | status      liga/desliga os efeitos (ou mostra o estado)
   daemon                          fica residente e reage ao atalho global
 
-  use <diretório-do-bundle>       escolhe o efeito que a layer carrega (sem editar o Steam)
+  use <Nome>                      escolhe um efeito pelo nome (ex.: Sepia); é compilado para a
+                                  resolução de cada jogo aberto, e para as novas que aparecerem
+  use <diretório-do-bundle>       escolhe um bundle já compilado (fixo numa resolução)
   use none                        desfaz a escolha
   current                         mostra o efeito escolhido
+  layers                          mostra os jogos com a layer ativa: resolução, formato, estado
+  watch                           só compila, sem atalho global (o daemon já faz isso)
 
   uniforms                        lista os parâmetros do efeito, com valor atual e faixa
   get <nome>                      mostra o valor atual de um parâmetro
@@ -28,6 +32,8 @@ pub enum Command {
     Off,
     Toggle,
     Daemon,
+    Layers,
+    Watch,
     /// Escolhe o efeito (`Some`) ou desfaz a escolha (`None`).
     Use { bundle: Option<PathBuf> },
     Current,
@@ -36,6 +42,12 @@ pub enum Command {
     Get { bundle: Option<PathBuf>, name: String },
     Set { bundle: Option<PathBuf>, name: String, values: Vec<String> },
     Reset { bundle: Option<PathBuf> },
+}
+
+/// `lrctl use X` escolhe por *nome* ou por *diretório*? Um diretório que existe, ou qualquer coisa com
+/// barra, é um caminho; o resto é o nome de um efeito.
+pub fn is_path(arg: &str) -> bool {
+    arg.contains('/') || std::path::Path::new(arg).is_dir()
 }
 
 /// Qual bundle os comandos de parâmetros usam: o `--bundle` explícito; senão o escolhido com `use`;
@@ -74,6 +86,8 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "toggle" => no_args(Command::Toggle),
         "daemon" => no_args(Command::Daemon),
         "current" => no_args(Command::Current),
+        "layers" => no_args(Command::Layers),
+        "watch" => no_args(Command::Watch),
         "use" => match tail {
             [none] if none == "none" => Ok(Command::Use { bundle: None }),
             [dir] => Ok(Command::Use { bundle: Some(PathBuf::from(dir)) }),
@@ -119,6 +133,23 @@ mod tests {
         assert_eq!(parse(&args(&["daemon"])), Ok(Command::Daemon));
         assert_eq!(parse(&args(&["current"])), Ok(Command::Current));
         assert!(parse(&args(&["on", "x"])).is_err());
+    }
+
+    #[test]
+    fn layers_and_watch_take_no_arguments() {
+        assert_eq!(parse(&args(&["layers"])), Ok(Command::Layers));
+        assert_eq!(parse(&args(&["watch"])), Ok(Command::Watch));
+        assert!(parse(&args(&["layers", "x"])).is_err());
+    }
+
+    #[test]
+    fn names_and_paths_are_told_apart() {
+        assert!(!is_path("Sepia"));
+        assert!(!is_path("FilmicPass"));
+        assert!(is_path("build/bundles/Sepia-1920x1080"));
+        assert!(is_path("/abs/Sepia"));
+        assert!(is_path("./Sepia"));
+        assert!(is_path("/tmp"), "um diretório que existe é um caminho");
     }
 
     #[test]

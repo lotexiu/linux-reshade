@@ -3,7 +3,8 @@
 
 use crate::action::{self, Action};
 use crate::cli::{self, Command};
-use crate::{daemon, params};
+use crate::compiler::Compiler;
+use crate::{daemon, layers, params, watch};
 use fx_bundle::Bundle;
 use ipc::SelectionRead;
 use std::path::{Path, PathBuf};
@@ -48,8 +49,23 @@ pub fn run(command: Command, state: &ipc::Writer) -> ExitCode {
             println!("nenhum efeito escolhido (a layer volta a usar LINUX_RESHADE_BUNDLE, se o jogo tiver)");
             ExitCode::SUCCESS
         }
+        Command::Use { bundle: Some(arg) } if !cli::is_path(&arg.to_string_lossy()) => select_by_name(&arg.to_string_lossy(), state),
         Command::Use { bundle: Some(dir) } => select(&dir, state),
         Command::Current => current(state),
+        Command::Layers => {
+            match ipc::live_layers() {
+                Ok(list) => print!("{}", layers::render(&list)),
+                Err(e) => return fail(format!("não consegui listar as layers: {e}")),
+            }
+            ExitCode::SUCCESS
+        }
+        Command::Watch => match Compiler::from_env() {
+            Ok(compiler) => {
+                println!("vigiando os jogos com a layer (Ctrl+C para sair)");
+                watch::run(&compiler, state)
+            }
+            Err(e) => fail(e),
+        },
         Command::Uniforms { bundle } => with_bundle(bundle, state, |bundle| {
             for row in params::describe(bundle, state) {
                 match &row.source {
@@ -128,8 +144,50 @@ fn select(dir: &Path, state: &ipc::Writer) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// `lrctl use Sepia`: escolhe um efeito pelo nome. Compila já para as resoluções dos jogos abertos
+/// (assim aparece sem esperar) e publica o modelo `<cache>/Sepia-{W}x{H}`; o vigia cuida das resoluções
+/// que surgirem depois.
+fn select_by_name(name: &str, state: &ipc::Writer) -> ExitCode {
+    let compiler = match Compiler::from_env() {
+        Ok(c) => c,
+        Err(e) => return fail(e),
+    };
+    if let Err(e) = compiler.source(name) {
+        return fail(e);
+    }
+    let live = ipc::live_layers().unwrap_or_default();
+    let mut resolutions: Vec<(u32, u32)> = live
+        .iter()
+        .flat_map(|l| &l.status.swapchains)
+        .filter(|s| !matches!(s.effect, ipc::EffectState::Unavailable(_)))
+        .map(|s| (s.width, s.height))
+        .collect();
+    resolutions.sort_unstable();
+    resolutions.dedup();
+    for (w, h) in &resolutions {
+        match compiler.ensure(name, *w, *h) {
+            Ok(done) => println!("{name} {w}x{h}: {}", if matches!(done, crate::compiler::Ensured::Compiled(_)) { "compilado" } else { "já estava compilado" }),
+            Err(e) => return fail(e),
+        }
+    }
+    if let Err(e) = state.publish_selection(&compiler.template(name)) {
+        return fail(format!("não consegui publicar a escolha: {e}"));
+    }
+    println!("efeito escolhido: {name}");
+    if resolutions.is_empty() {
+        println!("nenhum jogo com a layer aberto agora; ele é compilado quando um aparecer (o 'lrctl daemon' ou 'lrctl watch' precisa estar rodando)");
+    } else {
+        println!("o vigia (daemon ou watch) compila as resoluções novas que aparecerem");
+    }
+    ExitCode::SUCCESS
+}
+
 fn current(state: &ipc::Writer) -> ExitCode {
     match state.selection() {
+        SelectionRead::Path(path) if path.contains("{W}") => match Compiler::from_env().ok().and_then(|c| c.name_from_template(&path)) {
+            Some(name) => println!("{name} (por nome; um bundle por resolução em {path})"),
+            None => println!("{path} (modelo por resolução)"),
+        },
         SelectionRead::Path(path) => match load(Path::new(&path)) {
             Ok(bundle) => println!("{path}\n  {}", describe_bundle(&bundle)),
             Err(e) => println!("{path}\n  (não carrega agora: {e})"),
