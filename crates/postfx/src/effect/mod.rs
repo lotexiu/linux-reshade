@@ -14,6 +14,7 @@ mod record;
 mod resources;
 mod sources;
 
+pub use convert::is_srgb;
 pub use sources::{FrameInfo, utc_date};
 
 use crate::backbuffer::BackbufferCopies;
