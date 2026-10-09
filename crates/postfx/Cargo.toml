@@ -1,0 +1,13 @@
+[package]
+name = "postfx"
+description = "Passes de pós-processamento em Vulkan sobre as imagens de um swapchain (ou de qualquer alvo)"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+ash.workspace = true
+
+[dev-dependencies]
+# `loaded` (carrega o libvulkan em tempo de execução) só para os testes com GPU de software.
+ash = { workspace = true, features = ["loaded"] }
