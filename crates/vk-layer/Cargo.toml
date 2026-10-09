@@ -1,0 +1,9 @@
+[package]
+name = "vk-layer"
+description = "ABI da interface layer<->loader do Vulkan, cadeia de create-info e registro de dispatch"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+ash.workspace = true
