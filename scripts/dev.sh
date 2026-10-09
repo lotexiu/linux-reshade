@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Utilitário de desenvolvimento. Idempotente; serve para trocar de máquina sem esforço.
-# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-golden|placement|logs> [args]
+# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-golden|placement|logs> [args]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -195,6 +195,64 @@ cmd_smoke() { smoke_with "host" 1 60 vkcube --wsi wayland --width 500 --height 5
 # O mesmo, com a validation layer: falha se ela acusar qualquer uso incorreto da API.
 cmd_validate() { SMOKE_VALIDATE=1 smoke_with "host + validation" 1 60 vkcube --wsi wayland --width 500 --height 500; }
 
+# Encerra o que o smoke-auto abriu e deixa o canal limpo.
+smoke_auto_cleanup() {
+  [ "${#SMOKE_PIDS[@]}" -gt 0 ] && kill "${SMOKE_PIDS[@]}" 2>/dev/null || true
+  smoke_cleanup
+}
+
+# Teste da compilação automática. O efeito é escolhido POR NOME com um vkcube de 500x500 aberto (o próprio
+# `lrctl use` compila essa resolução); depois abre-se um de 320x240, que só o vigia pode atender, e as
+# duas layers precisam ficar prontas. Usa um cache isolado.
+cmd_smoke_auto() {
+  say "smoke (auto): abre dois vkcube (500x500 e depois 320x240) por ~25 s; evite mexer em janelas até terminar"
+  cmd_install
+  cmd_build -p linux-reshade-control
+  local lrctl="$ROOT/target/release/lrctl" cache; cache="$(mktemp -d)"
+  export LINUX_RESHADE_CACHE="$cache"
+  # Os PIDs ficam numa variável global: o trap EXIT roda depois desta função terminar, quando as locais já não existem.
+  SMOKE_PIDS=()
+  trap smoke_auto_cleanup EXIT
+  "$lrctl" off >/dev/null; "$lrctl" use none >/dev/null
+  : >"$LOG_FILE"
+  "$lrctl" watch >"$cache/watch.log" 2>&1 &
+  SMOKE_PIDS+=($!)
+  local cube_env=(env -u LINUX_RESHADE_BUNDLE "$ENABLE_VAR=1" LINUX_RESHADE_LOG="$LOG_FILE")
+
+  # wait_layers <resolução> <texto>: espera (até ~20 s) uma linha de `lrctl layers` com os dois
+  wait_layers() {
+    for _ in $(seq 1 200); do "$lrctl" layers | grep "$1" | grep -q "$2" && return 0; sleep 0.1; done
+    return 1
+  }
+  local ok=1
+  check() { # check <descrição> <comando de teste>
+    if eval "$2"; then printf '  ok     %s\n' "$1"; else printf '  FALHOU %s\n' "$1"; ok=0; fi
+  }
+
+  # 1. um jogo de 500x500, sem efeito; escolhe-se o Sépia por nome (o `use` compila 500x500)
+  "${cube_env[@]}" timeout 60 vkcube --wsi wayland --width 500 --height 500 --c 1800 >/dev/null 2>&1 &
+  local cube1=$!; SMOKE_PIDS+=("$cube1")
+  wait_layers 500x500 "nenhum efeito" || true
+  "$lrctl" use Sepia
+  check "500x500 ficou pronto" 'wait_layers 500x500 pronto'
+
+  # 2. um jogo de OUTRA resolução aparece depois: só o vigia pode compilá-la
+  "${cube_env[@]}" timeout 60 vkcube --wsi wayland --width 320 --height 240 --c 1500 >/dev/null 2>&1 &
+  local cube2=$!; SMOKE_PIDS+=("$cube2")
+  check "320x240 ficou pronto (compilado pelo vigia)" 'wait_layers 320x240 pronto'
+  "$lrctl" layers
+
+  "$lrctl" on >/dev/null; sleep 2; "$lrctl" off >/dev/null
+  wait "$cube1" "$cube2" 2>/dev/null || true
+
+  check "o vigia compilou 320x240" 'grep -q "compilado Sepia para 320x240" "$cache/watch.log"'
+  check "bundle 500x500 no cache" '[ -f "$cache/Sepia-500x500/manifest.json" ]'
+  check "bundle 320x240 no cache" '[ -f "$cache/Sepia-320x240/manifest.json" ]'
+  check "o efeito foi construído nos dois jogos" '[ "$(grep -c "efeito criado" "$LOG_FILE")" -ge 2 ]'
+  check "a layer de 320x240 esperou o bundle antes de ele existir" 'grep -q "swapchain 320x240: ainda não há bundle, esperando" "$LOG_FILE"'
+  [ "$ok" = 1 ] && say "smoke (auto): passou" || { warn "smoke (auto): falhou (logs: $LOG_FILE e $cache/watch.log)"; exit 1; }
+}
+
 # Mesmo teste, mas dentro do container soldier da Steam (pressure-vessel).
 cmd_smoke_steam() {
   [ -x "$STEAM_SOLDIER" ] || { warn "não achei $STEAM_SOLDIER (Steam Linux Runtime soldier instalado?)"; exit 1; }
@@ -288,6 +346,7 @@ case "${1:-}" in
   smoke)     cmd_smoke ;;
   validate)  cmd_validate ;;
   smoke-steam) cmd_smoke_steam ;;
+  smoke-auto) cmd_smoke_auto ;;
   hotkey)    cmd_hotkey ;;
   fx-tool)   cmd_fx_tool ;;
   game-options) shift; cmd_game_options "$@" ;;
@@ -296,5 +355,5 @@ case "${1:-}" in
   fx-golden) cmd_fx_golden ;;
   placement) shift; cmd_placement "$@" ;;
   logs)      shift; cmd_logs "$@" ;;
-  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-golden|placement|logs>" >&2; exit 2 ;;
+  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-golden|placement|logs>" >&2; exit 2 ;;
 esac
