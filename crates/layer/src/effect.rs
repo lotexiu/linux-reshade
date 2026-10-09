@@ -6,6 +6,7 @@ use crate::state::DeviceData;
 use ash::vk::{self, Handle};
 use postfx::effect::{FrameInfo, Target, utc_date};
 use crate::params::ParamState;
+use fx_bundle::Bundle;
 use postfx::Effect;
 use std::sync::LazyLock;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -55,6 +56,8 @@ pub struct SwapchainFx {
     /// não é suportado (por exemplo, mais de uma camada).
     usable: bool,
     fx: Fx,
+    /// Época do bundle com que `fx` foi construído (ver `bundle::current`).
+    built_epoch: u64,
     /// Quando o present anterior deste swapchain começou (para o `frametime`).
     last_present: Option<Instant>,
 }
@@ -65,7 +68,7 @@ unsafe impl Send for SwapchainFx {}
 
 impl SwapchainFx {
     pub fn new(images: Vec<vk::Image>, format: vk::Format, extent: vk::Extent2D, usable: bool) -> Self {
-        Self { images, format, extent, usable, fx: Fx::Unbuilt, last_present: None }
+        Self { images, format, extent, usable, fx: Fx::Unbuilt, built_epoch: 0, last_present: None }
     }
 
     /// Libera os recursos de GPU.
@@ -91,8 +94,7 @@ impl SwapchainFx {
         }
     }
 
-    unsafe fn build(&mut self, data: &DeviceData, queue: vk::Queue, queue_family: u32) -> Result<Built, String> {
-        let bundle = crate::bundle::get().ok_or("sem bundle configurado ou válido")?;
+    unsafe fn build(&mut self, data: &DeviceData, bundle: &Bundle, queue: vk::Queue, queue_family: u32) -> Result<Built, String> {
         let t = bundle.manifest.target;
         if (t.width, t.height) != (self.extent.width, self.extent.height) {
             return Err(format!(
@@ -168,8 +170,23 @@ pub unsafe fn apply(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInfoK
         if !fx.usable || index >= fx.images.len() {
             return None;
         }
+        // O bundle pode ter mudado (o app de controle escolheu outro efeito): o que foi construído com o
+        // antigo é descartado e refeito. A GPU precisa estar ociosa para destruir os recursos.
+        let (epoch, bundle) = crate::bundle::current();
+        if fx.built_epoch != epoch && !matches!(fx.fx, Fx::Unbuilt) {
+            log!("efeito do swapchain {:#x} descartado: o bundle mudou", swapchain.as_raw());
+            let _ = data.device.device_wait_idle();
+            fx.destroy(&data.device);
+            fx.fx = Fx::Unbuilt;
+        }
         if matches!(fx.fx, Fx::Unbuilt) {
-            fx.fx = match fx.build(data, queue, family) {
+            fx.built_epoch = epoch;
+            let Some(bundle) = bundle else {
+                // Sem efeito escolhido: não há o que desenhar. O estado volta a `Unbuilt` para uma
+                // escolha futura (a época muda) reconstruir; o log fala só na primeira vez.
+                return None;
+            };
+            fx.fx = match fx.build(data, &bundle, queue, family) {
                 Ok(built) => {
                     log!("efeito criado para o swapchain {:#x} ({} imagens)", swapchain.as_raw(), fx.images.len());
                     for ignored in built.effect.ignored_sources() {

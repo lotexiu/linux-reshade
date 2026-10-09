@@ -47,8 +47,9 @@ pub unsafe extern "system" fn create_swapchain(
         };
         // Cópia do pedido do jogo, com o uso extra se a superfície aceitar; senão, sem efeito neste swapchain.
         let mut info = *p_create_info;
-        // Sem bundle configurado a layer não toca no pedido do jogo.
-        let usable = crate::bundle::configured().is_some() && info.image_array_layers == 1 && surface_supports_effect(&data, info.surface);
+        // A layer só está no processo porque o usuário a ligou para este jogo (LINUX_RESHADE=1); o efeito pode
+        // ser escolhido a qualquer momento, e o uso extra só pode ser pedido na criação do swapchain.
+        let usable = info.image_array_layers == 1 && surface_supports_effect(&data, info.surface);
         if usable {
             info.image_usage |= EFFECT_USAGE;
         }
