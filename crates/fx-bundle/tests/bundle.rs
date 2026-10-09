@@ -58,6 +58,19 @@ fn loads_the_golden_bundle() {
 }
 
 #[test]
+fn bundle_id_is_stable_and_tracks_the_manifest() {
+    let a = Bundle::load(&golden()).unwrap().id;
+    assert_eq!(a, Bundle::load(&golden()).unwrap().id, "o id é determinístico");
+
+    // Qualquer mudança no manifesto (aqui, a resolução) muda o id.
+    let copy = scratch("id");
+    let mut manifest = golden_json();
+    manifest["target"]["width"] = json!(1234);
+    fs::write(copy.join("manifest.json"), manifest.to_string()).unwrap();
+    assert_ne!(a, Bundle::load(&copy).unwrap().id);
+}
+
+#[test]
 fn ignores_unknown_fields() {
     assert!(mutated(|v| {
         v["campo_novo"] = json!({"a": 1});

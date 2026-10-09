@@ -13,7 +13,6 @@ mod pipeline;
 mod record;
 mod resources;
 mod sources;
-mod uniforms;
 
 pub use sources::{FrameInfo, utc_date};
 
@@ -235,7 +234,7 @@ impl Effect {
         self.sources = Sources::collect(m);
         let has_uniforms = m.total_uniform_size > 0;
         if has_uniforms {
-            let defaults = uniforms::default_block(m);
+            let defaults = fx_bundle::uniforms::default_block(m);
             for _ in 0..count {
                 self.uniform_buffers.push(unsafe { UniformBuffer::new(device, memory, &defaults)? });
             }
