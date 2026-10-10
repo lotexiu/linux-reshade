@@ -22,6 +22,8 @@ struct Published {
     /// Efeitos do plano (nome e definições com que foram compilados), para compilar em outras resoluções e para a
     /// poda do cache não os apagar.
     effects: Vec<(String, Defines)>,
+    /// A profundidade invertida que valia quando o plano foi montado; mudou, remonta (a macro dos efeitos de profundidade muda).
+    reversed: Option<bool>,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -106,7 +108,8 @@ impl Games {
         let resolutions = resolutions(layer);
         let Some(&(width, height)) = resolutions.first() else { return }; // ainda sem swapchain: a próxima olhada
         let stamp = modified(&found.path);
-        let changed = self.published.get(&layer.id).is_none_or(|p| p.file != found.path || p.modified != stamp);
+        let reversed = layer.status.depth.iter().find(|d| d.chosen).and_then(|d| d.reversed);
+        let changed = self.published.get(&layer.id).is_none_or(|p| p.file != found.path || p.modified != stamp || p.reversed != reversed);
 
         let mut republish = false;
         let mut plan = None;
@@ -118,10 +121,10 @@ impl Games {
                     return;
                 }
             };
-            let built = game_plan::build(compiler, &Preset::parse(&text), &self.global_macros, width, height);
+            let built = game_plan::build(compiler, &Preset::parse(&text), &self.global_macros, &game_plan::auto_depth_macros(reversed), width, height);
             report.warnings.extend(built.warnings.into_iter().map(|w| (game.to_string(), w)));
             let effects = built.variants.clone();
-            self.published.insert(layer.id.clone(), Published { file: found.path.clone(), modified: stamp, effects });
+            self.published.insert(layer.id.clone(), Published { file: found.path.clone(), modified: stamp, effects, reversed });
             plan = Some(built.plan);
             republish = true;
         }

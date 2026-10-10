@@ -8,10 +8,11 @@
 //!
 //! Macros (`PreprocessorDefinitions`) ainda não recompilam o efeito: ficam para a F6.
 
+use crate::analysis::{self, Feature};
 use crate::compiler::{Compiler, Defines, valid_define, valid_name, variant_key};
 use fx_bundle::{Bundle, uniforms};
 use ipc::{Plan, PlanStep};
-use preset::{Macros, Preset, TechId};
+use preset::{Macros, Preset, TechId, merge_macros};
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Built {
@@ -70,6 +71,15 @@ pub fn uniform_block(bundle: &Bundle, preset: &Preset, file: &str, warnings: &mu
     block
 }
 
+/// As definições que a layer deduz do jogo para os efeitos que usam profundidade (precedência: acima das globais, abaixo
+/// do preset e do efeito). Hoje: `RESHADE_DEPTH_INPUT_IS_REVERSED`, pela profundidade que o jogo usa (invertida ou não).
+pub fn auto_depth_macros(reversed: Option<bool>) -> Macros {
+    match reversed {
+        Some(r) => vec![("RESHADE_DEPTH_INPUT_IS_REVERSED".to_string(), if r { "1" } else { "0" }.to_string())],
+        None => Macros::new(),
+    }
+}
+
 /// As definições de um efeito: as globais (`config.ini`), as do preset e as do próprio efeito, nessa ordem de
 /// precedência. As que não podem ir ao compilador (nome que não é identificador) viram avisos.
 pub fn defines_for(preset: &Preset, global: &Macros, file: &str, warnings: &mut Vec<String>) -> Defines {
@@ -87,7 +97,7 @@ pub fn defines_for(preset: &Preset, global: &Macros, file: &str, warnings: &mut 
 /// Monta o plano de `preset` para uma resolução (compila o que faltar). A resolução só serve para obter o
 /// manifesto: o plano vale para qualquer tamanho (o modelo de caminho leva `{W}x{H}`). Cada efeito é compilado com as
 /// definições (macros) que valem para ele; a mesma combinação reaproveita o bundle.
-pub fn build(compiler: &Compiler, preset: &Preset, global: &Macros, width: u32, height: u32) -> Built {
+pub fn build(compiler: &Compiler, preset: &Preset, global: &Macros, auto_depth: &Macros, width: u32, height: u32) -> Built {
     let mut built = Built::default();
     for id in enabled_order(preset) {
         let Some(file) = id.file.as_deref() else {
@@ -100,7 +110,9 @@ pub fn build(compiler: &Compiler, preset: &Preset, global: &Macros, width: u32, 
             continue;
         }
         let mut warnings = Vec::new();
-        let defines = defines_for(preset, global, file, &mut warnings);
+        // As definições deduzidas da profundidade só valem para os efeitos que a usam (os demais não ganham variante à toa).
+        let base = if auto_depth.is_empty() || !analysis::ensure(compiler, name).has(Feature::Depth) { global.clone() } else { merge_macros(&[global, auto_depth]) };
+        let defines = defines_for(preset, &base, file, &mut warnings);
         let fresh: Vec<String> = warnings.into_iter().filter(|w| !built.warnings.contains(w)).collect();
         built.warnings.extend(fresh);
         let dir = match compiler.ensure_with(name, width, height, &defines) {
@@ -148,7 +160,7 @@ mod tests {
     fn builds_the_enabled_techniques_in_preset_order_with_their_values() {
         let f = setup("plan-order");
         let preset = Preset::parse("Techniques=Invert@Invert.fx,Sepia@Sepia.fx\nTechniqueSorting=Sepia@Sepia.fx,Invert@Invert.fx\n\n[Sepia.fx]\nStrength=0.25\n");
-        let built = build(&f.compiler, &preset, &Macros::new(), 8, 4);
+        let built = build(&f.compiler, &preset, &Macros::new(), &Macros::new(), 8, 4);
         assert!(built.warnings.is_empty(), "{:?}", built.warnings);
         let names: Vec<_> = built.plan.steps.iter().map(|s| s.technique.as_str()).collect();
         assert_eq!(names, ["Sepia", "Invert"], "a ordem é a de TechniqueSorting");
@@ -160,7 +172,7 @@ mod tests {
     #[test]
     fn the_default_applies_when_the_preset_has_no_value() {
         let f = setup("plan-default");
-        let built = build(&f.compiler, &Preset::parse("Techniques=Sepia@Sepia.fx\n"), &Macros::new(), 8, 4);
+        let built = build(&f.compiler, &Preset::parse("Techniques=Sepia@Sepia.fx\n"), &Macros::new(), &Macros::new(), 8, 4);
         assert_eq!(strength(&built.plan.steps[0]), 1.0, "Strength padrão do efeito");
     }
 
@@ -168,7 +180,7 @@ mod tests {
     fn disabled_techniques_are_left_out() {
         let f = setup("plan-disabled");
         let preset = Preset::parse("Techniques=Sepia@Sepia.fx\nTechniqueSorting=Invert@Invert.fx,Sepia@Sepia.fx\n");
-        let built = build(&f.compiler, &preset, &Macros::new(), 8, 4);
+        let built = build(&f.compiler, &preset, &Macros::new(), &Macros::new(), 8, 4);
         assert_eq!(built.plan.steps.len(), 1);
         assert_eq!(built.plan.steps[0].technique, "Sepia");
     }
@@ -179,7 +191,7 @@ mod tests {
         let preset = Preset::parse(
             "Techniques=Fantasma@Fantasma.fx,Quebrado@Quebrado.fx,SemArquivo,Outra@Sepia.fx,Sepia@Sepia.fx,Sepia@..%2Fx.fx\n",
         );
-        let built = build(&f.compiler, &preset, &Macros::new(), 8, 4);
+        let built = build(&f.compiler, &preset, &Macros::new(), &Macros::new(), 8, 4);
         let kept: Vec<_> = built.plan.steps.iter().map(|s| s.technique.as_str()).collect();
         assert_eq!(kept, ["Sepia"]);
         let text = built.warnings.join("\n");
@@ -194,15 +206,38 @@ mod tests {
     fn bad_values_warn_and_keep_the_default() {
         let f = setup("plan-values");
         let preset = Preset::parse("Techniques=Sepia@Sepia.fx\n\n[Sepia.fx]\nStrength=muito\nNaoExiste=3\n");
-        let built = build(&f.compiler, &preset, &Macros::new(), 8, 4);
+        let built = build(&f.compiler, &preset, &Macros::new(), &Macros::new(), 8, 4);
         assert_eq!(strength(&built.plan.steps[0]), 1.0);
         assert_eq!(built.warnings, ["Sepia.fx: Strength=\"muito\" não é número"], "uniform desconhecido é ignorado sem aviso");
     }
 
     #[test]
+    fn the_depth_macro_is_deduced_only_for_effects_that_use_depth_and_the_preset_wins() {
+        let f = setup("plan-depth-macro");
+        let preset = Preset::parse("Techniques=Sepia@Sepia.fx,Depth@Depth.fx\n");
+        let reversed = auto_depth_macros(Some(true));
+        let built = build(&f.compiler, &preset, &Macros::new(), &reversed, 8, 4);
+        assert!(built.warnings.is_empty(), "{:?}", built.warnings);
+        let templates: Vec<_> = built.plan.steps.iter().map(|s| s.template.clone()).collect();
+        assert!(!templates[0].contains(".m"), "o Sépia não usa profundidade: sem variante ({templates:?})");
+        assert!(templates[1].contains("Depth.m"), "{templates:?}");
+        let (_, defines) = built.variants.iter().find(|(n, _)| n == "Depth").unwrap();
+        assert_eq!(defines, &vec![("RESHADE_DEPTH_INPUT_IS_REVERSED".to_string(), "1".to_string())]);
+
+        // Normal (0) também vale; e o que o usuário escreveu no preset vence o deduzido.
+        let normal = build(&f.compiler, &preset, &Macros::new(), &auto_depth_macros(Some(false)), 8, 4);
+        assert_eq!(normal.variants.iter().find(|(n, _)| n == "Depth").unwrap().1[0].1, "0");
+        let user = Preset::parse("Techniques=Depth@Depth.fx\n\n[Depth.fx]\nPreprocessorDefinitions=RESHADE_DEPTH_INPUT_IS_REVERSED=0\n");
+        let own = build(&f.compiler, &user, &Macros::new(), &reversed, 8, 4);
+        assert_eq!(own.variants[0].1, vec![("RESHADE_DEPTH_INPUT_IS_REVERSED".to_string(), "0".to_string())]);
+        // Sem saber (None): nada é acrescentado.
+        assert!(!build(&f.compiler, &preset, &Macros::new(), &auto_depth_macros(None), 8, 4).plan.steps[1].template.contains(".m"));
+    }
+
+    #[test]
     fn an_empty_preset_gives_an_empty_plan() {
         let f = setup("plan-empty");
-        let built = build(&f.compiler, &Preset::parse("Techniques=\n"), &Macros::new(), 8, 4);
+        let built = build(&f.compiler, &Preset::parse("Techniques=\n"), &Macros::new(), &Macros::new(), 8, 4);
         assert_eq!(built, Built::default());
     }
 

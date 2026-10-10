@@ -101,6 +101,8 @@ pub struct Depth {
     pub(crate) chosen: Mutex<Option<Chosen>>,
     /// Quantos pipelines (maior, menor, outro) já foram registrados no log.
     pub(crate) pipelines_logged: Mutex<(usize, usize, usize)>,
+    /// O último resumo de passes registrado no log.
+    pub(crate) passes_logged: Mutex<String>,
 }
 
 /// Carrega do próximo elo a primeira das funções que existir (nome do núcleo e da extensão).
@@ -152,6 +154,7 @@ impl Depth {
             last_published: Mutex::new(Vec::new()),
             chosen: Mutex::new(None),
             pipelines_logged: Mutex::new((usize::MAX, 0, 0)),
+            passes_logged: Mutex::new(String::new()),
         }
     }
 

@@ -32,6 +32,8 @@ pub struct Ui {
     preset_note: gtk::Label,
     new_preset: gtk::MenuButton,
     macros_entry: gtk::Entry,
+    /// O campo de macros está sendo editado (o foco fica num filho interno do campo, então `has_focus` não serve).
+    macros_editing: Rc<Cell<bool>>,
     new_name: gtk::Entry,
     new_create: gtk::Button,
     search: gtk::SearchEntry,
@@ -310,6 +312,7 @@ impl Ui {
             preset_note,
             new_preset: new_preset.clone(),
             macros_entry: macros_entry.clone(),
+            macros_editing: Rc::new(Cell::new(false)),
             new_name: name_entry.clone(),
             new_create: create.clone(),
             search,
@@ -433,9 +436,16 @@ impl Ui {
             move |e| apply(e.text().to_string())
         });
         let focus = gtk::EventControllerFocus::new();
+        focus.connect_enter({
+            let editing = self.macros_editing.clone();
+            move |_| editing.set(true)
+        });
         focus.connect_leave({
-            let (apply, entry) = (apply_macros, self.macros_entry.clone());
-            move |_| apply(entry.text().to_string())
+            let (apply, entry, editing) = (apply_macros, self.macros_entry.clone(), self.macros_editing.clone());
+            move |_| {
+                editing.set(false);
+                apply(entry.text().to_string())
+            }
         });
         self.macros_entry.add_controller(focus);
 
@@ -557,7 +567,7 @@ impl Ui {
             let has_game = s.game.is_some();
             self.preset.set_sensitive(has_game);
             self.new_preset.set_sensitive(has_game);
-            if !self.macros_entry.has_focus() && self.macros_entry.text() != s.preset_macros {
+            if !self.macros_editing.get() && self.macros_entry.text() != s.preset_macros {
                 self.macros_entry.set_text(&s.preset_macros);
             }
             self.delete_preset.set_sensitive(s.active_preset.is_some());
@@ -1051,6 +1061,14 @@ impl Ui {
         self.macros_entry.set_text("");
         self.macros_entry.emit_activate();
         check(self.home.borrow().snapshot().preset_macros.is_empty(), "o campo de macros vazio não apagou as definições");
+
+        // 3d. o que a pessoa digita no campo de macros não é apagado pela atualização periódica da tela
+        self.macros_editing.set(true);
+        self.macros_entry.set_text("DIGITANDO=1");
+        self.apply();
+        check(self.macros_entry.text() == "DIGITANDO=1", "a atualização da tela apagou o que estava sendo digitado nas macros");
+        self.macros_editing.set(false);
+        self.macros_entry.set_text("");
 
         // 4. o interruptor de efeitos ligados
         self.enabled.set_active(true);

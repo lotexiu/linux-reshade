@@ -104,6 +104,8 @@ pub struct Candidate {
 
 #[derive(Debug, Default)]
 pub struct FrameStats {
+    /// Resumo de cada passe por imagem, na ordem em que foram enviados (para entender o que o jogo faz na profundidade).
+    pass_briefs: HashMap<u64, Vec<PassRecord>>,
     images: HashMap<u64, Aggregate>,
     infos: HashMap<u64, ImageInfo>,
     passes_seen: u32,
@@ -121,6 +123,10 @@ impl FrameStats {
             self.infos.insert(p.image, *info);
             let ordinal = self.passes_seen;
             self.passes_seen += 1;
+            let briefs = self.pass_briefs.entry(p.image).or_default();
+            if briefs.len() < 64 {
+                briefs.push(*p);
+            }
             let a = self.images.entry(p.image).or_insert_with(|| Aggregate { first_pass: ordinal, ..Aggregate::default() });
             a.draws += p.draws;
             a.vertices += p.vertices;
@@ -134,6 +140,11 @@ impl FrameStats {
                 a.first_clear = p.clear_depth;
             }
         }
+    }
+
+    /// Os passes que usaram a imagem neste quadro, em ordem.
+    pub fn passes_of(&self, image: u64) -> &[PassRecord] {
+        self.pass_briefs.get(&image).map_or(&[], Vec::as_slice)
     }
 
     /// As candidatas do quadro e qual foi escolhida para uma tela de `frame` (largura, altura).

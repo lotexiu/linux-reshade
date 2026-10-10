@@ -11,7 +11,7 @@ use std::path::PathBuf;
 /// Uma característica de um efeito (o que o filtro da lista oferece).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Feature {
-    /// Lê a profundidade do jogo (`DEPTH`): ainda não suportado (marco 5).
+    /// Lê a profundidade do jogo (`DEPTH`): suportado quando o jogo é aberto com `LINUX_RESHADE_DEPTH=1`.
     Depth,
     /// Lê a imagem do jogo (o back buffer).
     Color,
@@ -128,9 +128,7 @@ pub fn analyze(name: &str, manifest: &Manifest) -> EffectInfo {
     }
     features.sort();
 
-    if features.contains(&Feature::Depth) {
-        problems.push("usa a profundidade do jogo (depth), ainda não suportada".to_string());
-    }
+    // Profundidade já é suportada (a layer entrega a imagem do jogo); só precisa do jogo aberto com LINUX_RESHADE_DEPTH=1.
     if features.contains(&Feature::Compute) {
         problems.push("usa compute shaders, ainda não suportados".to_string());
     }
@@ -163,9 +161,13 @@ fn one_line(text: &str) -> String {
     text.chars().map(|c| if c.is_control() { ' ' } else { c }).collect()
 }
 
+/// Versão do formato e das regras da análise: mudou, as guardadas deixam de valer.
+const VERSION: &str = "2";
+
 /// Guarda a análise no cache.
 pub fn save(compiler: &Compiler, info: &EffectInfo) -> std::io::Result<()> {
     let mut ini = Ini::new();
+    ini.set("", "version", VERSION);
     ini.set("", "techniques", &info.techniques.iter().map(|t| one_line(t)).collect::<Vec<_>>().join(","));
     ini.set("", "features", &info.features.iter().map(|f| f.key()).collect::<Vec<_>>().join(","));
     ini.set("", "problems", &info.problems.iter().map(|p| one_line(p)).collect::<Vec<_>>().join(" | "));
@@ -183,6 +185,9 @@ pub fn load(compiler: &Compiler, name: &str) -> Option<EffectInfo> {
         return None;
     }
     let ini = Ini::load(&file).ok()?;
+    if ini.get("", "version") != Some(VERSION) {
+        return None;
+    }
     let list = |key: &str| ini.get("", key).unwrap_or("").split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect::<Vec<_>>();
     Some(EffectInfo {
         name: name.to_string(),
@@ -246,14 +251,21 @@ mod tests {
     }
 
     #[test]
-    fn depth_makes_an_effect_incompatible_with_a_reason() {
+    fn depth_is_a_feature_not_a_problem_now_that_the_runtime_supports_it() {
         let mut m = manifest("Sepia");
         // O sampler do Sépia passa a ler uma textura de profundidade.
         m.textures[0].semantic = Some("DEPTH".into());
         let info = analyze("Sepia", &m);
-        assert!(!info.compatible());
+        assert!(info.compatible(), "{info:?}");
         assert!(info.has(Feature::Depth) && !info.has(Feature::Color));
-        assert!(info.reason().unwrap().contains("profundidade"), "{info:?}");
+    }
+
+    #[test]
+    fn compute_is_still_a_problem() {
+        let mut m = manifest("Sepia");
+        m.techniques[0].passes[0].compute_entry = Some("CS".into());
+        let info = analyze("Sepia", &m);
+        assert!(!info.compatible() && info.has(Feature::Compute), "{info:?}");
     }
 
     #[test]

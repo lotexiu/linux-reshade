@@ -689,6 +689,20 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
         return;
     }
     if let Some(c) = candidates.iter().find(|c| c.chosen) {
+        // Os passes da escolhida, para entender o que o jogo desenha na profundidade (e achar o ponto certo de usá-la).
+        let briefs: Vec<String> = stats
+            .passes_of(c.image)
+            .iter()
+            .enumerate()
+            .map(|(i, p)| format!("{i}:{}d/{}i {}x{} {:?}->{:?}", p.draws, p.indirect, p.area.0, p.area.1, p.load, p.store))
+            .collect();
+        let summary = briefs.join(" ");
+        let mut logged = data.depth.passes_logged.lock().unwrap();
+        if *logged != summary {
+            log!("passes da profundidade escolhida: {summary}");
+            *logged = summary;
+        }
+        drop(logged);
         let key = |c: &super::observe::Candidate| (c.width, c.height, c.format, c.load, c.store, c.reversed);
         if last.iter().find(|p| p.chosen).map(key) != Some(key(c)) {
             log!(

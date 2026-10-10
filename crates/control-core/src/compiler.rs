@@ -477,7 +477,7 @@ mkdir -p "$out" && echo '{}' > "$out/manifest.json"
     /// Como [`fake`], com `bundles_tool` e os efeitos `Invert` e `Quebrado` (este não tem bundle de teste).
     pub fn fake_with_bundles(name: &str) -> Fake {
         let f = fake(name, &bundles_tool());
-        for fx in ["Invert", "Quebrado"] {
+        for fx in ["Invert", "Quebrado", "Depth"] {
             fs::write(f.root.join(format!("effects/{fx}.fx")), "// de mentira").unwrap();
         }
         f
