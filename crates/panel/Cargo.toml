@@ -9,6 +9,7 @@ publish.workspace = true
 control-core = { path = "../control-core" }
 fx-bundle = { path = "../fx-bundle" }
 ipc = { path = "../ipc" }
+preset = { path = "../preset" }
 
 [dev-dependencies]
 config = { path = "../config" }

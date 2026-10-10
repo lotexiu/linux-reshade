@@ -888,6 +888,7 @@ dependencies = [
  "control-core",
  "fx-bundle",
  "ipc",
+ "preset",
 ]
 
 [[package]]

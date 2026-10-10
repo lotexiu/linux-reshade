@@ -305,3 +305,13 @@ fn community_presets_round_trip() {
     }
     eprintln!("{seen} presets reais conferidos");
 }
+
+#[test]
+fn removing_a_technique_drops_it_from_both_lists() {
+    let mut p = Preset::parse(PRESET);
+    assert!(p.remove_technique(&id("Vinheta@Vinheta.fx")));
+    assert_eq!(p.sorting(), ids(&["Sepia@Sepia.fx", "Bloom@Bloom.fx"]));
+    assert!(p.remove_technique(&id("Bloom@Bloom.fx")));
+    assert_eq!(p.techniques(), ids(&["Sepia@Sepia.fx"]));
+    assert!(!p.remove_technique(&id("Nada@Nada.fx")));
+}

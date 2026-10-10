@@ -253,6 +253,20 @@ impl Preset {
         self.store(&order, &enabled);
     }
 
+    /// Tira a técnica do preset (da lista de ligadas e da ordem). `false` se ele não a conhecia.
+    pub fn remove_technique(&mut self, id: &TechId) -> bool {
+        let mut order = self.full_order();
+        let before = order.len();
+        order.retain(|o| !o.matches(id));
+        if order.len() == before {
+            return false;
+        }
+        let mut enabled = self.techniques();
+        enabled.retain(|e| !e.matches(id));
+        self.store(&order, &enabled);
+        true
+    }
+
     /// Muda a posição de uma técnica na ordem de execução (`to` conta de 0 e é limitado ao fim da lista).
     /// `false` se o preset não a conhece.
     pub fn move_technique(&mut self, id: &TechId, to: usize) -> bool {
