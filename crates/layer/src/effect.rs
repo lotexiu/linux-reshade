@@ -140,7 +140,7 @@ impl SwapchainFx {
         let new_signature = signature(&steps);
         if let Fx::Ready(built) = &self.fx {
             if built.signature != new_signature {
-                log!("efeito do swapchain {:#x} descartado: a escolha mudou", self.handle);
+                log!("efeito do swapchain {:#x} descartado: o bundle mudou (a cadeia é outra)", self.handle);
                 // A GPU precisa estar ociosa para destruir os recursos.
                 unsafe {
                     let _ = data.device.device_wait_idle();

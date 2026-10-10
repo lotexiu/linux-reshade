@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Utilitário de desenvolvimento. Idempotente; serve para trocar de máquina sem esforço.
-# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-golden|placement|logs> [args]
+# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|smoke-preset|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-golden|placement|logs> [args]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -197,6 +197,16 @@ cmd_smoke() { smoke_with "host" 1 60 vkcube --wsi wayland --width 500 --height 5
 cmd_validate() { SMOKE_VALIDATE=1 smoke_with "host + validation" 1 60 vkcube --wsi wayland --width 500 --height 500; }
 
 # Encerra o que o smoke-auto abriu e deixa o canal limpo.
+# Isola um teste da máquina de quem o roda: os efeitos são os do clone (efeitos próprios e a coleção clássica) e
+# os presets vêm de uma pasta vazia, então a pasta de dados e os presets reais do usuário não interferem.
+smoke_isolate() { # smoke_isolate <pasta temporária>
+  local legacy="$ROOT/third_party/reshade-shaders-legacy/Shaders" slim="$ROOT/third_party/reshade-shaders-slim/Shaders"
+  [ -d "$legacy" ] || cmd_fx_tool
+  mkdir -p "$1/Presets"
+  export LINUX_RESHADE_CACHE="$1/cache" LINUX_RESHADE_PRESETS="$1/Presets"
+  export LINUX_RESHADE_EFFECTS="$ROOT/effects:$legacy" LINUX_RESHADE_INCLUDES="$slim:$legacy"
+}
+
 smoke_auto_cleanup() {
   [ "${#SMOKE_PIDS[@]}" -gt 0 ] && kill "${SMOKE_PIDS[@]}" 2>/dev/null || true
   smoke_cleanup
@@ -210,7 +220,7 @@ cmd_smoke_auto() {
   cmd_install
   cmd_build -p linux-reshade-control
   local lrctl="$ROOT/target/release/lrctl" cache; cache="$(mktemp -d)"
-  export LINUX_RESHADE_CACHE="$cache"
+  smoke_isolate "$cache"
   # Os PIDs ficam numa variável global: o trap EXIT roda depois desta função terminar, quando as locais já não existem.
   SMOKE_PIDS=()
   trap smoke_auto_cleanup EXIT
@@ -251,8 +261,8 @@ cmd_smoke_auto() {
 
   check "o parâmetro foi aplicado nos DOIS jogos" '[ "$(grep "parâmetros do app de controle aplicados" "$LOG_FILE" | grep -o "pid=[0-9]*" | sort -u | wc -l)" -ge 2 ]'
   check "o vigia compilou 320x240" 'grep -q "compilado Sepia para 320x240" "$cache/watch.log"'
-  check "bundle 500x500 no cache" '[ -f "$cache/Sepia-500x500/manifest.json" ]'
-  check "bundle 320x240 no cache" '[ -f "$cache/Sepia-320x240/manifest.json" ]'
+  check "bundle 500x500 no cache" '[ -f "$cache/cache/Sepia-500x500/manifest.json" ]'
+  check "bundle 320x240 no cache" '[ -f "$cache/cache/Sepia-320x240/manifest.json" ]'
   check "o efeito foi construído nos dois jogos" '[ "$(grep -c "efeito criado" "$LOG_FILE")" -ge 2 ]'
   check "a layer de 320x240 esperou o bundle antes de ele existir" 'grep -q "swapchain 320x240: ainda não há bundle, esperando" "$LOG_FILE"'
   "$lrctl" reset >/dev/null; "$lrctl" use none >/dev/null   # não deixa o Strength ajustado no estado de quem usa a máquina
@@ -267,7 +277,7 @@ cmd_smoke_layer() {
   cmd_install
   cmd_build -p linux-reshade-control
   local lrctl="$ROOT/target/release/lrctl" cache; cache="$(mktemp -d)"
-  export LINUX_RESHADE_CACHE="$cache"
+  smoke_isolate "$cache"
   SMOKE_PIDS=()
   trap smoke_auto_cleanup EXIT
   "$lrctl" off >/dev/null
@@ -328,6 +338,59 @@ cmd_smoke_layer() {
   [ "$ok" = 1 ] && say "smoke (por jogo): passou" || { warn "smoke (por jogo): falhou (logs: $LOG_FILE e $cache/watch.log)"; "$lrctl" layers; exit 1; }
 }
 
+# Teste do preset por jogo. Um vkcube com a layer e um preset global de DUAS técnicas (Sépia e Colourfulness):
+# o vigia publica o plano, a layer constrói a cadeia de 2 etapas; editar o preset muda a cadeia, mudar só um
+# valor não a reconstrói, e apagar o preset volta à escolha única. Pastas de efeitos e de presets isoladas.
+cmd_smoke_preset() {
+  say "smoke (preset): abre um vkcube (400x300) por ~25 s; evite mexer em janelas até terminar"
+  cmd_install
+  cmd_build -p linux-reshade-control
+  local lrctl="$ROOT/target/release/lrctl" tmp; tmp="$(mktemp -d)"
+  smoke_isolate "$tmp"
+  SMOKE_PIDS=()
+  trap smoke_auto_cleanup EXIT
+  "$lrctl" off >/dev/null; "$lrctl" use none >/dev/null
+  : >"$LOG_FILE"
+  local preset="$tmp/Presets/preset.ini"
+  printf 'Techniques=Sepia@Sepia.fx,Colourfulness@Colourfulness.fx\n\n[Sepia.fx]\nStrength=0.5\n' >"$preset"
+  "$lrctl" watch >"$tmp/watch.log" 2>&1 &
+  SMOKE_PIDS+=($!)
+  env -u LINUX_RESHADE_BUNDLE "$ENABLE_VAR=1" LINUX_RESHADE_LOG="$LOG_FILE" timeout 60 vkcube --wsi wayland --width 400 --height 300 --c 3000 >/dev/null 2>&1 &
+  SMOKE_PIDS+=($!)
+
+  local ok=1
+  check() { if eval "$2"; then printf '  ok     %s\n' "$1"; else printf '  FALHOU %s\n' "$1"; ok=0; fi; }
+  waitfor() { for _ in $(seq 1 250); do eval "$1" && return 0; sleep 0.1; done; return 1; }
+  chains() { grep -c "cadeia de $1 etapa(s) criada" "$LOG_FILE"; }
+  "$lrctl" on >/dev/null
+
+  check "o vigia publicou o plano de 2 etapas" 'waitfor "grep -q \"(2 etapa\|: 2 etapa\" \"$tmp/watch.log\""'
+  check "a layer recebeu o plano de 2 etapas" 'waitfor "grep -q \"plano do jogo: 2 etapa\" \"$LOG_FILE\""'
+  check "a cadeia de 2 etapas foi construída" 'waitfor "[ \$(chains 2) -ge 1 ]"'
+  check "o jogo aparece como pronto" '"$lrctl" layers | grep -q pronto'
+  check "os dois efeitos foram compilados" '[ -f "$tmp/cache/Sepia-400x300/manifest.json" ] && [ -f "$tmp/cache/Colourfulness-400x300/manifest.json" ]'
+
+  # editar o preset: uma técnica só
+  sleep 1.2
+  printf 'Techniques=Colourfulness@Colourfulness.fx\n' >"$preset"
+  check "a layer recebeu o plano de 1 etapa" 'waitfor "grep -q \"plano do jogo: 1 etapa\" \"$LOG_FILE\""'
+  check "a cadeia foi reconstruída com 1 etapa" 'waitfor "[ \$(chains 1) -ge 1 ]"'
+
+  # mudar só um valor de uniform: o plano muda, a cadeia não é reconstruída
+  sleep 1.2
+  local before; before="$(grep -c "etapa(s) criada" "$LOG_FILE")"
+  printf 'Techniques=Colourfulness@Colourfulness.fx\n\n[Colourfulness.fx]\ncolourfulness=0.5\n' >"$preset"
+  sleep 2
+  check "só um valor mudou: a cadeia não foi reconstruída" '[ "$(grep -c "etapa(s) criada" "$LOG_FILE")" = "$before" ]'
+
+  # apagar o preset: volta à escolha única
+  rm -f "$preset"
+  check "sem preset a layer volta à escolha única" 'waitfor "grep -q \"sem plano do jogo\" \"$LOG_FILE\""'
+
+  "$lrctl" off >/dev/null; "$lrctl" use none >/dev/null
+  [ "$ok" = 1 ] && say "smoke (preset): passou" || { warn "smoke (preset): falhou (logs: $LOG_FILE e $tmp/watch.log)"; "$lrctl" layers; exit 1; }
+}
+
 # Abre a interface gráfica (compila se preciso).
 cmd_panel() {
   cmd_build -p linux-reshade-gui -p linux-reshade-control >/dev/null
@@ -341,7 +404,7 @@ cmd_panel_smoke() {
   cmd_install
   cmd_build -p linux-reshade-control -p linux-reshade-gui
   local lrctl="$ROOT/target/release/lrctl" panel="$ROOT/target/release/lrpanel" cache; cache="$(mktemp -d)"
-  export LINUX_RESHADE_CACHE="$cache"
+  smoke_isolate "$cache"
   SMOKE_PIDS=()
   trap smoke_auto_cleanup EXIT
   "$lrctl" off >/dev/null; "$lrctl" use none >/dev/null
@@ -469,6 +532,7 @@ case "${1:-}" in
   smoke-steam) cmd_smoke_steam ;;
   smoke-auto) cmd_smoke_auto ;;
   smoke-layer) cmd_smoke_layer ;;
+  smoke-preset) cmd_smoke_preset ;;
   panel)     shift; cmd_panel "$@" ;;
   panel-smoke) cmd_panel_smoke ;;
   hotkey)    cmd_hotkey ;;
@@ -479,5 +543,5 @@ case "${1:-}" in
   fx-golden) cmd_fx_golden ;;
   placement) shift; cmd_placement "$@" ;;
   logs)      shift; cmd_logs "$@" ;;
-  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-golden|placement|logs>" >&2; exit 2 ;;
+  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|smoke-preset|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-golden|placement|logs>" >&2; exit 2 ;;
 esac

@@ -109,10 +109,16 @@ depois. Compute shaders e mipmaps também não existem no nosso `postfx` e ficam
   Parser/gravador do formato acima, testado com presets reais; resolução jogo → arquivo.
 - **F3 — cadeia na layer.** *(parte do `postfx` feita em 2026-10-10: `postfx::Chain` roda várias técnicas em
   ordem, num único submit; testada na GPU de software com dois efeitos em ordem trocada contra o cálculo na
-  CPU. Falta: a layer usar `Chain` em vez de um `Effect` só, o que depende do plano por jogo (F4).)*
+  CPU. A layer usa `Chain`: com plano publicado constrói uma etapa por técnica; sem plano, a escolha única é uma
+  cadeia de uma etapa.)*
   Várias técnicas em ordem; `postfx` ganha o encadeamento e a escolha de técnica
   no bundle. Teste: dois efeitos em ordem trocada dão imagens diferentes (golden).
-- **F4 — plano a partir do preset.** O controlador monta o plano de cada jogo e o mantém atualizado.
+- **F4 — plano a partir do preset.** *(feita em 2026-10-10: `control_core::game_plan` monta o plano do preset
+  (técnicas ligadas na ordem, bundle compilado, imagem do buffer de uniforms com os valores do preset);
+  `control_core::games` o publica no canal de cada jogo aberto, relê quando o arquivo muda, compila cada
+  resolução e limpa o plano se o preset some; `scripts/dev.sh smoke-preset` confere de ponta a ponta com um
+  vkcube. Falta: macros que recompilam (F6) e o id do jogo pelo nome do executável.)* O controlador monta o
+  plano de cada jogo e o mantém atualizado.
 - **F5 — interface.** Jogos selecionáveis; técnicas com ligar/desligar e arrastar para reordenar; busca;
   seletor de preset, "+" (herdando o atual), salvar e restaurar tudo.
 - **F6 — macros por nível** (recompila), atalhos de preset, anterior/próximo, transição suave de valores.
