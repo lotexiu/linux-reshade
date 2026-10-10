@@ -5,6 +5,7 @@
 
 pub mod control;
 pub mod home;
+pub mod macro_defs;
 pub mod model;
 
 pub use home::{EffectGroup, macros_text, GameEntry, Home, HomeSnapshot, PresetInfo, TechniqueView, start_analysis};

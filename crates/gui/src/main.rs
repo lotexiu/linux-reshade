@@ -6,6 +6,7 @@
 
 mod controls;
 mod games;
+mod macros;
 mod settings;
 mod window;
 
@@ -21,6 +22,8 @@ use std::time::Duration;
 struct Options {
     smoke: Option<String>,
     screenshot: Option<String>,
+    /// Abre o editor de definições (para fotografar a tela com ele aberto).
+    open_macros: bool,
     /// Espera antes de agir (para um jogo abrir depois do painel).
     wait_ms: u64,
     /// Escolhe este efeito na lista (e desfaz ao sair).
@@ -33,7 +36,7 @@ struct Options {
 
 impl Options {
     fn is_test_run(&self) -> bool {
-        self.smoke.is_some() || self.screenshot.is_some() || self.effect.is_some() || self.hold_ms > 0 || self.wait_ms > 0 || self.keepalive_check
+        self.smoke.is_some() || self.open_macros || self.screenshot.is_some() || self.effect.is_some() || self.hold_ms > 0 || self.wait_ms > 0 || self.keepalive_check
     }
 }
 
@@ -46,6 +49,7 @@ fn parse_args() -> Result<Options, String> {
             "--effect" => options.effect = Some(args.next().ok_or("--effect precisa do nome de um efeito")?),
             "--wait" => options.wait_ms = args.next().and_then(|v| v.parse().ok()).ok_or("--wait precisa de um tempo em milissegundos")?,
             "--hold" => options.hold_ms = args.next().and_then(|v| v.parse().ok()).ok_or("--hold precisa de um tempo em milissegundos")?,
+            "--open-macros" => options.open_macros = true,
             "--keepalive-check" => options.keepalive_check = true,
             "--screenshot" => options.screenshot = Some(args.next().ok_or("--screenshot precisa de um arquivo .png")?),
             other => return Err(format!("opção desconhecida: {other}\nuso: lrpanel [--smoke <Efeito>] [--effect <Efeito>] [--screenshot <arquivo.png>] [--wait <ms>] [--hold <ms>]")),
@@ -153,6 +157,10 @@ async fn test_run(app: gtk::Application, ui: Rc<window::Ui>, options: Rc<Options
         } else {
             fail(format!("o efeito {name:?} não está na lista"));
         }
+    }
+    if options.open_macros {
+        ui.macros_popup();
+        glib::timeout_future(Duration::from_millis(500)).await;
     }
     if let Some(path) = &options.screenshot {
         match save_screenshot(&ui.window, path) {

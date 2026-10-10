@@ -5,6 +5,7 @@
 use crate::controls::ControlsView;
 use crate::games::GamesView;
 use gtk4 as gtk;
+use crate::macros::MacroEditor;
 use gtk::glib;
 use gtk::prelude::*;
 use control_core::analysis::{EffectInfo, Feature};
@@ -31,9 +32,7 @@ pub struct Ui {
     preset_names: RefCell<Vec<String>>,
     preset_note: gtk::Label,
     new_preset: gtk::MenuButton,
-    macros_entry: gtk::Entry,
-    /// O campo de macros está sendo editado (o foco fica num filho interno do campo, então `has_focus` não serve).
-    macros_editing: Rc<Cell<bool>>,
+    macros: Rc<MacroEditor>,
     new_name: gtk::Entry,
     new_create: gtk::Button,
     search: gtk::SearchEntry,
@@ -143,10 +142,7 @@ impl Ui {
         let new_preset = gtk::MenuButton::new();
         new_preset.set_label("Novo");
         new_preset.set_tooltip_text(Some("Novo preset para este jogo (cópia do atual)"));
-        let macros_entry = gtk::Entry::new();
-        macros_entry.set_hexpand(true);
-        macros_entry.set_placeholder_text(Some("NOME=VALOR,OUTRO=2   (valem para todos os efeitos do preset; Enter aplica)"));
-        macros_entry.set_tooltip_text(Some("Definições de pré-processador do preset (como no ReShade). Mudar recompila os efeitos afetados."));
+        let macros = MacroEditor::new("Definições…", "Definições de pré-processador do preset, para todos os efeitos (como no ReShade). Mudar recompila os efeitos afetados.");
         let delete_preset = gtk::Button::from_icon_name("user-trash-symbolic");
         delete_preset.set_tooltip_text(Some("Apagar este preset"));
         let preset_note = gtk::Label::new(None);
@@ -275,7 +271,8 @@ impl Ui {
         page.append(&line("Jogo", &[game.upcast_ref()]));
         page.append(&line("Preset", &[preset.upcast_ref(), new_preset.upcast_ref(), delete_preset.upcast_ref()]));
         page.append(&preset_note);
-        page.append(&line("Macros", &[macros_entry.upcast_ref()]));
+        macros.button.set_halign(gtk::Align::Start);
+        page.append(&line("Macros", &[macros.button.upcast_ref()]));
         let tools = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         tools.append(&search);
         tools.append(&add_button);
@@ -311,8 +308,7 @@ impl Ui {
             preset_names: RefCell::new(Vec::new()),
             preset_note,
             new_preset: new_preset.clone(),
-            macros_entry: macros_entry.clone(),
-            macros_editing: Rc::new(Cell::new(false)),
+            macros: macros.clone(),
             new_name: name_entry.clone(),
             new_create: create.clone(),
             search,
@@ -419,10 +415,10 @@ impl Ui {
             }
         });
 
-        // As macros do preset: aplicam com Enter ou ao sair do campo (cada mudança recompila, então não a cada tecla).
-        let apply_macros = {
+        // As definições do preset: cada mudança no popover aplica (os números esperam um instante, pois recompilam).
+        self.macros.connect_changed({
             let weak = weak.clone();
-            move |text: String| {
+            move |text| {
                 if let Some(ui) = weak.upgrade()
                     && !ui.updating.get()
                     && text != ui.home.borrow().snapshot().preset_macros
@@ -430,24 +426,7 @@ impl Ui {
                     ui.act(|h| h.set_preset_macros(&text));
                 }
             }
-        };
-        self.macros_entry.connect_activate({
-            let apply = apply_macros.clone();
-            move |e| apply(e.text().to_string())
         });
-        let focus = gtk::EventControllerFocus::new();
-        focus.connect_enter({
-            let editing = self.macros_editing.clone();
-            move |_| editing.set(true)
-        });
-        focus.connect_leave({
-            let (apply, entry, editing) = (apply_macros, self.macros_entry.clone(), self.macros_editing.clone());
-            move |_| {
-                editing.set(false);
-                apply(entry.text().to_string())
-            }
-        });
-        self.macros_entry.add_controller(focus);
 
         self.delete_preset.connect_clicked({
             let weak = weak.clone();
@@ -567,9 +546,7 @@ impl Ui {
             let has_game = s.game.is_some();
             self.preset.set_sensitive(has_game);
             self.new_preset.set_sensitive(has_game);
-            if !self.macros_editing.get() && self.macros_entry.text() != s.preset_macros {
-                self.macros_entry.set_text(&s.preset_macros);
-            }
+            self.macros.set_text(&s.preset_macros);
             self.delete_preset.set_sensitive(s.active_preset.is_some());
             self.new_preset.set_tooltip_text(Some(if has_game { "Novo preset para este jogo (cópia do atual)" } else { "Escolha um jogo para criar um preset dele" }));
             if *self.preset_names.borrow() != s.presets {
@@ -879,29 +856,18 @@ impl Ui {
                 panel.append(&list);
             }
             // Definições de pré-processador só deste efeito (mudar recompila o efeito).
-            let macros = gtk::Entry::new();
+            let macros = MacroEditor::new("Definições do efeito…", "Definições de pré-processador só deste efeito; valem mais que as do preset. Mudar recompila o efeito.");
             macros.set_text(&g.macros);
-            macros.set_placeholder_text(Some("Definições deste efeito: NOME=VALOR,OUTRO=2   (Enter aplica)"));
-            macros.set_tooltip_text(Some("Definições de pré-processador só deste efeito; valem mais que as do preset. Mudar recompila o efeito."));
-            let apply_effect = {
+            macros.button.set_halign(gtk::Align::Start);
+            macros.connect_changed({
                 let (weak, file, original) = (weak.clone(), file.clone(), g.macros.clone());
-                move |text: String| {
+                move |text| {
                     if text != original && let Some(ui) = weak.upgrade() && !ui.updating.get() {
                         ui.act(|h| h.set_effect_macros(&file, &text));
                     }
                 }
-            };
-            macros.connect_activate({
-                let apply = apply_effect.clone();
-                move |e| apply(e.text().to_string())
             });
-            let focus = gtk::EventControllerFocus::new();
-            focus.connect_leave({
-                let (apply, entry) = (apply_effect, macros.clone());
-                move |_| apply(entry.text().to_string())
-            });
-            macros.add_controller(focus);
-            panel.append(&macros);
+            panel.append(&macros.button);
             if let Some(view) = &controls {
                 panel.append(&view.borrow().root);
                 let reset = gtk::Button::with_label("Restaurar os padrões do efeito");
@@ -956,6 +922,10 @@ impl Ui {
     }
 
     /// O que a tela sabe dos jogos, em texto (para os testes automáticos conferirem de fora).
+    pub fn macros_popup(&self) {
+        self.macros.button.popup();
+    }
+
     pub fn describe_games(&self) -> String {
         let home = self.home.borrow();
         let s = home.snapshot();
@@ -1054,21 +1024,14 @@ impl Ui {
             check(!self.home.borrow().snapshot().presets.iter().any(|p| p == "smoke-novo"), "o preset não foi apagado");
         }
 
-        // 3c. definições de pré-processador do preset, aplicadas pelo campo
-        self.macros_entry.set_text("SMOKE_Q=2");
-        self.macros_entry.emit_activate();
-        check(self.home.borrow().snapshot().preset_macros == "SMOKE_Q=2", &format!("o campo de macros não chegou ao modelo: {:?}", self.home.borrow().snapshot().preset_macros));
-        self.macros_entry.set_text("");
-        self.macros_entry.emit_activate();
-        check(self.home.borrow().snapshot().preset_macros.is_empty(), "o campo de macros vazio não apagou as definições");
-
-        // 3d. o que a pessoa digita no campo de macros não é apagado pela atualização periódica da tela
-        self.macros_editing.set(true);
-        self.macros_entry.set_text("DIGITANDO=1");
+        // 3c. as definições do preset, pelo editor (liga/desliga e texto livre)
+        self.macros.set_text("");
+        self.act(|h| h.set_preset_macros("RESHADE_DEPTH_INPUT_IS_UPSIDE_DOWN=1,SMOKE_Q=2"));
         self.apply();
-        check(self.macros_entry.text() == "DIGITANDO=1", "a atualização da tela apagou o que estava sendo digitado nas macros");
-        self.macros_editing.set(false);
-        self.macros_entry.set_text("");
+        check(self.macros.text() == "RESHADE_DEPTH_INPUT_IS_UPSIDE_DOWN=1,SMOKE_Q=2", &format!("o editor não mostra as definições do modelo: {:?}", self.macros.text()));
+        self.act(|h| h.set_preset_macros(""));
+        self.apply();
+        check(self.macros.text().is_empty(), "o editor não limpou depois de apagar as definições");
 
         // 4. o interruptor de efeitos ligados
         self.enabled.set_active(true);
