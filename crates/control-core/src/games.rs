@@ -168,6 +168,7 @@ mod tests {
         LiveLayer {
             id: format!("layer-{app}"),
             status: LayerStatus {
+                techniques: Vec::new(),
                 exe: String::new(),
                 app: app.into(),
                 swapchains: sizes.iter().map(|&(w, h)| SwapchainStatus { width: w, height: h, format: 44, images: 3, effect: EffectState::Waiting }).collect(),

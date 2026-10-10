@@ -12,7 +12,7 @@ use control_core::analysis::{self, EffectInfo};
 use control_core::{game_plan, presets};
 use fx_bundle::Bundle;
 use fx_bundle::manifest::{Scalar, Value};
-use ipc::LiveLayer;
+use ipc::{LiveLayer, TechniqueState};
 use preset::game::{self, Source};
 use preset::{Preset, TechId};
 use std::collections::HashMap;
@@ -50,6 +50,9 @@ pub struct TechniqueView {
     pub enabled: bool,
     /// Os parâmetros do efeito, na primeira técnica de cada arquivo (as outras do mesmo arquivo não os repetem).
     pub controls: Vec<Control>,
+    /// O que a layer do jogo aberto fez com esta técnica (aplicada ou pulada e por quê); `None` se o jogo não está
+    /// aberto com este preset, ou a técnica está desligada.
+    pub runtime: Option<TechniqueState>,
     /// Por que não dá para mostrar os parâmetros ou rodar (efeito não achado, ainda não compilado...).
     pub problem: Option<String>,
 }
@@ -266,6 +269,11 @@ impl Home {
         let Some(loaded) = &self.loaded else { return };
         let preset = loaded.preset.clone();
         let mut shown_files: Vec<String> = Vec::new();
+        // O que a layer do jogo aberto informou da cadeia dela: casa por nome, na ordem, com as técnicas ligadas.
+        let mut reported: Vec<ipc::TechniqueStatus> = match &self.game {
+            Some(id) => self.snapshot.layers.iter().find(|l| l.status.game_id() == id).map(|l| l.status.techniques.clone()).unwrap_or_default(),
+            None => Vec::new(),
+        };
         for row in presets::rows(&preset) {
             let Some(file) = row.id.file.clone().or_else(|| Some(format!("{}.fx", row.id.name))) else { continue };
             let name = effect_name(&file).to_string();
@@ -291,7 +299,12 @@ impl Home {
                     }
                 }
             }
-            self.snapshot.techniques.push(TechniqueView { id: row.id, label, file, enabled: row.enabled, controls, problem });
+            let runtime = if row.enabled {
+                reported.iter().position(|t| t.name == row.id.name).map(|i| reported.remove(i).state)
+            } else {
+                None
+            };
+            self.snapshot.techniques.push(TechniqueView { id: row.id, label, file, enabled: row.enabled, controls, runtime, problem });
         }
     }
 
@@ -540,6 +553,7 @@ mod tests {
         vec![LiveLayer {
             id: "layer-1-1".into(),
             status: LayerStatus {
+                techniques: Vec::new(),
                 exe: id.into(),
                 app: "App".into(),
                 swapchains: vec![SwapchainStatus { width: 800, height: 600, format: 44, images: 3, effect: EffectState::Idle }],
@@ -629,6 +643,28 @@ mod tests {
         h.remove_technique(&TechId::new("Outra", "Outra.fx"));
         assert_eq!(h.snapshot().techniques.len(), 1);
         assert_eq!(h.snapshot().techniques[0].id.name, "Sepia");
+    }
+
+    #[test]
+    fn what_the_layer_did_with_each_technique_is_shown_for_the_open_game() {
+        let e = env("runtime");
+        fs::write(e.root.join("Presets/preset.ini"), "Techniques=Sepia@Sepia.fx,CAS@CAS.fx,Outra@Outra.fx\nTechniqueSorting=Sepia@Sepia.fx,CAS@CAS.fx,Outra@Outra.fx,Off@Off.fx\n").unwrap();
+        let mut layers = open_game("vkcube");
+        layers[0].status.techniques = vec![
+            ipc::TechniqueStatus { name: "Sepia".into(), state: TechniqueState::Applied },
+            ipc::TechniqueStatus { name: "CAS".into(), state: TechniqueState::Skipped("passe 0: escrita sRGB numa textura".into()) },
+        ];
+        let (h, _) = home(e, layers);
+        let rt: Vec<_> = h.snapshot().techniques.iter().map(|t| (t.id.name.as_str(), t.runtime.clone())).collect();
+        assert_eq!(
+            rt,
+            [
+                ("Sepia", Some(TechniqueState::Applied)),
+                ("CAS", Some(TechniqueState::Skipped("passe 0: escrita sRGB numa textura".into()))),
+                ("Outra", None), // a layer não a conhece (ainda não construiu)
+                ("Off", None),   // desligada
+            ]
+        );
     }
 
     #[test]

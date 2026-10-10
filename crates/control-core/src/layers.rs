@@ -1,6 +1,6 @@
 //! A lista de jogos com a layer ativa, como `lrctl layers` a mostra.
 
-use ipc::{EffectState, LiveLayer};
+use ipc::{EffectState, LiveLayer, TechniqueState};
 
 /// O nome do `VkFormat` mais comum em swapchains; o número, se for outro.
 pub fn format_name(format: i32) -> String {
@@ -72,6 +72,17 @@ pub fn render(layers: &[LiveLayer]) -> String {
     for (app, pid, size, format, effect) in &rows {
         text.push_str(&format!("{app:<w1$}  {pid:<w2$}  {size:<w3$}  {format:<w4$}  {effect}\n"));
     }
+    // O que a layer fez com cada técnica da cadeia (só dos jogos que construíram uma).
+    for l in layers.iter().filter(|l| !l.status.techniques.is_empty()) {
+        let app = if l.status.app.is_empty() { l.id.clone() } else { l.status.app.clone() };
+        text.push_str(&format!("\ncadeia de {app} (pid {}):\n", pid_of(&l.id).unwrap_or("?")));
+        for (n, t) in l.status.techniques.iter().enumerate() {
+            match &t.state {
+                TechniqueState::Applied => text.push_str(&format!("  {}. {}  aplicada\n", n + 1, t.name)),
+                TechniqueState::Skipped(why) => text.push_str(&format!("  {}. {}  pulada: {why}\n", n + 1, t.name)),
+            }
+        }
+    }
     text
 }
 
@@ -80,12 +91,25 @@ mod tests {
     use super::*;
     use ipc::{LayerStatus, SwapchainStatus};
 
+    #[test]
+    fn the_chain_of_a_game_is_listed_below_the_table() {
+        let mut game = live("Haste", vec![sc(1920, 1080, 44, EffectState::Ready)]);
+        game.status.techniques = vec![
+            ipc::TechniqueStatus { name: "Sepia".into(), state: TechniqueState::Applied },
+            ipc::TechniqueStatus { name: "CAS".into(), state: TechniqueState::Skipped("escrita sRGB numa textura".into()) },
+        ];
+        let text = render(&[game]);
+        assert!(text.contains("cadeia de Haste (pid 1):"), "{text}");
+        assert!(text.contains("1. Sepia  aplicada") && text.contains("2. CAS  pulada: escrita sRGB numa textura"), "{text}");
+        assert!(!render(&[live("Outro", vec![sc(10, 10, 44, EffectState::Idle)])]).contains("cadeia de"));
+    }
+
     fn live(app: &str, swapchains: Vec<SwapchainStatus>) -> LiveLayer {
         live_with(app, "layer-1-2", swapchains)
     }
 
     fn live_with(app: &str, id: &str, swapchains: Vec<SwapchainStatus>) -> LiveLayer {
-        LiveLayer { id: id.into(), status: LayerStatus { exe: String::new(), app: app.into(), swapchains } }
+        LiveLayer { id: id.into(), status: LayerStatus { techniques: Vec::new(), exe: String::new(), app: app.into(), swapchains } }
     }
 
     fn sc(w: u32, h: u32, format: i32, effect: EffectState) -> SwapchainStatus {

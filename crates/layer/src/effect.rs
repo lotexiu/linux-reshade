@@ -6,7 +6,7 @@ use crate::log::log;
 use crate::params::ParamState;
 use crate::state::DeviceData;
 use ash::vk::{self, Handle};
-use ipc::{EffectState, SwapchainStatus};
+use ipc::{EffectState, SwapchainStatus, TechniqueState, TechniqueStatus};
 use postfx::effect::{FrameInfo, Target, utc_date};
 use postfx::{Chain, Step};
 use std::sync::LazyLock;
@@ -34,6 +34,8 @@ struct Built {
     signature: Vec<(u64, usize)>,
     /// De qual etapa da escolha vem cada efeito da cadeia (as puladas por falta de suporte não aparecem).
     origin: Vec<usize>,
+    /// As etapas puladas por falta de suporte e o motivo.
+    skipped: Vec<(usize, String)>,
     /// Um por efeito da cadeia, na mesma ordem.
     params: Vec<StepRuntime>,
     /// Um semáforo por imagem do swapchain: o da imagem sinaliza que o efeito terminou nela.
@@ -143,6 +145,7 @@ impl SwapchainFx {
         if let Fx::Ready(built) = &self.fx {
             if built.signature != new_signature {
                 log!("efeito do swapchain {:#x} descartado: o bundle mudou (a cadeia é outra)", self.handle);
+                crate::status::set_techniques(Vec::new());
                 // A GPU precisa estar ociosa para destruir os recursos.
                 unsafe {
                     let _ = data.device.device_wait_idle();
@@ -238,7 +241,8 @@ impl SwapchainFx {
                     },
                 })
                 .collect();
-            let mut built = Built { chain, signature: signature(steps), origin, params, semaphores: Vec::new(), fences: Vec::new() };
+            let skipped = skipped.iter().map(|s| (s.step, s.why.clone())).collect();
+            let mut built = Built { chain, signature: signature(steps), origin, skipped, params, semaphores: Vec::new(), fences: Vec::new() };
             for _ in &self.images {
                 let semaphore = data.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None);
                 // Nasce sinalizada: a primeira espera por ela não bloqueia.
@@ -306,6 +310,19 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
                 Ok(built) => {
                     log!("efeito criado para o swapchain {:#x} ({} imagens)", swapchain.as_raw(), fx.images.len());
                     log!("cadeia de {} etapa(s) criada", built.chain.len());
+                    crate::status::set_techniques(
+                        fx.steps
+                            .iter()
+                            .enumerate()
+                            .map(|(i, step)| TechniqueStatus {
+                                name: step.bundle.manifest.techniques.get(step.technique).map(|t| t.name.clone()).unwrap_or_default(),
+                                state: match built.skipped.iter().find(|(s, _)| *s == i) {
+                                    Some((_, why)) => TechniqueState::Skipped(why.clone()),
+                                    None => TechniqueState::Applied,
+                                },
+                            })
+                            .collect(),
+                    );
                     for (step, ignored) in built.chain.ignored_sources() {
                         log!("etapa {step}: uniform sem fonte no runtime (fica no valor padrão): {ignored}");
                     }

@@ -4,7 +4,7 @@
 //! quando a última instância Vulkan é destruída. Só se escreve quando alguma coisa mudou.
 
 use crate::log::log;
-use ipc::{LayerStatus, StatusWriter, SwapchainStatus};
+use ipc::{LayerStatus, StatusWriter, SwapchainStatus, TechniqueStatus};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -12,12 +12,14 @@ struct State {
     app: String,
     /// `(handle do swapchain, estado)`, na ordem de criação.
     swapchains: Vec<(u64, SwapchainStatus)>,
+    /// A cadeia que a layer construiu (do swapchain mais recente que construiu uma).
+    techniques: Vec<TechniqueStatus>,
     writer: Option<StatusWriter>,
     /// Já tentamos criar o arquivo e falhou: não insiste (e já logou).
     writer_failed: bool,
 }
 
-static STATE: Mutex<State> = Mutex::new(State { app: String::new(), swapchains: Vec::new(), writer: None, writer_failed: false });
+static STATE: Mutex<State> = Mutex::new(State { app: String::new(), swapchains: Vec::new(), techniques: Vec::new(), writer: None, writer_failed: false });
 static INSTANCES: AtomicUsize = AtomicUsize::new(0);
 
 /// Registra uma instância Vulkan criada. `app` é o nome que o jogo deu (ou vazio).
@@ -74,10 +76,19 @@ fn publish(state: &mut State) {
         }
     }
     if let Some(writer) = &state.writer {
-        let status = LayerStatus { exe: exe_name(), app: state.app.clone(), swapchains: state.swapchains.iter().map(|(_, s)| s.clone()).collect() };
+        let status = LayerStatus { techniques: state.techniques.clone(), exe: exe_name(), app: state.app.clone(), swapchains: state.swapchains.iter().map(|(_, s)| s.clone()).collect() };
         if let Err(e) = writer.publish(&status) {
             log!("não consegui publicar o status: {e}");
         }
+    }
+}
+
+/// Conta ao app de controle o que aconteceu com cada técnica da cadeia (vazio: nenhuma cadeia construída).
+pub fn set_techniques(techniques: Vec<TechniqueStatus>) {
+    let mut state = STATE.lock().unwrap();
+    if state.techniques != techniques {
+        state.techniques = techniques;
+        publish(&mut state);
     }
 }
 

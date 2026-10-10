@@ -104,6 +104,10 @@ swapchain=1920x1011 44 3 waiting
 swapchain=800x600 50 3 unavailable swapchain em formato sRGB
 ```
 
+Linhas `exe=` (nome do executável sem extensão) e, quando a layer construiu uma cadeia, uma `technique=` por técnica,
+em ordem: `technique=applied<TAB>Nome` ou `technique=skipped<TAB>Nome<TAB>motivo` (pulada porque o runtime ainda não
+suporta algo que ela pede). É o que `lrctl layers` lista em "cadeia de ..." e o painel mostra em cada técnica.
+
 Por swapchain: `largura x altura`, `VkFormat`, nº de imagens e o estado do efeito: `idle` (nada escolhido),
 `waiting` (escolhido, mas ainda sem bundle para esta resolução), `ready`, `unavailable <motivo>` (o
 swapchain não aceita o efeito) ou `failed <motivo>`. É isso que o `lrctl layers` mostra e o que o vigia

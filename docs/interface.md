@@ -24,6 +24,22 @@ a roda do mouse sobre um controle rola a lista (não mexe no controle).
    funcione.
 5. A janela trava enquanto compila ao abrir um preset grande (compilar em segundo plano).
 
+## Direção de design (referências que o dono mandou, 2026-10-10)
+Referências: a própria interface do ReShade (abas Home, Settings, Statistics, Log, About; na Home: seletor de preset
+com + e −, busca, "Active to top", "Collapse all", lista de técnicas e, embaixo, os ajustes do efeito com "Reset all to
+default" e as definições globais de pré-processador; botão Reload; Performance Mode; na aba Settings: teclas,
+caminhos de busca, capturas de tela, aparência), o **lsfg-vk** (lista de perfis à esquerda com Criar/Renomear/Apagar
+embaixo, ajustes do perfil à direita) e o **Grimoire** (barra lateral de navegação, busca com filtros e visualização).
+Ideias para a nossa janela, quando for a hora de remodelar:
+- **Barra lateral à esquerda com os jogos** (como os perfis do lsfg-vk; ● nos abertos, "Preset global" no topo) e, embaixo
+  dela, Criar/Renomear/Apagar preset. Isso também resolve o layout em paisagem.
+- **Abas à direita**: Efeitos (o que existe hoje) | Configurações | Log | Sobre, nessa ordem de prioridade.
+- Da Home do ReShade: "ativos primeiro", "recolher todos", definições de pré-processador globais e por efeito
+  (macros, F6), botão de recarregar, "modo desempenho". Da aba Settings: atalhos, caminhos de shaders e texturas,
+  capturas de tela.
+- Filtros da lista de adicionar mais compactos (hoje ocupam muito): um botão "Filtros" com as opções.
+- Nada disso precede o que faz o programa funcionar: depth buffer vem antes da remodelação.
+
 ## Notas de projeto
 - Há duas "telas" lógicas, diferente do ReShade: a de **adicionar efeitos** (o que existe nas pastas de shaders) e a
   **dos efeitos do preset**, onde se liga e desliga sem remover. Por isso remover é "esquecer" (apaga os valores).

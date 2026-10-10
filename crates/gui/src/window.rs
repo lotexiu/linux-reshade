@@ -119,6 +119,13 @@ fn caption(text: &str) -> gtk::Label {
 
 impl Ui {
     pub fn new(app: &gtk::Application, home: Home) -> Rc<Ui> {
+        // O vermelho dos efeitos incompatíveis (a classe `error` do tema nem sempre é vermelha).
+        let css = gtk::CssProvider::new();
+        css.load_from_data(".lr-bad { color: #e5484d; } .lr-ok { color: #3dd68c; }");
+        if let Some(display) = gtk::gdk::Display::default() {
+            #[allow(deprecated)]
+            gtk::style_context_add_provider_for_display(&display, &css, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
+        }
         let home = Rc::new(RefCell::new(home));
         let hook: Hook = Rc::new(RefCell::new(None));
         let redraw = {
@@ -586,18 +593,18 @@ impl Ui {
                                 None => tags.join(" · "),
                             });
                             if info.compatible() {
-                                row.title.remove_css_class("error");
-                                row.detail.remove_css_class("error");
+                                row.title.remove_css_class("lr-bad");
+                                row.detail.remove_css_class("lr-bad");
                                 row.detail.add_css_class("dim-label");
                             } else {
-                                row.title.add_css_class("error");
-                                row.detail.add_css_class("error");
+                                row.title.add_css_class("lr-bad");
+                                row.detail.add_css_class("lr-bad");
                                 row.detail.remove_css_class("dim-label");
                             }
                         }
                         None => {
                             row.detail.set_text("");
-                            row.title.remove_css_class("error");
+                            row.title.remove_css_class("lr-bad");
                         }
                     }
                 }
@@ -625,7 +632,7 @@ impl Ui {
     }
 
     fn signature_of(techniques: &[TechniqueView]) -> String {
-        techniques.iter().map(|t| format!("{}|{}|{}|{:?}\n", t.id, t.label, t.enabled, t.problem)).collect()
+        techniques.iter().map(|t| format!("{}|{}|{}|{:?}|{:?}\n", t.id, t.label, t.enabled, t.problem, t.runtime)).collect()
     }
 
     /// A lista de técnicas: refeita quando a estrutura muda; senão só atualiza os valores dos controles.
@@ -690,6 +697,22 @@ impl Ui {
         names.set_hexpand(true);
         names.append(&title);
         names.append(&subtitle);
+        match &t.runtime {
+            Some(panel_state) => {
+                let (text, class) = match panel_state {
+                    ipc::TechniqueState::Applied => ("● aplicada no jogo".to_string(), "lr-ok"),
+                    ipc::TechniqueState::Skipped(why) => (format!("pulada no jogo: {why}"), "lr-bad"),
+                };
+                let l = gtk::Label::new(Some(&text));
+                l.set_halign(gtk::Align::Start);
+                l.set_xalign(0.0);
+                l.set_wrap(true);
+                l.add_css_class(class);
+                l.add_css_class("caption");
+                names.append(&l);
+            }
+            None => {}
+        }
         if let Some(problem) = &t.problem {
             let p = gtk::Label::new(Some(problem));
             p.set_halign(gtk::Align::Start);

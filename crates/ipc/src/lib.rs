@@ -17,7 +17,7 @@ mod status;
 pub use blob::{MAX_PARAM_BYTES, MAX_SELECTION_BYTES, PublishError};
 pub use channel::{ChannelReader, ChannelSelection, ChannelWriter, NO_EFFECT, PlanRead, channel_name, prune as prune_channels, prune_in as prune_channels_in};
 pub use plan::{MAX_PLAN_BYTES, Plan, PlanError, PlanStep};
-pub use status::{EffectState, LayerStatus, LiveLayer, StatusWriter, SwapchainStatus, live_layers};
+pub use status::{EffectState, LayerStatus, LiveLayer, StatusWriter, SwapchainStatus, TechniqueState, TechniqueStatus, live_layers};
 
 use blob::{Params, Selection, Snapshot};
 use rustix::mm::{MapFlags, ProtFlags, mmap, munmap};

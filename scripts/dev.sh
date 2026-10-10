@@ -370,6 +370,7 @@ cmd_smoke_preset() {
   check "a layer recebeu o plano de 2 etapas" 'waitfor "grep -q \"plano do jogo: 2 etapa\" \"$LOG_FILE\""'
   check "a cadeia de 2 etapas foi construída" 'waitfor "[ \$(chains 2) -ge 1 ]"'
   check "o jogo aparece como pronto" '"$lrctl" layers | grep -q pronto'
+  check "a layer contou ao app de controle que as 2 técnicas foram aplicadas" 'waitfor "[ \$(\"$lrctl\" layers | grep -c aplicada) = 2 ]"'
   check "os dois efeitos foram compilados" '[ -f "$tmp/cache/Sepia-400x300/manifest.json" ] && [ -f "$tmp/cache/Colourfulness-400x300/manifest.json" ]'
 
   # editar o preset: uma técnica só

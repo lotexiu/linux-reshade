@@ -222,6 +222,7 @@ mod tests {
         vec![LiveLayer {
             id: "layer-1".into(),
             status: LayerStatus {
+                techniques: Vec::new(),
                 exe: String::new(),
                 app: "vkcube".into(),
                 swapchains: vec![SwapchainStatus { width: w, height: h, format: 44, images: 3, effect: EffectState::Idle }],
