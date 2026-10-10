@@ -116,5 +116,12 @@ pub unsafe extern "system" fn get_device_proc_addr(
         return Some(f);
     }
     let data = DEVICES.get(unsafe { dispatch_key(device.as_raw()) })?;
-    unsafe { (data.next_gdpa)(device, name) }
+    let next = unsafe { (data.next_gdpa)(device, name) };
+    // Os ganchos de profundidade só valem para o que o próximo elo também oferece (extensão não habilitada = nulo).
+    if next.is_some()
+        && let Some(hook) = crate::depth::intercept_name(name_of(name))
+    {
+        return Some(hook);
+    }
+    next
 }

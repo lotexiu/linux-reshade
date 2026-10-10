@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const MAGIC: u32 = 0x4C52_5354; // "LRST"
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 /// Etiqueta do bloco de texto (só há um por arquivo).
 const TAG: u64 = 1;
 /// Tamanho máximo do texto de status.
@@ -28,6 +28,8 @@ pub const MAX_STATUS_BYTES: usize = 8192;
 const MAX_SWAPCHAINS: usize = 8;
 /// Quantas técnicas da cadeia o status carrega.
 const MAX_TECHNIQUES: usize = 32;
+/// Quantas candidatas de profundidade o status carrega.
+const MAX_DEPTH: usize = 8;
 /// Um arquivo mais novo que isto não é descartado mesmo sem `flock`: o dono pode ainda estar o criando.
 const YOUNG: Duration = Duration::from_secs(2);
 
@@ -56,6 +58,29 @@ pub struct SwapchainStatus {
     pub effect: EffectState,
 }
 
+/// Uma candidata a "profundidade da cena" que a layer observou no jogo.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DepthStatus {
+    pub width: u32,
+    pub height: u32,
+    /// `VkFormat` como número.
+    pub format: i32,
+    pub samples: u32,
+    pub draws: u32,
+    pub vertices: u64,
+    pub passes: u32,
+    /// O que o último passe faz com a profundidade ao começar e ao terminar (`load`, `clear`, `dont_care`, `none`).
+    pub load: String,
+    pub store: String,
+    /// Profundidade invertida (reversed-Z)? `None` se não deu para saber.
+    pub reversed: Option<bool>,
+    /// Posição do último passe dentro do quadro.
+    pub last_pass: u32,
+    pub chosen: bool,
+    /// Por que não serve (MSAA, proporção...); `None` se serve.
+    pub unusable: Option<String>,
+}
+
 /// O que aconteceu com uma técnica da cadeia no jogo.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TechniqueState {
@@ -73,6 +98,8 @@ pub struct TechniqueStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct LayerStatus {
+    /// As candidatas a profundidade da cena do último quadro (só com a observação ligada).
+    pub depth: Vec<DepthStatus>,
     /// A cadeia que a layer construiu, em ordem (vazia: nada construído). A do swapchain mais recente.
     pub techniques: Vec<TechniqueStatus>,
     /// Nome do executável sem a extensão (`RocketLeague` para `RocketLeague.exe`); vazio se a layer não soube.
@@ -98,6 +125,29 @@ impl LayerStatus {
             self.swapchains.iter().rev().take(MAX_SWAPCHAINS).collect::<Vec<_>>().into_iter().rev().collect();
         loop {
             let mut text = format!("app={}\nexe={}\n", one_line(&self.app, 120), one_line(&self.exe, 120));
+            for d in self.depth.iter().take(MAX_DEPTH) {
+                let reversed = match d.reversed {
+                    Some(true) => "yes",
+                    Some(false) => "no",
+                    None => "?",
+                };
+                text.push_str(&format!(
+                    "depth={}\t{}x{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+                    if d.chosen { "*" } else { "-" },
+                    d.width,
+                    d.height,
+                    d.format,
+                    d.samples,
+                    d.draws,
+                    d.vertices,
+                    d.passes,
+                    one_line(&d.load, 12),
+                    one_line(&d.store, 12),
+                    reversed,
+                    d.last_pass,
+                    one_line(d.unusable.as_deref().unwrap_or(""), 60),
+                ));
+            }
             for t in self.techniques.iter().take(MAX_TECHNIQUES) {
                 match &t.state {
                     TechniqueState::Applied => text.push_str(&format!("technique=applied\t{}\n", one_line(&t.name, 60))),
@@ -130,6 +180,11 @@ impl LayerStatus {
             match key {
                 "app" => status.app = value.to_string(),
                 "exe" => status.exe = value.to_string(),
+                "depth" => {
+                    if let Some(d) = parse_depth(value) {
+                        status.depth.push(d);
+                    }
+                }
                 "technique" => {
                     let mut parts = value.splitn(3, '\t');
                     let state = parts.next();
@@ -151,6 +206,33 @@ impl LayerStatus {
         }
         status
     }
+}
+
+fn parse_depth(value: &str) -> Option<DepthStatus> {
+    let f: Vec<&str> = value.split('\t').collect();
+    if f.len() < 12 {
+        return None;
+    }
+    let (width, height) = f[1].split_once('x')?;
+    Some(DepthStatus {
+        chosen: f[0] == "*",
+        width: width.parse().ok()?,
+        height: height.parse().ok()?,
+        format: f[2].parse().ok()?,
+        samples: f[3].parse().ok()?,
+        draws: f[4].parse().ok()?,
+        vertices: f[5].parse().ok()?,
+        passes: f[6].parse().ok()?,
+        load: f[7].to_string(),
+        store: f[8].to_string(),
+        reversed: match f[9] {
+            "yes" => Some(true),
+            "no" => Some(false),
+            _ => None,
+        },
+        last_pass: f[10].parse().ok()?,
+        unusable: Some(f[11].to_string()).filter(|u| !u.is_empty()),
+    })
 }
 
 fn parse_swapchain(value: &str) -> Option<SwapchainStatus> {
@@ -310,6 +392,7 @@ mod tests {
     #[test]
     fn text_roundtrips_every_state() {
         let status = LayerStatus {
+            depth: Vec::new(),
             techniques: Vec::new(),
             exe: String::new(),
             app: "Idols of Ash".into(),
@@ -327,6 +410,7 @@ mod tests {
     #[test]
     fn the_chain_state_roundtrips_and_tolerates_odd_text() {
         let status = LayerStatus {
+            depth: Vec::new(),
             techniques: vec![
                 TechniqueStatus { name: "Sepia".into(), state: TechniqueState::Applied },
                 TechniqueStatus { name: "CAS".into(), state: TechniqueState::Skipped("passe 0: escrita sRGB\tcom tab\ne linha".into()) },
@@ -342,6 +426,19 @@ mod tests {
     }
 
     #[test]
+    fn depth_candidates_roundtrip() {
+        let status = LayerStatus {
+            depth: vec![
+                DepthStatus { width: 1920, height: 1080, format: 126, samples: 1, draws: 300, vertices: 500_000, passes: 2, load: "clear".into(), store: "store".into(), reversed: Some(true), last_pass: 3, chosen: true, unusable: None },
+                DepthStatus { width: 2048, height: 2048, format: 126, samples: 4, draws: 10, vertices: 900, passes: 1, load: "load".into(), store: "dont_care".into(), reversed: None, last_pass: 0, chosen: false, unusable: Some("MSAA (precisa de resolve)".into()) },
+            ],
+            ..LayerStatus::default()
+        };
+        assert_eq!(LayerStatus::parse(&status.encode()).depth, status.depth);
+        assert!(LayerStatus::parse("depth=*\t1x1\n").depth.is_empty(), "linha curta é ignorada");
+    }
+
+    #[test]
     fn parsing_ignores_what_it_does_not_understand() {
         let text = "app=Jogo\ncampo-novo=1\nlinha sem igual\nswapchain=lixo\nswapchain=10x20 44 3 ready\nswapchain=1x2 44 3 estado-novo\n";
         let s = LayerStatus::parse(text);
@@ -352,7 +449,7 @@ mod tests {
     #[test]
     fn encoding_keeps_the_most_recent_swapchains_within_the_size_limit() {
         let many: Vec<_> = (0..40).map(|i| swapchain(1000 + i, 1000, EffectState::Failed("x".repeat(500)))).collect();
-        let text = LayerStatus { techniques: Vec::new(), exe: String::new(), app: "A".repeat(500), swapchains: many }.encode();
+        let text = LayerStatus { depth: Vec::new(), techniques: Vec::new(), exe: String::new(), app: "A".repeat(500), swapchains: many }.encode();
         assert!(text.len() <= MAX_STATUS_BYTES, "{} bytes", text.len());
         let back = LayerStatus::parse(&text);
         assert!(back.app.len() <= 120, "o nome do jogo é cortado");
@@ -363,6 +460,7 @@ mod tests {
     #[test]
     fn control_characters_cannot_break_the_format() {
         let s = LayerStatus {
+            depth: Vec::new(),
             techniques: Vec::new(),
             exe: String::new(),
             app: "Jogo\nswapchain=1x1 44 3 ready".into(),
@@ -379,13 +477,13 @@ mod tests {
         let writer = StatusWriter::create_in(&d).unwrap();
         assert!(live_layers_in(&d, Duration::ZERO).unwrap().is_empty(), "sem nada publicado ainda");
 
-        let status = LayerStatus { techniques: Vec::new(), exe: String::new(), app: "RocketLeague.exe".into(), swapchains: vec![swapchain(1920, 1080, EffectState::Ready)] };
+        let status = LayerStatus { depth: Vec::new(), techniques: Vec::new(), exe: String::new(), app: "RocketLeague.exe".into(), swapchains: vec![swapchain(1920, 1080, EffectState::Ready)] };
         writer.publish(&status).unwrap();
         let live = live_layers_in(&d, Duration::ZERO).unwrap();
         assert_eq!(live.len(), 1);
         assert_eq!(live[0].status, status);
 
-        let newer = LayerStatus { techniques: Vec::new(), exe: String::new(), app: "RocketLeague.exe".into(), swapchains: vec![swapchain(1914, 1048, EffectState::Waiting)] };
+        let newer = LayerStatus { depth: Vec::new(), techniques: Vec::new(), exe: String::new(), app: "RocketLeague.exe".into(), swapchains: vec![swapchain(1914, 1048, EffectState::Waiting)] };
         writer.publish(&newer).unwrap();
         assert_eq!(live_layers_in(&d, Duration::ZERO).unwrap()[0].status, newer, "a publicação nova substitui a antiga");
 
@@ -399,8 +497,8 @@ mod tests {
         let d = dir("two");
         let a = StatusWriter::create_in(&d).unwrap();
         let b = StatusWriter::create_in(&d).unwrap();
-        a.publish(&LayerStatus { techniques: Vec::new(), exe: String::new(), app: "A".into(), swapchains: vec![] }).unwrap();
-        b.publish(&LayerStatus { techniques: Vec::new(), exe: String::new(), app: "B".into(), swapchains: vec![] }).unwrap();
+        a.publish(&LayerStatus { depth: Vec::new(), techniques: Vec::new(), exe: String::new(), app: "A".into(), swapchains: vec![] }).unwrap();
+        b.publish(&LayerStatus { depth: Vec::new(), techniques: Vec::new(), exe: String::new(), app: "B".into(), swapchains: vec![] }).unwrap();
         let mut apps: Vec<_> = live_layers_in(&d, Duration::ZERO).unwrap().into_iter().map(|l| l.status.app).collect();
         apps.sort();
         assert_eq!(apps, ["A", "B"]);
@@ -410,7 +508,7 @@ mod tests {
     fn a_dead_layers_file_is_pruned_by_the_reader() {
         let d = dir("dead");
         let writer = StatusWriter::create_in(&d).unwrap();
-        writer.publish(&LayerStatus { techniques: Vec::new(), exe: String::new(), app: "Morto".into(), swapchains: vec![] }).unwrap();
+        writer.publish(&LayerStatus { depth: Vec::new(), techniques: Vec::new(), exe: String::new(), app: "Morto".into(), swapchains: vec![] }).unwrap();
         writer.abandon(); // solta o flock sem apagar: é o que acontece quando o processo morre
         assert_eq!(fs::read_dir(&d).unwrap().count(), 1, "o arquivo ficou para trás");
 

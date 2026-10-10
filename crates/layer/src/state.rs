@@ -35,6 +35,8 @@ pub struct DeviceData {
     pub queues: Mutex<HashMap<u64, u32>>,
     /// Estado de efeito de cada swapchain (chave: handle bruto).
     pub swapchains: Mutex<HashMap<u64, SwapchainFx>>,
+    /// Observação da profundidade do jogo (ligada só quando pedida).
+    pub depth: crate::depth::Depth,
 }
 
 // SAFETY: os handles do Vulkan são só inteiros/ponteiros opacos e as tabelas de funções são

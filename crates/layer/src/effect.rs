@@ -385,3 +385,8 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
         }
     }
 }
+
+/// O tamanho do maior swapchain do dispositivo (a "tela" a que a profundidade deve se parecer); 0x0 se não há.
+pub fn largest_extent(data: &DeviceData) -> (u32, u32) {
+    data.swapchains.lock().unwrap().values().map(|fx| (fx.extent.width, fx.extent.height)).max_by_key(|(w, h)| u64::from(*w) * u64::from(*h)).unwrap_or((0, 0))
+}

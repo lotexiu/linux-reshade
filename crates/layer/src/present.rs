@@ -46,6 +46,7 @@ pub unsafe extern "system" fn queue_present(
             p_present_info
         };
 
+        crate::depth::end_frame(&data, effect::largest_extent(&data));
         let result = (data.swapchain.queue_present_khr)(queue, p_info);
         if result != vk::Result::SUCCESS && data.odd_presents.fetch_add(1, Ordering::Relaxed) < ODD_PRESENT_LOG_MAX {
             log!("vkQueuePresentKHR #{n} devolveu {}", result.as_raw());

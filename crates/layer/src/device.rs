@@ -59,6 +59,7 @@ pub unsafe extern "system" fn create_device(
                 last_effects: AtomicBool::new(false),
                 queues: Mutex::new(HashMap::new()),
                 swapchains: Mutex::new(HashMap::new()),
+                depth: crate::depth::Depth::new(next_gdpa, handle),
             },
         );
         log!("vkCreateDevice ok");

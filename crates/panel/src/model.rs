@@ -222,6 +222,7 @@ mod tests {
         vec![LiveLayer {
             id: "layer-1".into(),
             status: LayerStatus {
+                depth: Vec::new(),
                 techniques: Vec::new(),
                 exe: String::new(),
                 app: "vkcube".into(),

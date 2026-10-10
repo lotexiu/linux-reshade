@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Utilitário de desenvolvimento. Idempotente; serve para trocar de máquina sem esforço.
-# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|smoke-preset|daemon|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-golden|placement|logs> [args]
+# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|smoke-preset|smoke-depth|daemon|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-golden|placement|logs> [args]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -400,6 +400,30 @@ cmd_daemon() {
   exec "$ROOT/target/release/lrctl" daemon
 }
 
+# Teste da observação de profundidade (D1): um vkcube com a layer e a observação ligada; `lrctl layers` precisa listar a
+# imagem de profundidade do cubo como candidata escolhida, com desenhos, e a validation layer não pode reclamar de nada.
+cmd_smoke_depth() {
+  say "smoke (profundidade): abre um vkcube (400x300) por ~15 s; evite mexer em janelas até terminar"
+  cmd_install
+  cmd_build -p linux-reshade-control
+  local lrctl="$ROOT/target/release/lrctl" out; out="$(mktemp -d)"
+  : >"$LOG_FILE"
+  env -u LINUX_RESHADE_BUNDLE "$ENABLE_VAR=1" LINUX_RESHADE_DEPTH_OBSERVE=1 LINUX_RESHADE_LOG="$LOG_FILE" VK_LOADER_LAYERS_ENABLE='*validation*' \
+    timeout 40 vkcube --wsi wayland --width 400 --height 300 --c 700 >"$out/vkcube.txt" 2>&1 &
+  SMOKE_PIDS=($!)
+  trap smoke_auto_cleanup EXIT
+  local ok=1
+  check() { if eval "$2"; then printf '  ok     %s\n' "$1"; else printf '  FALHOU %s\n' "$1"; ok=0; fi; }
+  waitfor() { for _ in $(seq 1 150); do eval "$1" && return 0; sleep 0.1; done; return 1; }
+  check "a layer listou uma candidata de profundidade escolhida" 'waitfor "\"$lrctl\" layers | grep -q \"^  \\* 400x300\""'
+  check "a candidata tem desenhos e vértices" '"$lrctl" layers | grep "^  \* 400x300" | grep -qE "[1-9][0-9]* desenhos, [1-9][0-9]* vértices"'
+  check "o passe do jogo limpa a profundidade ao começar" '"$lrctl" layers | grep "^  \* 400x300" | grep -q "clear ->"'
+  check "o log da layer registrou a escolha" 'grep -q "profundidade escolhida: 400x300" "$LOG_FILE"'
+  wait "${SMOKE_PIDS[0]}" 2>/dev/null || true
+  check "a validation layer não reclamou de nada" '! grep -q "VUID" "$out/vkcube.txt"'
+  [ "$ok" = 1 ] && say "smoke (profundidade): passou" || { warn "smoke (profundidade): falhou ($out)"; "$lrctl" layers; exit 1; }
+}
+
 # Abre a interface gráfica (compila se preciso). Se o daemon não está rodando, sobe um em segundo plano: sem ele o
 # preset não é aplicado nos jogos (o painel só edita os arquivos).
 cmd_panel() {
@@ -551,6 +575,7 @@ case "${1:-}" in
   smoke-auto) cmd_smoke_auto ;;
   smoke-layer) cmd_smoke_layer ;;
   smoke-preset) cmd_smoke_preset ;;
+  smoke-depth) cmd_smoke_depth ;;
   daemon)    cmd_daemon ;;
   panel)     shift; cmd_panel "$@" ;;
   panel-smoke) cmd_panel_smoke ;;
@@ -562,5 +587,5 @@ case "${1:-}" in
   fx-golden) cmd_fx_golden ;;
   placement) shift; cmd_placement "$@" ;;
   logs)      shift; cmd_logs "$@" ;;
-  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|smoke-preset|daemon|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-golden|placement|logs>" >&2; exit 2 ;;
+  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|smoke-preset|smoke-depth|daemon|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-golden|placement|logs>" >&2; exit 2 ;;
 esac

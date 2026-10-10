@@ -648,6 +648,7 @@ mod tests {
         vec![LiveLayer {
             id: "layer-1-1".into(),
             status: LayerStatus {
+                depth: Vec::new(),
                 techniques: Vec::new(),
                 exe: id.into(),
                 app: "App".into(),

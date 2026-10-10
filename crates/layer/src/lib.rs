@@ -7,6 +7,7 @@
 
 mod bundle;
 mod control;
+mod depth;
 mod device;
 mod effect;
 mod instance;

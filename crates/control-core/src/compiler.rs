@@ -689,7 +689,7 @@ mod tests {
         let f = fake("schema", OK_TOOL);
         let template = f.compiler.template("Sepia");
         let sc = |w, h, e| SwapchainStatus { width: w, height: h, format: 44, images: 3, effect: e };
-        let game = |sw: Vec<SwapchainStatus>| LiveLayer { id: "x".into(), status: LayerStatus { techniques: Vec::new(), exe: String::new(), app: "A".into(), swapchains: sw } };
+        let game = |sw: Vec<SwapchainStatus>| LiveLayer { id: "x".into(), status: LayerStatus { depth: Vec::new(), techniques: Vec::new(), exe: String::new(), app: "A".into(), swapchains: sw } };
 
         // Sem jogo aberto: o tamanho padrão.
         assert_eq!(f.compiler.schema_bundle(&template, &[]).unwrap(), f.compiler.bundle_dir("Sepia", 1920, 1080));

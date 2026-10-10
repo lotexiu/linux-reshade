@@ -83,7 +83,44 @@ pub fn render(layers: &[LiveLayer]) -> String {
             }
         }
     }
+    // As candidatas a profundidade da cena (só com a observação ligada na layer).
+    for l in layers.iter().filter(|l| !l.status.depth.is_empty()) {
+        let app = if l.status.app.is_empty() { l.id.clone() } else { l.status.app.clone() };
+        text.push_str(&format!("\nprofundidade de {app} (pid {}):\n", pid_of(&l.id).unwrap_or("?")));
+        for d in &l.status.depth {
+            let reversed = match d.reversed {
+                Some(true) => "invertida",
+                Some(false) => "normal",
+                None => "?",
+            };
+            let why = d.unusable.as_deref().map(|u| format!("  [não serve: {u}]")).unwrap_or_default();
+            text.push_str(&format!(
+                "  {} {}x{} {}  {} desenhos, {} vértices, {} passe(s)  {} -> {}  {reversed}{why}\n",
+                if d.chosen { "*" } else { " " },
+                d.width,
+                d.height,
+                depth_format_name(d.format),
+                d.draws,
+                d.vertices,
+                d.passes,
+                d.load,
+                d.store,
+            ));
+        }
+    }
     text
+}
+
+fn depth_format_name(format: i32) -> String {
+    match format {
+        124 => "D16_UNORM".into(),
+        125 => "X8_D24_UNORM".into(),
+        126 => "D32_SFLOAT".into(),
+        128 => "D16_UNORM_S8".into(),
+        129 => "D24_UNORM_S8".into(),
+        130 => "D32_SFLOAT_S8".into(),
+        other => format!("formato {other}"),
+    }
 }
 
 #[cfg(test)]
@@ -109,7 +146,7 @@ mod tests {
     }
 
     fn live_with(app: &str, id: &str, swapchains: Vec<SwapchainStatus>) -> LiveLayer {
-        LiveLayer { id: id.into(), status: LayerStatus { techniques: Vec::new(), exe: String::new(), app: app.into(), swapchains } }
+        LiveLayer { id: id.into(), status: LayerStatus { depth: Vec::new(), techniques: Vec::new(), exe: String::new(), app: app.into(), swapchains } }
     }
 
     fn sc(w: u32, h: u32, format: i32, effect: EffectState) -> SwapchainStatus {

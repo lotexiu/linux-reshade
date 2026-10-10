@@ -14,12 +14,13 @@ struct State {
     swapchains: Vec<(u64, SwapchainStatus)>,
     /// A cadeia que a layer construiu (do swapchain mais recente que construiu uma).
     techniques: Vec<TechniqueStatus>,
+    depth: Vec<ipc::DepthStatus>,
     writer: Option<StatusWriter>,
     /// Já tentamos criar o arquivo e falhou: não insiste (e já logou).
     writer_failed: bool,
 }
 
-static STATE: Mutex<State> = Mutex::new(State { app: String::new(), swapchains: Vec::new(), techniques: Vec::new(), writer: None, writer_failed: false });
+static STATE: Mutex<State> = Mutex::new(State { app: String::new(), swapchains: Vec::new(), techniques: Vec::new(), depth: Vec::new(), writer: None, writer_failed: false });
 static INSTANCES: AtomicUsize = AtomicUsize::new(0);
 
 /// Registra uma instância Vulkan criada. `app` é o nome que o jogo deu (ou vazio).
@@ -76,7 +77,7 @@ fn publish(state: &mut State) {
         }
     }
     if let Some(writer) = &state.writer {
-        let status = LayerStatus { techniques: state.techniques.clone(), exe: exe_name(), app: state.app.clone(), swapchains: state.swapchains.iter().map(|(_, s)| s.clone()).collect() };
+        let status = LayerStatus { depth: state.depth.clone(), techniques: state.techniques.clone(), exe: exe_name(), app: state.app.clone(), swapchains: state.swapchains.iter().map(|(_, s)| s.clone()).collect() };
         if let Err(e) = writer.publish(&status) {
             log!("não consegui publicar o status: {e}");
         }
@@ -88,6 +89,15 @@ pub fn set_techniques(techniques: Vec<TechniqueStatus>) {
     let mut state = STATE.lock().unwrap();
     if state.techniques != techniques {
         state.techniques = techniques;
+        publish(&mut state);
+    }
+}
+
+/// Conta ao app de controle as candidatas a profundidade da cena do último quadro.
+pub fn set_depth(depth: Vec<ipc::DepthStatus>) {
+    let mut state = STATE.lock().unwrap();
+    if state.depth != depth {
+        state.depth = depth;
         publish(&mut state);
     }
 }
