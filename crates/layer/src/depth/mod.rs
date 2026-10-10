@@ -10,6 +10,7 @@
 
 mod hooks;
 pub mod observe;
+mod screen;
 mod snapshot;
 
 pub use hooks::{destroy, end_frame, intercept_name};
@@ -49,6 +50,9 @@ pub(crate) struct CmdState {
     pub compare: Compare,
     /// Mudanças de layout de imagens de profundidade, na ordem de gravação (passes e barreiras).
     pub layouts: Vec<(u64, i32)>,
+    /// O passe em gravação que desenha na imagem do swapchain, e os que já terminaram.
+    pub screen_current: Option<screen::ScreenPass>,
+    pub screen_passes: Vec<screen::ScreenPass>,
 }
 
 /// Funções do próximo elo que não estão na tabela 1.0 do `ash` (podem não existir no dispositivo).
@@ -116,6 +120,7 @@ pub struct Depth {
     pub(crate) framebuffers: Mutex<HashMap<u64, Vec<u64>>>,
     pub(crate) render_passes: Mutex<HashMap<u64, RenderPassInfo>>,
     pub(crate) pipelines: Mutex<HashMap<u64, Compare>>,
+    pub(crate) screen: screen::Screen,
     pub(crate) cmds: Mutex<HashMap<u64, CmdState>>,
     pub(crate) frame: Mutex<FrameStats>,
     /// A última lista publicada (para só avisar quando muda).
@@ -184,6 +189,7 @@ impl Depth {
             framebuffers: Mutex::new(HashMap::new()),
             render_passes: Mutex::new(HashMap::new()),
             pipelines: Mutex::new(HashMap::new()),
+            screen: screen::Screen::default(),
             cmds: Mutex::new(HashMap::new()),
             frame: Mutex::new(FrameStats::default()),
             last_published: Mutex::new(Vec::new()),

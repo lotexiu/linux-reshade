@@ -135,6 +135,9 @@ unsafe extern "system" fn create_image_view(
             if data.depth.images.lock().unwrap().contains_key(&image) {
                 data.depth.views.lock().unwrap().insert((*p_view).as_raw(), image);
             }
+            if data.depth.is_on() && crate::effect::is_swapchain_image(&data, image) {
+                data.depth.screen.add_view((*p_view).as_raw());
+            }
         }
         result
     }
@@ -154,6 +157,7 @@ unsafe extern "system" fn create_framebuffer(
             // Framebuffer sem imagens (imageless) não tem views aqui: as views vêm em cada início de passe.
             if !c.p_attachments.is_null() && c.attachment_count > 0 {
                 let views: Vec<u64> = std::slice::from_raw_parts(c.p_attachments, c.attachment_count as usize).iter().map(|v| v.as_raw()).collect();
+                data.depth.screen.add_framebuffer((*p_framebuffer).as_raw(), &views);
                 let depth_views = data.depth.views.lock().unwrap();
                 if views.iter().any(|v| depth_views.contains_key(v)) {
                     drop(depth_views);
@@ -187,6 +191,10 @@ unsafe extern "system" fn create_render_pass(
         let result = (data.device.fp_v1_0().create_render_pass)(device, forward, p_allocator, p_render_pass);
         if result == vk::Result::SUCCESS {
             let c = &*forward;
+            if !c.p_attachments.is_null() {
+                let loads = std::slice::from_raw_parts(c.p_attachments, c.attachment_count as usize).iter().map(|a| load_op(a.load_op)).collect();
+                data.depth.screen.add_render_pass((*p_render_pass).as_raw(), loads);
+            }
             if !c.p_subpasses.is_null() && !c.p_attachments.is_null() {
                 let subpasses = std::slice::from_raw_parts(c.p_subpasses, c.subpass_count as usize);
                 let attachments = std::slice::from_raw_parts(c.p_attachments, c.attachment_count as usize);
@@ -228,6 +236,10 @@ unsafe extern "system" fn create_render_pass2(
         let result = next(device, forward, p_allocator, p_render_pass);
         if result == vk::Result::SUCCESS {
             let c = &*forward;
+            if !c.p_attachments.is_null() {
+                let loads = std::slice::from_raw_parts(c.p_attachments, c.attachment_count as usize).iter().map(|a| load_op(a.load_op)).collect();
+                data.depth.screen.add_render_pass((*p_render_pass).as_raw(), loads);
+            }
             if !c.p_subpasses.is_null() && !c.p_attachments.is_null() {
                 let subpasses = std::slice::from_raw_parts(c.p_subpasses, c.subpass_count as usize);
                 let attachments = std::slice::from_raw_parts(c.p_attachments, c.attachment_count as usize);
@@ -342,6 +354,11 @@ unsafe fn on_begin_render_pass(data: &DeviceData, cmd: vk::CommandBuffer, begin:
         let b = &*begin;
         let clears: &[vk::ClearValue] = if b.p_clear_values.is_null() { &[] } else { std::slice::from_raw_parts(b.p_clear_values, b.clear_value_count as usize) };
         let views = imageless_views(b.p_next);
+        if let Some(pass) = data.depth.screen.begin_pass(b.render_pass.as_raw(), b.framebuffer.as_raw(), views.clone())
+            && let Some(state) = data.depth.cmds.lock().unwrap().get_mut(&cmd.as_raw())
+        {
+            state.screen_current = Some(pass);
+        }
         start_pass(data, cmd, b.render_pass, views, b.framebuffer, b.render_area, |i| clears.get(i as usize).map(|c| c.depth_stencil.depth));
     }
 }
@@ -370,6 +387,9 @@ fn finish_pass(data: &DeviceData, cmd: vk::CommandBuffer) -> Option<PassRecord> 
     }
     let mut cmds = data.depth.cmds.lock().unwrap();
     let state = cmds.get_mut(&cmd.as_raw())?;
+    if let Some(screen) = state.screen_current.take() {
+        state.screen_passes.push(screen);
+    }
     let pass = state.current.take()?;
     if pass.end_layout != 0 {
         state.layouts.push((pass.image, pass.end_layout));
@@ -420,6 +440,14 @@ unsafe extern "system" fn cmd_begin_rendering(cmd: vk::CommandBuffer, p_info: *c
         let Some(next) = data.depth.next.cmd_begin_rendering else { return };
         if data.depth.is_on() && !p_info.is_null() {
             let info = &*p_info;
+            if !info.p_color_attachments.is_null() {
+                let colors = std::slice::from_raw_parts(info.p_color_attachments, info.color_attachment_count as usize);
+                if let Some(a) = colors.iter().find(|a| data.depth.screen.is_view(a.image_view.as_raw()))
+                    && let Some(state) = data.depth.cmds.lock().unwrap().get_mut(&cmd.as_raw())
+                {
+                    state.screen_current = Some(super::screen::ScreenPass { load: load_op(a.load_op), draws: 0 });
+                }
+            }
             if !info.p_depth_attachment.is_null() {
                 let a = &*info.p_depth_attachment;
                 let image = data.depth.views.lock().unwrap().get(&a.image_view.as_raw()).copied();
@@ -461,6 +489,9 @@ fn on_draw(data: &DeviceData, cmd: vk::CommandBuffer, vertices: u64, indirect: b
     }
     if let Some(state) = data.depth.cmds.lock().unwrap().get_mut(&cmd.as_raw()) {
         let compare = state.compare;
+        if let Some(s) = state.screen_current.as_mut() {
+            s.draws += 1;
+        }
         if let Some(p) = state.current.as_mut() {
             p.draws += 1;
             if indirect {
@@ -649,6 +680,7 @@ fn merge_submitted(data: &DeviceData, buffers: &[vk::CommandBuffer]) {
         for s in states {
             passes.extend(s.passes.iter().copied());
             layouts.extend(s.layouts.iter().copied());
+            data.depth.screen.push_frame(s.screen_passes.iter().copied());
         }
         (passes, layouts)
     };
@@ -721,6 +753,7 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
     data.depth.pass_counter.store(0, Ordering::Relaxed);
     poll_pick(data);
     let stats = std::mem::take(&mut *data.depth.frame.lock().unwrap());
+    let screen_summary = data.depth.screen.take_summary();
     if stats.is_empty() {
         return;
     }
@@ -788,6 +821,9 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
             .map(|(i, p)| format!("{}:{}d/{}i {:?}->{:?}", i + 1, p.draws, p.indirect, p.load, p.store))
             .collect();
         passes_summary = briefs.join(" ");
+        if !screen_summary.is_empty() {
+            passes_summary = format!("tela: {screen_summary} | {passes_summary}");
+        }
         let mut logged = data.depth.passes_logged.lock().unwrap();
         if *logged != passes_summary {
             log!("passes da profundidade escolhida: {passes_summary}");

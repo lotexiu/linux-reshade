@@ -450,3 +450,8 @@ pub fn on_depth_image_destroyed(data: &DeviceData, image: u64) {
 pub fn largest_extent(data: &DeviceData) -> (u32, u32) {
     data.swapchains.lock().unwrap().values().map(|fx| (fx.extent.width, fx.extent.height)).max_by_key(|(w, h)| u64::from(*w) * u64::from(*h)).unwrap_or((0, 0))
 }
+
+/// A imagem é de um swapchain deste dispositivo?
+pub fn is_swapchain_image(data: &DeviceData, image: u64) -> bool {
+    data.swapchains.lock().unwrap().values().any(|fx| fx.images.iter().any(|i| i.as_raw() == image))
+}
