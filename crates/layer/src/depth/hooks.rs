@@ -576,6 +576,17 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
             );
         }
     }
+    // Para entender jogos em que a comparação de profundidade não aparece: o que os pipelines criados declaram.
+    {
+        let pipelines = data.depth.pipelines.lock().unwrap();
+        let count = |c: Compare| pipelines.values().filter(|v| **v == c).count();
+        let (greater, less, other) = (count(Compare::Greater), count(Compare::Less), count(Compare::Other));
+        let mut logged = data.depth.pipelines_logged.lock().unwrap();
+        if *logged != (greater, less, other) {
+            *logged = (greater, less, other);
+            log!("pipelines com teste de profundidade fixo: {greater} comparam 'maior', {less} 'menor', {other} outros");
+        }
+    }
     crate::status::set_depth(candidates.iter().map(to_status).collect());
     *last = candidates;
 }

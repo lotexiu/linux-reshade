@@ -74,6 +74,8 @@ pub struct Depth {
     pub(crate) frame: Mutex<FrameStats>,
     /// A última lista publicada (para só avisar quando muda).
     pub(crate) last_published: Mutex<Vec<observe::Candidate>>,
+    /// Quantos pipelines (maior, menor, outro) já foram registrados no log.
+    pub(crate) pipelines_logged: Mutex<(usize, usize, usize)>,
 }
 
 /// Carrega do próximo elo a primeira das funções que existir (nome do núcleo e da extensão).
@@ -115,6 +117,7 @@ impl Depth {
             cmds: Mutex::new(HashMap::new()),
             frame: Mutex::new(FrameStats::default()),
             last_published: Mutex::new(Vec::new()),
+            pipelines_logged: Mutex::new((usize::MAX, 0, 0)),
         }
     }
 

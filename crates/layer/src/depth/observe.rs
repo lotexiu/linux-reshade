@@ -66,6 +66,8 @@ struct Aggregate {
     last: PassRecord,
     greater: u32,
     less: u32,
+    /// O primeiro valor com que um passe limpou a profundidade neste quadro (0 = quase sempre profundidade invertida).
+    first_clear: Option<f32>,
 }
 
 /// Uma candidata a "profundidade da cena", como se publica para o app de controle.
@@ -118,6 +120,9 @@ impl FrameStats {
             a.last = *p;
             a.greater += p.greater;
             a.less += p.less;
+            if a.first_clear.is_none() {
+                a.first_clear = p.clear_depth;
+            }
         }
     }
 
@@ -137,8 +142,14 @@ impl FrameStats {
                 } else {
                     None
                 };
+                // A comparação dos pipelines manda; sem ela (pipelines que não declaram o teste, ou o declaram em estado
+                // dinâmico), o valor de limpeza: 0 indica profundidade invertida, 1 a normal.
                 let reversed = match (a.greater, a.less) {
-                    (0, 0) => None,
+                    (0, 0) => match a.first_clear {
+                        Some(v) if v <= 0.01 => Some(true),
+                        Some(v) if v >= 0.99 => Some(false),
+                        _ => None,
+                    },
                     (g, l) => Some(g > l),
                 };
                 Some((
@@ -267,6 +278,25 @@ mod tests {
         assert_eq!((c.draws, c.vertices, c.passes), (15, 1500, 2));
         assert_eq!((c.load, c.store), (LoadOp::Load, StoreOp::DontCare), "o último passe manda no que se mostra");
         assert_eq!((c.last_pass, c.reversed), (1, Some(true)), "15 de comparação 'maior' contra 1 de 'menor'");
+    }
+
+    #[test]
+    fn without_pipeline_votes_the_clear_value_tells_if_the_depth_is_reversed() {
+        let i = infos(&[(1, info(1280, 720, 1)), (2, info(1280, 720, 1)), (3, info(1280, 720, 1))]);
+        let mut s = FrameStats::default();
+        s.merge(&[PassRecord { clear_depth: Some(0.0), load: LoadOp::Clear, ..pass(1, 5, 500) }], &i);
+        s.merge(&[PassRecord { clear_depth: Some(1.0), load: LoadOp::Clear, ..pass(2, 5, 500) }], &i);
+        s.merge(&[PassRecord { clear_depth: Some(0.5), load: LoadOp::Clear, ..pass(3, 5, 500) }], &i);
+        let all: Vec<_> = s.candidates((1280, 720)).into_iter().map(|c| c.reversed).collect();
+        assert_eq!(all, [Some(true), Some(false), None]);
+    }
+
+    #[test]
+    fn pipeline_votes_beat_the_clear_value() {
+        let i = infos(&[(1, info(1280, 720, 1))]);
+        let mut s = FrameStats::default();
+        s.merge(&[PassRecord { clear_depth: Some(1.0), load: LoadOp::Clear, less: 1, greater: 9, ..pass(1, 10, 1000) }], &i);
+        assert_eq!(s.candidates((1280, 720))[0].reversed, Some(true));
     }
 
     #[test]
