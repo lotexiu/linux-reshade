@@ -53,10 +53,14 @@ fn byte(v: f32) -> u8 {
 }
 
 fn run(gpu: &Gpu, bundle: &Bundle) -> Vec<[u8; 4]> {
+    run_in(gpu, bundle, FORMAT)
+}
+
+fn run_in(gpu: &Gpu, bundle: &Bundle, format: vk::Format) -> Vec<[u8; 4]> {
     unsafe {
-        let targets = gpu.targets(1, input);
+        let targets = gpu.targets_in(format, 1, input);
         let images: &'static [vk::Image] = Box::leak(targets.images.clone().into_boxed_slice());
-        let target = Target { images, format: FORMAT, extent: vk::Extent2D { width: W, height: H }, rest_layout: REST, queue_family: gpu.family, init_command_buffer: None };
+        let target = Target { images, format, extent: vk::Extent2D { width: W, height: H }, rest_layout: REST, queue_family: gpu.family, init_command_buffer: None };
         let mut effect = Effect::new(&gpu.device, &gpu.memory, bundle, 0, &target, gpu.queue).expect("criar o efeito");
         gpu.submit(effect.command_buffer(0));
         let pixels = gpu.read(targets.images[0]);
@@ -97,5 +101,36 @@ fn without_either_flag_the_values_pass_through_unchanged() {
     for (n, got) in run(&gpu, &bundle).into_iter().enumerate() {
         let s = input(n as u32 % W, n as u32 / W);
         assert_pixel(got, [255 - s[0], 255 - s[1], 255 - s[2], s[3]], 1, &format!("pixel {n}"));
+    }
+}
+
+// ---- alvo sRGB (o swapchain de muitos jogos): os efeitos veem os bytes como estão, sem decodificar ----
+
+#[test]
+fn an_srgb_target_is_processed_as_encoded_values() {
+    let gpu = gpu_or_skip!();
+    let bundle = Bundle::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/Invert")).unwrap();
+    for format in [vk::Format::R8G8B8A8_SRGB, vk::Format::B8G8R8A8_SRGB] {
+        for (n, got) in run_in(&gpu, &bundle, format).into_iter().enumerate() {
+            let s = input(n as u32 % W, n as u32 / W);
+            assert_pixel(got, [255 - s[0], 255 - s[1], 255 - s[2], s[3]], 1, &format!("{format:?} pixel {n}"));
+        }
+    }
+}
+
+#[test]
+fn an_srgb_target_works_with_the_srgb_flags_too() {
+    let gpu = gpu_or_skip!();
+    let write = patched("srgb-target-write", "\"srgb_write\":false", "\"srgb_write\":true");
+    for (n, got) in run_in(&gpu, &write, vk::Format::R8G8B8A8_SRGB).into_iter().enumerate() {
+        let s = input(n as u32 % W, n as u32 / W);
+        let want = |c: u8| byte(encode(1.0 - c as f32 / 255.0));
+        assert_pixel(got, [want(s[0]), want(s[1]), want(s[2]), s[3]], 2, &format!("escrita, pixel {n}"));
+    }
+    let read = patched("srgb-target-read", "\"srgb\":false", "\"srgb\":true");
+    for (n, got) in run_in(&gpu, &read, vk::Format::R8G8B8A8_SRGB).into_iter().enumerate() {
+        let s = input(n as u32 % W, n as u32 / W);
+        let want = |c: u8| byte(1.0 - decode(c as f32 / 255.0));
+        assert_pixel(got, [want(s[0]), want(s[1]), want(s[2]), s[3]], 2, &format!("leitura, pixel {n}"));
     }
 }

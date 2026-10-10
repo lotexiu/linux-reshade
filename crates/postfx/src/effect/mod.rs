@@ -30,7 +30,7 @@ use std::collections::HashMap;
 
 /// O que o efeito processa.
 pub struct Target<'a> {
-    /// Imagens do alvo; precisam ter `COLOR_ATTACHMENT | TRANSFER_SRC` no uso.
+    /// Imagens do alvo; precisam ter `COLOR_ATTACHMENT | TRANSFER_SRC | TRANSFER_DST` no uso.
     pub images: &'a [vk::Image],
     pub format: vk::Format,
     pub extent: vk::Extent2D,
@@ -94,6 +94,8 @@ pub struct Effect {
     sets0: Vec<vk::DescriptorSet>,
     passes: Vec<PassRes>,
     target_views: Vec<vk::ImageView>,
+    /// Imagem UNORM em que os passes trabalham quando o alvo é sRGB; `image` nula nos demais casos.
+    work: GpuImage,
     command_pool: vk::CommandPool,
     command_buffers: Vec<vk::CommandBuffer>,
     /// Uniforms alimentados pelo runtime (`source = "timer"` etc.).
@@ -229,9 +231,14 @@ impl Effect {
         if !m.y_flipped {
             return Err(unsupported("bundle compilado sem inverter o Y (recompile com o fx2spv atual)"));
         }
-        if convert::is_srgb(target.format) {
-            return Err(unsupported("alvo em formato sRGB (os efeitos esperam valores já codificados)"));
-        }
+        // Um alvo sRGB (o swapchain de muitos jogos): os efeitos esperam os valores já codificados, como num UNORM.
+        // Trabalha-se numa imagem UNORM própria e os bytes entram e saem do alvo por cópia, que não converte.
+        let working_format = match convert::unorm_counterpart(target.format) {
+            Some(unorm) => unorm,
+            None if convert::is_srgb(target.format) => return Err(unsupported("alvo em formato sRGB sem equivalente UNORM")),
+            None => target.format,
+        };
+        let through_work = working_format != target.format;
 
         // ---- Verificações da v1 (antes de criar qualquer coisa) ----
         let mut samples_color = vec![false; tech.passes.len()];
@@ -262,8 +269,8 @@ impl Effect {
         }
 
         // ---- Imagens ----
-        self.copy = unsafe { BackbufferCopies::new(device, memory, target.format, target.extent, 1)? };
-        if let Some(srgb) = convert::srgb_counterpart(target.format) {
+        self.copy = unsafe { BackbufferCopies::new(device, memory, working_format, target.extent, 1)? };
+        if let Some(srgb) = convert::srgb_counterpart(working_format) {
             let mut needs_copy = false;
             let mut needs_shadow = false;
             for pass in &tech.passes {
@@ -309,14 +316,21 @@ impl Effect {
             }
         }
 
-        for &image in target.images {
-            let info = vk::ImageViewCreateInfo::default()
-                .image(image)
-                .view_type(vk::ImageViewType::TYPE_2D)
-                .format(target.format)
-                .subresource_range(COLOR_RANGE);
-            self.target_views.push(unsafe { device.create_image_view(&info, None)? });
+        if through_work {
+            let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST;
+            self.work = unsafe { GpuImage::new(device, memory, working_format, target.extent, usage)? };
+        } else {
+            for &image in target.images {
+                let info = vk::ImageViewCreateInfo::default()
+                    .image(image)
+                    .view_type(vk::ImageViewType::TYPE_2D)
+                    .format(target.format)
+                    .subresource_range(COLOR_RANGE);
+                self.target_views.push(unsafe { device.create_image_view(&info, None)? });
+            }
         }
+        // Onde os passes que escrevem no frame desenham: a view de cada imagem do alvo, ou a imagem de trabalho.
+        let frame_views: Vec<vk::ImageView> = if through_work { vec![self.work.view; count] } else { self.target_views.clone() };
 
         // ---- Samplers e uniforms ----
         for s in &m.samplers {
@@ -383,7 +397,7 @@ impl Effect {
                 if pass.render_targets.len() > 1 {
                     return Err(unsupported(format!("passe {k}: vários anexos para o frame")));
                 }
-                let format = if res.srgb_shadow { convert::srgb_counterpart(target.format).unwrap_or(target.format) } else { target.format };
+                let format = if res.srgb_shadow { convert::srgb_counterpart(working_format).unwrap_or(working_format) } else { working_format };
                 res.preserves_frame = !pass.clear && (pass.blend.iter().any(|b| b.enable) || pass.viewport != [0, 0]);
                 (Output::Frame, vec![format], target.extent)
             } else if some.len() == pass.render_targets.len() {
@@ -480,7 +494,7 @@ impl Effect {
                     res.framebuffers.push(unsafe { device.create_framebuffer(&info, None)? });
                 }
                 Output::Frame => {
-                    for view in &self.target_views {
+                    for view in &frame_views {
                         let attachments = [*view];
                         let info = vk::FramebufferCreateInfo::default()
                             .render_pass(res.render_pass)
@@ -531,6 +545,7 @@ impl Effect {
                 copy: self.copy.images[0].image,
                 copy_srgb: (self.copy_srgb.image != vk::Image::null()).then_some(self.copy_srgb.image),
                 shadow: (self.frame_srgb.image != vk::Image::null()).then_some(self.frame_srgb.image),
+                work: (self.work.image != vk::Image::null()).then_some(self.work.image),
                 frame: target.images[i],
                 frame_extent: target.extent,
                 rest_layout: target.rest_layout,
@@ -713,6 +728,7 @@ impl Effect {
             }
             self.copy.destroy(device);
             self.copy_srgb.destroy(device);
+            self.work.destroy(device);
             self.frame_srgb.destroy(device);
         }
     }

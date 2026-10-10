@@ -135,6 +135,11 @@ impl Gpu {
     /// `n` imagens `W`x`H` com o uso que um swapchain com o uso extra do efeito teria, preenchidas
     /// com `pixel(x, y)` e deixadas no layout `REST`.
     pub unsafe fn targets(&self, n: usize, pixel: impl Fn(u32, u32) -> [u8; 4]) -> Targets {
+        unsafe { self.targets_in(FORMAT, n, pixel) }
+    }
+
+    /// Como [`targets`](Self::targets), num formato dado (os bytes de 8 bits são os mesmos em UNORM e sRGB).
+    pub unsafe fn targets_in(&self, format: vk::Format, n: usize, pixel: impl Fn(u32, u32) -> [u8; 4]) -> Targets {
         let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST;
         let size = (W * H * 4) as u64;
         let (staging, staging_mem) = unsafe { self.host_buffer(size) };
@@ -153,7 +158,7 @@ impl Gpu {
             unsafe {
                 let info = vk::ImageCreateInfo::default()
                     .image_type(vk::ImageType::TYPE_2D)
-                    .format(FORMAT)
+                    .format(format)
                     .extent(vk::Extent3D { width: W, height: H, depth: 1 })
                     .mip_levels(1)
                     .array_layers(1)

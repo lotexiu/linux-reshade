@@ -6,9 +6,10 @@ use crate::state::{DEVICES, DeviceData};
 use ash::vk::{self, Handle};
 use vk_layer::dispatch::dispatch_key;
 
-/// Uso extra que o efeito precisa: escrever no swapchain (anexo de cor) e copiá-lo.
-const EFFECT_USAGE: vk::ImageUsageFlags =
-    vk::ImageUsageFlags::from_raw(vk::ImageUsageFlags::COLOR_ATTACHMENT.as_raw() | vk::ImageUsageFlags::TRANSFER_SRC.as_raw());
+/// Uso extra que o efeito precisa: escrever no swapchain (anexo de cor), copiá-lo e receber cópias (alvo sRGB, escrita sRGB).
+const EFFECT_USAGE: vk::ImageUsageFlags = vk::ImageUsageFlags::from_raw(
+    vk::ImageUsageFlags::COLOR_ATTACHMENT.as_raw() | vk::ImageUsageFlags::TRANSFER_SRC.as_raw() | vk::ImageUsageFlags::TRANSFER_DST.as_raw(),
+);
 
 /// A superfície aceita o uso extra?
 unsafe fn surface_supports_effect(data: &DeviceData, surface: vk::SurfaceKHR) -> bool {
@@ -61,11 +62,9 @@ pub unsafe extern "system" fn create_swapchain(
         let swapchain = *p_swapchain;
         let images = swapchain_images(&data, device, swapchain);
         let unusable = if !supported {
-            Some("o swapchain não aceita o uso extra que o efeito precisa (COLOR_ATTACHMENT | TRANSFER_SRC)".to_string())
+            Some("o swapchain não aceita o uso extra que o efeito precisa (COLOR_ATTACHMENT | TRANSFER_SRC | TRANSFER_DST)".to_string())
         } else if images.is_empty() {
             Some("não consegui obter as imagens do swapchain".to_string())
-        } else if postfx::effect::is_srgb(info.image_format) {
-            Some("swapchain em formato sRGB (os efeitos esperam valores já codificados)".to_string())
         } else {
             None
         };

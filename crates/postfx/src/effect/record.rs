@@ -15,6 +15,8 @@ pub struct Recording<'a> {
     pub copy_srgb: Option<vk::Image>,
     /// Espelho sRGB do frame, se algum passe escreve com `SRGBWriteEnable`.
     pub shadow: Option<vk::Image>,
+    /// Imagem de trabalho quando o alvo é sRGB: os passes a usam no lugar do frame, que só recebe a cópia dos bytes.
+    pub work: Option<vk::Image>,
     pub frame: vk::Image,
     pub frame_extent: vk::Extent2D,
     pub rest_layout: vk::ImageLayout,
@@ -128,7 +130,22 @@ pub unsafe fn record(rec: &Recording<'_>, cb: vk::CommandBuffer, index: usize) -
             &[],
         );
 
-        let mut frame_layout = rec.rest_layout;
+        // Com imagem de trabalho (alvo sRGB), o "frame" dos passes é ela: entra uma cópia dos bytes do alvo e, no fim,
+        // eles voltam. Copiar entre formatos UNORM e sRGB de mesmo tamanho não converte nada.
+        let layers0 = vk::ImageSubresourceLayers { aspect_mask: vk::ImageAspectFlags::COLOR, mip_level: 0, base_array_layer: 0, layer_count: 1 };
+        let extent3 = vk::Extent3D { width: rec.frame_extent.width, height: rec.frame_extent.height, depth: 1 };
+        let whole0 = vk::ImageCopy::default().src_subresource(layers0).dst_subresource(layers0).extent(extent3);
+        let (frame, rest_layout) = match rec.work {
+            Some(work) => {
+                transition(device, cb, rec.frame, rec.rest_layout, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
+                transition(device, cb, work, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
+                device.cmd_copy_image(cb, rec.frame, vk::ImageLayout::TRANSFER_SRC_OPTIMAL, work, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[whole0]);
+                transition(device, cb, work, vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
+                (work, vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+            }
+            None => (rec.frame, rec.rest_layout),
+        };
+        let mut frame_layout = rest_layout;
         let mut copy_valid = false;
         let layers = vk::ImageSubresourceLayers { aspect_mask: vk::ImageAspectFlags::COLOR, mip_level: 0, base_array_layer: 0, layer_count: 1 };
 
@@ -140,13 +157,13 @@ pub unsafe fn record(rec: &Recording<'_>, cb: vk::CommandBuffer, index: usize) -
         for pass in rec.passes {
             // A cópia do frame precisa refletir o que os passes anteriores escreveram nele.
             if pass.samples_color && !copy_valid {
-                transition(device, cb, rec.frame, frame_layout, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
+                transition(device, cb, frame, frame_layout, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
                 frame_layout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
                 // Os mesmos bytes do frame, em formato UNORM e (se preciso) sRGB: a leitura de um sampler com
                 // `SRGBTexture` decodifica sozinha.
                 for copy in std::iter::once(rec.copy).chain(rec.copy_srgb) {
                     transition(device, cb, copy, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
-                    device.cmd_copy_image(cb, rec.frame, vk::ImageLayout::TRANSFER_SRC_OPTIMAL, copy, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[whole]);
+                    device.cmd_copy_image(cb, frame, vk::ImageLayout::TRANSFER_SRC_OPTIMAL, copy, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[whole]);
                     transition(device, cb, copy, vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
                 }
                 copy_valid = true;
@@ -158,15 +175,15 @@ pub unsafe fn record(rec: &Recording<'_>, cb: vk::CommandBuffer, index: usize) -
                 // passe precisa dele, entra como cópia de bytes.
                 if pass.preserves_frame {
                     if frame_layout != vk::ImageLayout::TRANSFER_SRC_OPTIMAL {
-                        transition(device, cb, rec.frame, frame_layout, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
+                        transition(device, cb, frame, frame_layout, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
                         frame_layout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
                     }
                     transition(device, cb, shadow, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
-                    device.cmd_copy_image(cb, rec.frame, vk::ImageLayout::TRANSFER_SRC_OPTIMAL, shadow, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[whole]);
+                    device.cmd_copy_image(cb, frame, vk::ImageLayout::TRANSFER_SRC_OPTIMAL, shadow, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[whole]);
                     transition(device, cb, shadow, vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
                 }
             } else if pass.output == Output::Frame && frame_layout != vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL {
-                transition(device, cb, rec.frame, frame_layout, vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+                transition(device, cb, frame, frame_layout, vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
                 frame_layout = vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
             }
 
@@ -214,18 +231,24 @@ pub unsafe fn record(rec: &Recording<'_>, cb: vk::CommandBuffer, index: usize) -
                 // Do espelho para o frame: cópia de bytes, sem conversão (já saíram codificados).
                 transition(device, cb, shadow, vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
                 if frame_layout != vk::ImageLayout::TRANSFER_DST_OPTIMAL {
-                    transition(device, cb, rec.frame, frame_layout, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
+                    transition(device, cb, frame, frame_layout, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
                     frame_layout = vk::ImageLayout::TRANSFER_DST_OPTIMAL;
                 }
-                device.cmd_copy_image(cb, shadow, vk::ImageLayout::TRANSFER_SRC_OPTIMAL, rec.frame, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[whole]);
+                device.cmd_copy_image(cb, shadow, vk::ImageLayout::TRANSFER_SRC_OPTIMAL, frame, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[whole]);
             }
             if pass.output == Output::Frame {
                 copy_valid = false; // o frame mudou: uma amostragem de COLOR depois precisa de cópia nova
             }
         }
 
-        if frame_layout != rec.rest_layout {
-            transition(device, cb, rec.frame, frame_layout, rec.rest_layout);
+        if frame_layout != rest_layout {
+            transition(device, cb, frame, frame_layout, rest_layout);
+        }
+        if rec.work.is_some() {
+            // O resultado volta para a imagem do swapchain e ela segue para a apresentação.
+            transition(device, cb, rec.frame, vk::ImageLayout::TRANSFER_SRC_OPTIMAL, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
+            device.cmd_copy_image(cb, frame, vk::ImageLayout::TRANSFER_SRC_OPTIMAL, rec.frame, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[whole0]);
+            transition(device, cb, rec.frame, vk::ImageLayout::TRANSFER_DST_OPTIMAL, rec.rest_layout);
         }
         device.end_command_buffer(cb)
     }

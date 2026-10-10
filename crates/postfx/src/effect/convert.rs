@@ -41,6 +41,18 @@ pub fn is_srgb(format: vk::Format) -> bool {
     )
 }
 
+/// O formato UNORM com os mesmos bytes de um formato sRGB de 8 bits (`None` se não é um deles).
+pub fn unorm_counterpart(format: vk::Format) -> Option<vk::Format> {
+    Some(match format {
+        vk::Format::R8G8B8A8_SRGB => vk::Format::R8G8B8A8_UNORM,
+        vk::Format::B8G8R8A8_SRGB => vk::Format::B8G8R8A8_UNORM,
+        vk::Format::A8B8G8R8_SRGB_PACK32 => vk::Format::A8B8G8R8_UNORM_PACK32,
+        vk::Format::R8G8_SRGB => vk::Format::R8G8_UNORM,
+        vk::Format::R8_SRGB => vk::Format::R8_UNORM,
+        _ => return None,
+    })
+}
+
 /// A versão sRGB de um formato de 8 bits por canal; `None` para formatos sem ela (float, 10 bits...). O
 /// ReShade ignora `SRGBWriteEnable`/`SRGBTexture` nesses casos, e nós também.
 pub fn srgb_counterpart(format: vk::Format) -> Option<vk::Format> {

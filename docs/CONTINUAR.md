@@ -60,7 +60,7 @@ mensagens.
 2. **F6, macros**: `PreprocessorDefinitions` em três níveis precisa recompilar o efeito (hoje `game_plan` as ignora
    e o `fx2spv` aceita `-D`?). Conferir.
 3. **Marco 5, depth buffer**: o maior ganho em efeitos (40 de 152) e o diferencial do projeto.
-4. Dívidas pequenas: JPEG/DDS nas texturas; sRGB de render target; `[Games]` no `config.ini` para corrigir um id;
+4. Dívidas pequenas: JPEG/DDS nas texturas; sRGB de render target; **testar o alvo sRGB num jogo real** (Haste, `B8G8R8A8_SRGB`: só foi testado na GPU de software); `[Games]` no `config.ini` para corrigir um id;
    a interface ainda não conhece planos (só a escolha única).
 
 ## Combinados de trabalho (do dono do projeto)

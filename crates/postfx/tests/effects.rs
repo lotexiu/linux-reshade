@@ -111,21 +111,6 @@ fn uniform_default_and_overwrite_change_the_result() {
 }
 
 #[test]
-fn srgb_targets_are_refused_explicitly() {
-    let gpu = gpu_or_skip!();
-    unsafe {
-        let targets = gpu.targets(1, input);
-        let mut t = target(&targets.images, &gpu);
-        t.format = vk::Format::R8G8B8A8_SRGB;
-        match Effect::new(&gpu.device, &gpu.memory, &bundle("Invert"), 0, &t, gpu.queue) {
-            Err(Error::Unsupported(why)) => assert!(why.contains("sRGB"), "{why}"),
-            other => panic!("esperava Unsupported, veio {:?}", other.map(|_| ())),
-        }
-        gpu.destroy_targets(targets);
-    }
-}
-
-#[test]
 fn unknown_technique_is_an_error() {
     let gpu = gpu_or_skip!();
     unsafe {
