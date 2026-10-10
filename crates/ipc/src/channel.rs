@@ -258,7 +258,8 @@ pub fn prune_in(dir: &Path) -> usize {
     let mut removed = 0;
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        let Some(rest) = name.strip_prefix(CHANNEL_PREFIX) else { continue };
+        // O pedido de profundidade de um jogo (`depth-pick-<id da layer>`) também some com o jogo.
+        let Some(rest) = name.strip_prefix(CHANNEL_PREFIX).or_else(|| name.strip_prefix("depth-pick-layer-")) else { continue };
         if dir.join(format!("{LAYER_PREFIX}{rest}")).exists() {
             continue;
         }

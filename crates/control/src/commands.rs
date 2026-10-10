@@ -2,7 +2,7 @@
 //! ou de erro; a lógica que merece teste vive em `params` e `cli`.
 
 use control_core::action::{self, Action};
-use crate::cli::{self, Command};
+use crate::cli::{self, Command, DepthPick};
 use control_core::compiler::Compiler;
 use crate::daemon;
 use control_core::{layers, location, params, select, watch};
@@ -158,6 +158,7 @@ pub fn run(command: Command, state: &ipc::Writer) -> ExitCode {
             ExitCode::SUCCESS
         }
         Command::Config { init, dir } => config_command(init, dir),
+        Command::DepthPick { pick, layer } => depth_pick(pick, layer),
         Command::Preset { action, game, file } => crate::preset_cmd::run(action, game, file),
         Command::Effects => match Compiler::from_env() {
             Ok(compiler) => {
@@ -351,4 +352,39 @@ fn describe_selection(selection: SelectionRead) {
         }
         SelectionRead::Unstable => println!("a escolha está sendo atualizada; tente de novo"),
     }
+}
+
+/// `lrctl depth pick ...`: escreve o pedido que a layer do jogo lê (ver `depth.md`).
+fn depth_pick(pick: DepthPick, layer: Option<String>) -> ExitCode {
+    let layers = match ipc::live_layers() {
+        Ok(l) => l,
+        Err(e) => return fail(format!("não consegui listar as layers: {e}")),
+    };
+    let targets: Vec<LiveLayer> = match layer {
+        Some(query) => match layers::find(&layers, &query) {
+            Ok(l) => vec![l.clone()],
+            Err(e) => return fail(e),
+        },
+        None => layers,
+    };
+    if targets.is_empty() {
+        return fail("nenhum jogo com a layer ativa");
+    }
+    for l in targets {
+        let path = ipc::state_dir().join(format!("depth-pick-{}", l.id));
+        let result = match pick {
+            DepthPick::Auto => std::fs::remove_file(&path).or_else(|e| if e.kind() == std::io::ErrorKind::NotFound { Ok(()) } else { Err(e) }),
+            DepthPick::Candidate(n) => std::fs::write(&path, format!("candidate={n}\n")),
+            DepthPick::Pass(n) => std::fs::write(&path, format!("pass={n}\n")),
+        };
+        match result {
+            Ok(()) => println!("{}: {}", l.status.app, match pick {
+                DepthPick::Auto => "profundidade automática".to_string(),
+                DepthPick::Candidate(n) => format!("candidata {n}"),
+                DepthPick::Pass(n) => format!("profundidade depois do passe {n}"),
+            }),
+            Err(e) => return fail(format!("{}: {e}", path.display())),
+        }
+    }
+    ExitCode::SUCCESS
 }

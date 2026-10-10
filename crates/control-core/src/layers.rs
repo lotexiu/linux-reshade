@@ -90,7 +90,7 @@ pub fn render(layers: &[LiveLayer]) -> String {
         if !l.status.depth_passes.is_empty() {
             text.push_str(&format!("  passes da escolhida (posição:desenhos/indiretos tamanho começa->termina): {}\n", l.status.depth_passes));
         }
-        for d in &l.status.depth {
+        for (n, d) in l.status.depth.iter().enumerate() {
             let reversed = match d.reversed {
                 Some(true) => "invertida",
                 Some(false) => "normal",
@@ -99,8 +99,9 @@ pub fn render(layers: &[LiveLayer]) -> String {
             let why = d.unusable.as_deref().map(|u| format!("  [não serve: {u}]")).unwrap_or_default();
             let sampling = if d.sampled { "amostrável" } else { "sem SAMPLED" };
             text.push_str(&format!(
-                "  {} {}x{} {}  {} desenhos, {} vértices, {} passe(s)  {} -> {}  {reversed}  {sampling}, layout {}{why}\n",
+                "  {} [{}] {}x{} {}  {} desenhos, {} vértices, {} passe(s)  {} -> {}  {reversed}  {sampling}, layout {}{why}\n",
                 if d.chosen { "*" } else { " " },
+                n + 1,
                 d.width,
                 d.height,
                 depth_format_name(d.format),

@@ -8,6 +8,7 @@ use crate::proc_addr::erase;
 use crate::state::{DEVICES, DeviceData};
 use ash::vk::{self, Handle};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use vk_layer::dispatch::dispatch_key;
 
 fn data_of(raw: u64) -> Option<Arc<DeviceData>> {
@@ -66,9 +67,14 @@ unsafe extern "system" fn create_image(
         // Armado: acrescenta `SAMPLED` (sem MSAA, e só se o formato aceita) para os efeitos amostrarem a imagem original.
         let mut patched = *c;
         let mut forward = p_create_info;
-        if is_depth && data.depth.armed && c.samples == vk::SampleCountFlags::TYPE_1 && !c.usage.contains(vk::ImageUsageFlags::SAMPLED) && format_can_be_sampled(&data, c.format, c.tiling) {
-            patched.usage |= vk::ImageUsageFlags::SAMPLED;
-            forward = &patched;
+        if is_depth && data.depth.armed && c.samples == vk::SampleCountFlags::TYPE_1 {
+            // `SAMPLED` para os efeitos lerem a original; `TRANSFER_SRC` para a foto de um passe (cópia). Só o que o formato aceita.
+            for (flag, feature) in [(vk::ImageUsageFlags::SAMPLED, vk::FormatFeatureFlags::SAMPLED_IMAGE), (vk::ImageUsageFlags::TRANSFER_SRC, vk::FormatFeatureFlags::TRANSFER_SRC)] {
+                if !c.usage.contains(flag) && format_supports(&data, c.format, c.tiling, feature) {
+                    patched.usage |= flag;
+                    forward = &patched;
+                }
+            }
         }
         let result = (data.device.fp_v1_0().create_image)(device, forward, p_allocator, p_image);
         if result == vk::Result::SUCCESS && is_depth {
@@ -85,16 +91,16 @@ unsafe extern "system" fn create_image(
     }
 }
 
-/// O formato pode ser amostrado com este tiling? (consulta única por formato)
-unsafe fn format_can_be_sampled(data: &DeviceData, format: vk::Format, tiling: vk::ImageTiling) -> bool {
+/// O formato tem esta característica com tiling ótimo? (consulta única por formato)
+unsafe fn format_supports(data: &DeviceData, format: vk::Format, tiling: vk::ImageTiling, feature: vk::FormatFeatureFlags) -> bool {
     if tiling != vk::ImageTiling::OPTIMAL {
         return false;
     }
     let mut cache = data.depth.formats.lock().unwrap();
     *cache.entry(format.as_raw()).or_insert_with(|| {
-        let props = unsafe { data.instance.instance.get_physical_device_format_properties(data.physical_device, format) };
-        props.optimal_tiling_features.contains(vk::FormatFeatureFlags::SAMPLED_IMAGE)
-    })
+        unsafe { data.instance.instance.get_physical_device_format_properties(data.physical_device, format) }.optimal_tiling_features.as_raw() as u64
+    }) & u64::from(feature.as_raw())
+        != 0
 }
 
 unsafe extern "system" fn destroy_image(device: vk::Device, image: vk::Image, p_allocator: *const vk::AllocationCallbacks<'_>) {
@@ -358,25 +364,43 @@ unsafe extern "system" fn cmd_begin_render_pass2(cmd: vk::CommandBuffer, p_begin
 }
 
 /// Fecha o passe que estava sendo gravado e o guarda no command buffer.
-fn finish_pass(data: &DeviceData, cmd: vk::CommandBuffer) {
+fn finish_pass(data: &DeviceData, cmd: vk::CommandBuffer) -> Option<PassRecord> {
     if !data.depth.is_on() {
+        return None;
+    }
+    let mut cmds = data.depth.cmds.lock().unwrap();
+    let state = cmds.get_mut(&cmd.as_raw())?;
+    let pass = state.current.take()?;
+    if pass.end_layout != 0 {
+        state.layouts.push((pass.image, pass.end_layout));
+    }
+    state.passes.push(pass);
+    Some(pass)
+}
+
+/// Depois do fim de um passe da profundidade em observação: se é o passe pedido, grava a foto da profundidade aqui.
+unsafe fn after_pass(data: &DeviceData, cmd: vk::CommandBuffer, pass: Option<PassRecord>) {
+    let Some(pass) = pass else { return };
+    let wanted = data.depth.snapshot_pass.load(Ordering::Relaxed);
+    if wanted == 0 || pass.image != data.depth.watched_image.load(Ordering::Relaxed) || pass.end_layout == 0 {
         return;
     }
-    if let Some(state) = data.depth.cmds.lock().unwrap().get_mut(&cmd.as_raw())
-        && let Some(pass) = state.current.take()
-    {
-        if pass.end_layout != 0 {
-            state.layouts.push((pass.image, pass.end_layout));
-        }
-        state.passes.push(pass);
+    // O passe de número `wanted` (de 1) da imagem neste quadro, na ordem de gravação.
+    if data.depth.pass_counter.fetch_add(1, Ordering::Relaxed) + 1 != wanted {
+        return;
     }
+    let Some(info) = data.depth.images.lock().unwrap().get(&pass.image).copied() else { return };
+    let Some((dst, format)) = data.depth.snapshot.lock().unwrap().as_ref().map(|s| (s.image, s.format)) else { return };
+    unsafe { super::snapshot::record_copy(data, cmd, vk::Image::from_raw(pass.image), vk::ImageLayout::from_raw(pass.end_layout), dst, format, info.width, info.height) };
+    data.depth.snapshot_written.store(true, Ordering::Relaxed);
 }
 
 unsafe extern "system" fn cmd_end_render_pass(cmd: vk::CommandBuffer) {
     unsafe {
         let Some(data) = data_of(cmd.as_raw()) else { return };
-        finish_pass(&data, cmd);
+        let finished = finish_pass(&data, cmd);
         (data.device.fp_v1_0().cmd_end_render_pass)(cmd);
+        after_pass(&data, cmd, finished);
     }
 }
 
@@ -384,8 +408,9 @@ unsafe extern "system" fn cmd_end_render_pass2(cmd: vk::CommandBuffer, p_end: *c
     unsafe {
         let Some(data) = data_of(cmd.as_raw()) else { return };
         let Some(next) = data.depth.next.cmd_end_render_pass2 else { return };
-        finish_pass(&data, cmd);
+        let finished = finish_pass(&data, cmd);
         next(cmd, p_end);
+        after_pass(&data, cmd, finished);
     }
 }
 
@@ -423,8 +448,9 @@ unsafe extern "system" fn cmd_end_rendering(cmd: vk::CommandBuffer) {
     unsafe {
         let Some(data) = data_of(cmd.as_raw()) else { return };
         let Some(next) = data.depth.next.cmd_end_rendering else { return };
-        finish_pass(&data, cmd);
+        let finished = finish_pass(&data, cmd);
         next(cmd);
+        after_pass(&data, cmd, finished);
     }
 }
 
@@ -670,79 +696,131 @@ unsafe extern "system" fn queue_submit2(queue: vk::Queue, count: u32, p_submits:
     }
 }
 
+/// Lê o pedido da pessoa (`lrctl depth ...`) de tempos em tempos: `/dev/shm/.../depth-pick-<id da layer>`, com linhas
+/// `candidate=N` e/ou `pass=N`.
+fn poll_pick(data: &DeviceData) {
+    if data.depth.frames.fetch_add(1, Ordering::Relaxed) % 20 != 0 {
+        return;
+    }
+    let Some(id) = crate::status::id() else { return };
+    let text = std::fs::read_to_string(ipc::state_dir().join(format!("depth-pick-{id}"))).unwrap_or_default();
+    let number = |key: &str| text.lines().find_map(|l| l.strip_prefix(key)?.strip_prefix('=')?.trim().parse::<u32>().ok()).filter(|n| *n > 0);
+    let pick = super::Pick { candidate: number("candidate"), pass: number("pass") };
+    let mut current = data.depth.pick.lock().unwrap();
+    if *current != pick {
+        log!("pedido para a profundidade: candidata {:?}, passe {:?}", pick.candidate, pick.pass);
+        *current = pick;
+    }
+}
+
 /// Fim de um quadro (chamado no present): escolhe a candidata e publica a lista para o app de controle.
 pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
     if !data.depth.is_on() {
         return;
     }
+    data.depth.pass_counter.store(0, Ordering::Relaxed);
+    poll_pick(data);
     let stats = std::mem::take(&mut *data.depth.frame.lock().unwrap());
     if stats.is_empty() {
         return;
     }
     let layouts = data.depth.image_layouts.lock().unwrap().clone();
-    let candidates = stats.candidates(frame, &layouts);
-    // O que os efeitos podem usar: a escolhida, se a original é amostrável e o layout é conhecido.
-    *data.depth.chosen.lock().unwrap() =
-        candidates.iter().find(|c| c.chosen && c.sampled && c.layout != 0).map(|c| super::Chosen {
-            image: c.image,
-            format: c.format,
-            layout: c.layout,
-            width: c.width,
-            height: c.height,
-            linear: unsafe { data.instance.instance.get_physical_device_format_properties(data.physical_device, vk::Format::from_raw(c.format)) }
-                .optimal_tiling_features
-                .contains(vk::FormatFeatureFlags::SAMPLED_IMAGE_FILTER_LINEAR),
-        });
-    let mut last = data.depth.last_published.lock().unwrap();
-    if *last == candidates {
-        return;
+    let mut candidates = stats.candidates(frame, &layouts);
+    // O pedido da pessoa manda sobre a heurística: a N-ésima candidata da lista.
+    let pick = *data.depth.pick.lock().unwrap();
+    if let Some(n) = pick.candidate
+        && (n as usize) <= candidates.len()
+    {
+        for (i, c) in candidates.iter_mut().enumerate() {
+            c.chosen = i + 1 == n as usize;
+        }
     }
+    let active = candidates.iter().find(|c| c.chosen).cloned();
+    data.depth.watched_image.store(active.as_ref().map_or(0, |c| c.image), Ordering::Relaxed);
+
+    // O que os efeitos recebem: a original (amostrável, com layout conhecido) ou, se pediram um passe, a foto dele.
+    let linear = |format: i32| {
+        unsafe { data.instance.instance.get_physical_device_format_properties(data.physical_device, vk::Format::from_raw(format)) }
+            .optimal_tiling_features
+            .contains(vk::FormatFeatureFlags::SAMPLED_IMAGE_FILTER_LINEAR)
+    };
+    let mut chosen = None;
+    data.depth.snapshot_pass.store(0, Ordering::Relaxed);
+    if let Some(c) = &active {
+        match pick.pass {
+            Some(pass) => {
+                // A foto depois do passe N: precisa da imagem da foto, e a imagem original precisa ter TRANSFER_SRC (armado).
+                let image = unsafe { super::snapshot::ensure(data, vk::Format::from_raw(c.format), c.width, c.height) };
+                if let Some(image) = image {
+                    data.depth.snapshot_pass.store(pass, Ordering::Relaxed);
+                    // Antes da primeira foto a imagem não tem layout: os efeitos só a recebem depois.
+                    if data.depth.snapshot_written.load(Ordering::Relaxed) {
+                        chosen = Some(super::Chosen { image: image.as_raw(), format: c.format, layout: vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL.as_raw(), width: c.width, height: c.height, linear: linear(c.format) });
+                    }
+                }
+            }
+            None if c.sampled && c.layout != 0 => {
+                chosen = Some(super::Chosen { image: c.image, format: c.format, layout: c.layout, width: c.width, height: c.height, linear: linear(c.format) });
+            }
+            None => {}
+        }
+    }
+    *data.depth.chosen.lock().unwrap() = chosen;
+
+    let mut last = data.depth.last_published.lock().unwrap();
+    // Para entender o que o jogo desenha na profundidade (e achar o ponto certo de usá-la): os passes da escolhida.
     let mut passes_summary = String::new();
-    if let Some(c) = candidates.iter().find(|c| c.chosen) {
-        // Os passes da escolhida, para entender o que o jogo desenha na profundidade (e achar o ponto certo de usá-la).
+    if let Some(c) = &active {
         let briefs: Vec<String> = stats
             .passes_of(c.image)
             .iter()
             .enumerate()
-            .map(|(i, p)| format!("{i}:{}d/{}i {}x{} {:?}->{:?}", p.draws, p.indirect, p.area.0, p.area.1, p.load, p.store))
+            .map(|(i, p)| format!("{}:{}d/{}i {}x{} {:?}->{:?}", i + 1, p.draws, p.indirect, p.area.0, p.area.1, p.load, p.store))
             .collect();
-        let summary = briefs.join(" ");
-        passes_summary = summary.clone();
+        passes_summary = briefs.join(" ");
         let mut logged = data.depth.passes_logged.lock().unwrap();
-        if *logged != summary {
-            log!("passes da profundidade escolhida: {summary}");
-            *logged = summary;
-        }
-        drop(logged);
-        let key = |c: &super::observe::Candidate| (c.width, c.height, c.format, c.load, c.store, c.reversed);
-        if last.iter().find(|p| p.chosen).map(key) != Some(key(c)) {
-            log!(
-                "profundidade escolhida: {}x{} formato {} · {} desenhos, {} vértices, {} passe(s) · começa com {:?}, termina com {:?} · invertida: {:?}",
-                c.width,
-                c.height,
-                c.format,
-                c.draws,
-                c.vertices,
-                c.passes,
-                c.load,
-                c.store,
-                c.reversed
-            );
+        if *logged != passes_summary {
+            log!("passes da profundidade escolhida: {passes_summary}");
+            *logged = passes_summary.clone();
         }
     }
-    // Para entender jogos em que a comparação de profundidade não aparece: o que os pipelines criados declaram.
-    {
-        let pipelines = data.depth.pipelines.lock().unwrap();
-        let count = |c: Compare| pipelines.values().filter(|v| **v == c).count();
-        let (greater, less, other) = (count(Compare::Greater), count(Compare::Less), count(Compare::Other));
-        let mut logged = data.depth.pipelines_logged.lock().unwrap();
-        if *logged != (greater, less, other) {
-            *logged = (greater, less, other);
-            log!("pipelines com teste de profundidade fixo: {greater} comparam 'maior', {less} 'menor', {other} outros");
+    if *last != candidates {
+        if let Some(c) = &active {
+            let key = |c: &super::observe::Candidate| (c.width, c.height, c.format, c.load, c.store, c.reversed);
+            if last.iter().find(|p| p.chosen).map(key) != Some(key(c)) {
+                log!(
+                    "profundidade escolhida: {}x{} formato {} · {} desenhos, {} vértices, {} passe(s) · começa com {:?}, termina com {:?} · invertida: {:?}",
+                    c.width,
+                    c.height,
+                    c.format,
+                    c.draws,
+                    c.vertices,
+                    c.passes,
+                    c.load,
+                    c.store,
+                    c.reversed
+                );
+            }
         }
+        // Para entender jogos em que a comparação de profundidade não aparece: o que os pipelines criados declaram.
+        {
+            let pipelines = data.depth.pipelines.lock().unwrap();
+            let count = |c: Compare| pipelines.values().filter(|v| **v == c).count();
+            let (greater, less, other) = (count(Compare::Greater), count(Compare::Less), count(Compare::Other));
+            let mut logged = data.depth.pipelines_logged.lock().unwrap();
+            if *logged != (greater, less, other) {
+                *logged = (greater, less, other);
+                log!("pipelines com teste de profundidade fixo: {greater} comparam 'maior', {less} 'menor', {other} outros");
+            }
+        }
+        *last = candidates.clone();
     }
     crate::status::set_depth(candidates.iter().map(to_status).collect(), passes_summary);
-    *last = candidates;
+}
+
+/// Libera o que a observação criou (a imagem da foto). Chamado ao destruir o dispositivo.
+pub fn destroy(data: &DeviceData) {
+    unsafe { super::snapshot::destroy(data) };
 }
 
 fn to_status(c: &super::observe::Candidate) -> ipc::DepthStatus {

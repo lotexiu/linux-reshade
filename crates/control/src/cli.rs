@@ -18,6 +18,11 @@ uso: lrctl <comando> [opções]
   layers                          mostra os jogos com a layer ativa: resolução, formato, estado
   watch                           só compila, sem atalho global (o daemon já faz isso)
 
+  depth pick candidate <N>        escolhe a N-ésima candidata de profundidade da lista de 'lrctl layers' (de 1); com
+                                  --layer <jogo> vale só para ele
+  depth pick pass <N>             usa a profundidade logo depois do N-ésimo passe que a desenha (de 1), por cópia
+  depth pick auto                 volta à escolha automática
+
   config                          mostra onde estão os efeitos, texturas, presets e cache
   config init [pasta]             prepara a pasta de dados (Shaders, Textures, Presets, config.ini);
                                   sem <pasta>: ~/.local/share/linux-reshade
@@ -73,8 +78,18 @@ pub enum Command {
     Get { bundle: Option<PathBuf>, layer: Option<String>, name: String },
     Set { bundle: Option<PathBuf>, layer: Option<String>, name: String, values: Vec<String> },
     Reset { bundle: Option<PathBuf>, layer: Option<String> },
+    /// Escolhe a candidata de profundidade ou o passe de onde ela é copiada (o jogo precisa ter sido aberto com
+    /// `LINUX_RESHADE_DEPTH=1`).
+    DepthPick { pick: DepthPick, layer: Option<String> },
     /// Edita um preset: o que vale para `game`, ou o arquivo `file`.
     Preset { action: PresetAction, game: Option<String>, file: Option<PathBuf> },
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum DepthPick {
+    Candidate(u32),
+    Pass(u32),
+    Auto,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -142,7 +157,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
     }
     let Some((command, tail)) = rest.split_first() else { return Ok(Command::Status) };
     let no_args = |c: Command| if tail.is_empty() { Ok(c) } else { Err(format!("'{command}' não aceita argumentos")) };
-    if layer.is_some() && !matches!(command.as_str(), "use" | "current" | "uniforms" | "get" | "set" | "reset") {
+    if layer.is_some() && !matches!(command.as_str(), "use" | "current" | "uniforms" | "get" | "set" | "reset" | "depth") {
         return Err(format!("--layer não vale em '{command}'"));
     }
     if (game.is_some() || file.is_some()) && command != "preset" {
@@ -152,6 +167,16 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         return Err("use --game ou --file, não os dois".into());
     }
     match command.as_str() {
+        "depth" => {
+            let number = |n: &str| n.parse::<u32>().ok().filter(|n| *n > 0).ok_or_else(|| format!("número inválido: {n:?} (começa em 1)"));
+            let pick = match tail.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+                ["pick", "candidate", n] => DepthPick::Candidate(number(n)?),
+                ["pick", "pass", n] => DepthPick::Pass(number(n)?),
+                ["pick", "auto"] => DepthPick::Auto,
+                _ => return Err("uso: lrctl depth pick candidate <N> | pass <N> | auto  (--layer <jogo> opcional)".into()),
+            };
+            Ok(Command::DepthPick { pick, layer })
+        }
         "preset" => {
             let action = match tail.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
                 [] | ["show"] => PresetAction::Show,
@@ -226,6 +251,16 @@ mod tests {
 
     fn p(path: &str) -> Option<PathBuf> {
         Some(PathBuf::from(path))
+    }
+
+    #[test]
+    fn depth_pick_commands() {
+        assert_eq!(parse(&args(&["depth", "pick", "candidate", "2"])), Ok(Command::DepthPick { pick: DepthPick::Candidate(2), layer: None }));
+        assert_eq!(parse(&args(&["depth", "pick", "pass", "7", "--layer", "Haste"])), Ok(Command::DepthPick { pick: DepthPick::Pass(7), layer: Some("Haste".into()) }));
+        assert_eq!(parse(&args(&["depth", "pick", "auto"])), Ok(Command::DepthPick { pick: DepthPick::Auto, layer: None }));
+        assert!(parse(&args(&["depth", "pick", "pass", "0"])).is_err());
+        assert!(parse(&args(&["depth", "pick", "pass", "x"])).is_err());
+        assert!(parse(&args(&["depth", "pick"])).is_err());
     }
 
     #[test]

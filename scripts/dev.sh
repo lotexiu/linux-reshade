@@ -402,6 +402,72 @@ cmd_smoke_preset() {
   [ "$ok" = 1 ] && say "smoke (preset): passou" || { warn "smoke (preset): falhou (logs: $LOG_FILE e $tmp/watch.log)"; "$lrctl" layers; exit 1; }
 }
 
+# Teste da observação de profundidade (D1): um vkcube com a layer e a observação ligada; `lrctl layers` precisa listar a
+# imagem de profundidade do cubo como candidata escolhida, com desenhos, e a validation layer não pode reclamar de nada.
+cmd_smoke_depth() {
+  say "smoke (profundidade): abre um vkcube (400x300) por ~15 s; evite mexer em janelas até terminar"
+  cmd_install
+  cmd_build -p linux-reshade-control
+  local lrctl="$ROOT/target/release/lrctl" out; out="$(mktemp -d)"
+  : >"$LOG_FILE"
+  env -u LINUX_RESHADE_BUNDLE "$ENABLE_VAR=1" LINUX_RESHADE_DEPTH_OBSERVE=1 LINUX_RESHADE_LOG="$LOG_FILE" VK_LOADER_LAYERS_ENABLE='*validation*' \
+    timeout 40 vkcube --wsi wayland --width 400 --height 300 --c 700 >"$out/vkcube.txt" 2>&1 &
+  SMOKE_PIDS=($!)
+  trap smoke_auto_cleanup EXIT
+  local ok=1
+  check() { if eval "$2"; then printf '  ok     %s\n' "$1"; else printf '  FALHOU %s\n' "$1"; ok=0; fi; }
+  waitfor() { for _ in $(seq 1 150); do eval "$1" && return 0; sleep 0.1; done; return 1; }
+  check "a layer listou uma candidata de profundidade escolhida" 'waitfor "\"$lrctl\" layers | grep -qE \"^  \\* \\[[0-9]+\\] 400x300\""'
+  check "a candidata tem desenhos e vértices" '"$lrctl" layers | grep -E "^  \* \[[0-9]+\] 400x300" | grep -qE "[1-9][0-9]* desenhos, [1-9][0-9]* vértices"'
+  check "o passe do jogo limpa a profundidade ao começar" '"$lrctl" layers | grep -E "^  \* \[[0-9]+\] 400x300" | grep -q "clear ->"'
+  check "o log da layer registrou a escolha" 'grep -q "profundidade escolhida: 400x300" "$LOG_FILE"'
+  wait "${SMOKE_PIDS[0]}" 2>/dev/null || true
+  check "a validation layer não reclamou de nada" '! grep -q "VUID" "$out/vkcube.txt"'
+  [ "$ok" = 1 ] && say "smoke (profundidade): passou" || { warn "smoke (profundidade): falhou ($out)"; "$lrctl" layers; exit 1; }
+}
+
+# Teste do efeito que usa a profundidade (D2a): um vkcube com a layer ARMADA (acrescenta SAMPLED à profundidade) e a
+# gravação forçada da profundidade (o vkcube a descarta), um preset com o DepthView e o vigia. A técnica precisa
+# ficar "aplicada" (a layer amostrou a imagem original) e a validation layer não pode reclamar de nada.
+cmd_smoke_depth_effect() {
+  say "smoke (efeito de profundidade): abre um vkcube (400x300) por ~25 s; evite mexer em janelas até terminar"
+  cmd_install
+  cmd_build -p linux-reshade-control
+  local lrctl="$ROOT/target/release/lrctl" tmp; tmp="$(mktemp -d)"
+  smoke_isolate "$tmp"
+  mkdir -p "$tmp/Presets/vkcube"
+  printf 'preset=Prof.ini\n' >"$tmp/Presets/vkcube/game.ini"
+  printf 'Techniques=DepthView@DepthView.fx\n' >"$tmp/Presets/vkcube/Prof.ini"
+  SMOKE_PIDS=()
+  trap smoke_auto_cleanup EXIT
+  "$lrctl" off >/dev/null; "$lrctl" use none >/dev/null
+  : >"$LOG_FILE"
+  "$lrctl" watch >"$tmp/watch.log" 2>&1 &
+  SMOKE_PIDS+=($!)
+  env -u LINUX_RESHADE_BUNDLE "$ENABLE_VAR=1" LINUX_RESHADE_DEPTH=1 LINUX_RESHADE_DEPTH_FORCE_STORE=1 LINUX_RESHADE_LOG="$LOG_FILE" \
+    VK_LOADER_LAYERS_ENABLE='*validation*' timeout 60 vkcube --wsi wayland --width 400 --height 300 --c 1500 >"$tmp/vkcube.txt" 2>&1 &
+  SMOKE_PIDS+=($!)
+  local ok=1
+  check() { if eval "$2"; then printf '  ok     %s\n' "$1"; else printf '  FALHOU %s\n' "$1"; ok=0; fi; }
+  waitfor() { for _ in $(seq 1 250); do eval "$1" && return 0; sleep 0.1; done; return 1; }
+  "$lrctl" on >/dev/null
+  check "a profundidade do vkcube ficou amostrável" 'waitfor "\"$lrctl\" layers | grep -E \"^  \\* \\[[0-9]+\\] 400x300\" | grep -q amostrável"'
+  check "a técnica de profundidade foi aplicada" 'waitfor "\"$lrctl\" layers | grep -q \"DepthView  aplicada\""'
+  check "a cadeia foi construída com a profundidade" 'grep -q "cadeia de 1 etapa(s) criada" "$LOG_FILE"'
+  # a foto da profundidade depois do 1º passe (cópia dentro do command buffer do jogo) também é amostrada
+  "$lrctl" depth pick pass 1 >/dev/null
+  check "a layer recebeu o pedido de passe" 'waitfor "grep -q \"pedido para a profundidade: candidata None, passe Some(1)\" \"$LOG_FILE\""'
+  sleep 2
+  check "a técnica continua aplicada com a foto do passe" '"$lrctl" layers | grep -q "DepthView  aplicada"'
+  "$lrctl" depth pick auto >/dev/null
+  check "a layer voltou à escolha automática" 'waitfor "grep -q \"pedido para a profundidade: candidata None, passe None\" \"$LOG_FILE\""'
+  sleep 2
+  "$lrctl" off >/dev/null
+  wait "${SMOKE_PIDS[1]}" 2>/dev/null || true
+  check "a validation layer não reclamou de nada" '! grep -q "VUID" "$tmp/vkcube.txt"'
+  [ "$ok" = 1 ] && say "smoke (efeito de profundidade): passou" || { warn "smoke (efeito de profundidade): falhou ($tmp, $LOG_FILE)"; "$lrctl" layers; grep -E "pulada|profundidade|cadeia" "$LOG_FILE" | tail -8; exit 1; }
+}
+
 # Um daemon antigo (o binário foi recompilado depois de ele subir) continua executando o código velho: ele precisa ser
 # trocado. Devolve sucesso se havia algum desatualizado e o matou.
 kill_stale_daemons() {

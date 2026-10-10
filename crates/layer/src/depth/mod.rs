@@ -10,14 +10,15 @@
 
 mod hooks;
 pub mod observe;
+mod snapshot;
 
-pub use hooks::{end_frame, intercept_name};
+pub use hooks::{destroy, end_frame, intercept_name};
 
 use ash::vk;
 use observe::{FrameStats, ImageInfo, LoadOp, PassRecord, StoreOp};
 use std::collections::HashMap;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 /// Como os pipelines gráficos comparam a profundidade.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -78,6 +79,24 @@ pub struct Chosen {
     pub linear: bool,
 }
 
+/// O que a pessoa pediu para a escolha da profundidade (vem de um arquivo em `/dev/shm`, escrito por `lrctl depth`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Pick {
+    /// Usa a N-ésima candidata (de 1) da lista publicada em vez da escolhida pela heurística.
+    pub candidate: Option<u32>,
+    /// Usa o estado da profundidade logo depois do N-ésimo passe (de 1) que a usa: uma cópia é feita nesse ponto.
+    pub pass: Option<u32>,
+}
+
+/// A imagem própria da layer onde se guarda a cópia da profundidade de um passe.
+pub(crate) struct Snapshot {
+    pub image: vk::Image,
+    pub memory: vk::DeviceMemory,
+    pub format: vk::Format,
+    pub width: u32,
+    pub height: u32,
+}
+
 pub struct Depth {
     pub enabled: AtomicBool,
     /// Armado (`LINUX_RESHADE_DEPTH=1` ao abrir o jogo): a layer acrescenta `SAMPLED` ao uso das imagens de profundidade
@@ -86,7 +105,7 @@ pub struct Depth {
     /// Teste (`LINUX_RESHADE_DEPTH_FORCE_STORE=1`): os render passes que descartam a profundidade ao fim passam a guardá-la,
     /// para jogos como o vkcube poderem ser amostrados. Só vale para render passes criados depois de armado.
     pub force_store: bool,
-    pub(crate) formats: Mutex<HashMap<i32, bool>>,
+    pub(crate) formats: Mutex<HashMap<i32, u64>>,
     /// Layout atual de cada imagem de profundidade (depois do último envio à fila).
     pub(crate) image_layouts: Mutex<HashMap<u64, i32>>,
     pub(crate) next: NextFns,
@@ -103,6 +122,18 @@ pub struct Depth {
     pub(crate) last_published: Mutex<Vec<observe::Candidate>>,
     /// A candidata escolhida que dá para amostrar (com `SAMPLED` e layout conhecido); `None` se não há.
     pub(crate) chosen: Mutex<Option<Chosen>>,
+    /// O que a pessoa pediu (candidata ou passe); vazio = heurística.
+    pub(crate) pick: Mutex<Pick>,
+    /// A imagem da candidata em uso (para o gancho de fim de passe saber qual observar), e o passe de onde copiar (0 = nenhum).
+    pub(crate) watched_image: AtomicU64,
+    pub(crate) snapshot_pass: AtomicU32,
+    /// Quantos passes da imagem observada já terminaram de ser gravados neste quadro.
+    pub(crate) pass_counter: AtomicU32,
+    pub(crate) snapshot: Mutex<Option<Snapshot>>,
+    /// A foto já foi gravada ao menos uma vez (antes disso a imagem está sem layout e não pode ser lida).
+    pub(crate) snapshot_written: AtomicBool,
+    /// Quadros desde a última leitura do arquivo do pedido.
+    pub(crate) frames: AtomicU32,
     /// Quantos pipelines (maior, menor, outro) já foram registrados no log.
     pub(crate) pipelines_logged: Mutex<(usize, usize, usize)>,
     /// O último resumo de passes registrado no log.
@@ -157,6 +188,13 @@ impl Depth {
             frame: Mutex::new(FrameStats::default()),
             last_published: Mutex::new(Vec::new()),
             chosen: Mutex::new(None),
+            pick: Mutex::new(Pick::default()),
+            watched_image: AtomicU64::new(0),
+            snapshot_pass: AtomicU32::new(0),
+            pass_counter: AtomicU32::new(0),
+            snapshot: Mutex::new(None),
+            snapshot_written: AtomicBool::new(false),
+            frames: AtomicU32::new(0),
             pipelines_logged: Mutex::new((usize::MAX, 0, 0)),
             passes_logged: Mutex::new(String::new()),
         }
