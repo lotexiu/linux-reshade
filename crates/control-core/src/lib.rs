@@ -4,6 +4,7 @@
 //! - [`action`]: as ações do usuário (ligar/desligar efeitos) sobre o estado compartilhado
 //! - [`compiler`]: compilação sob demanda dos efeitos por resolução, com cache
 //! - [`game_plan`]: do preset do jogo ao plano que a layer executa
+//! - [`games`]: o preset de cada jogo aberto vira o plano da layer dele
 //! - [`layers`]: a lista de jogos com a layer ativa
 //! - [`location`]: onde estão os dados do usuário (pastas de shaders, presets, cache)
 //! - [`params`]: listar e alterar os parâmetros de um efeito
@@ -13,6 +14,7 @@
 pub mod action;
 pub mod compiler;
 pub mod game_plan;
+pub mod games;
 pub mod layers;
 pub mod location;
 pub mod params;

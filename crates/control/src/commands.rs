@@ -174,7 +174,7 @@ pub fn run(command: Command, state: &ipc::Writer) -> ExitCode {
         Command::Watch => match Compiler::from_env() {
             Ok(compiler) => {
                 println!("vigiando os jogos com a layer (Ctrl+C para sair)");
-                watch::run(&compiler, state)
+                watch::run(&compiler, state, config::Config::load().presets_dir)
             }
             Err(e) => fail(e),
         },

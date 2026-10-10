@@ -21,7 +21,8 @@ pub fn run(state: &ipc::Writer) -> Result<(), Error> {
         match Compiler::from_env() {
             Ok(compiler) => {
                 println!("vigiando os jogos com a layer: compila os efeitos escolhidos por nome para cada resolução");
-                scope.spawn(move || watch::run(&compiler, state));
+                let presets = config::Config::load().presets_dir;
+                scope.spawn(move || watch::run(&compiler, state, presets));
             }
             Err(e) => eprintln!("aviso: sem compilação automática de efeitos ({e})"),
         }

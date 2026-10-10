@@ -339,6 +339,28 @@ echo "$@" >> "$(dirname "$0")/calls.log"
 mkdir -p "$out" && echo '{}' > "$out/manifest.json"
 "#;
 
+    /// Um `fx2spv` de mentira que entrega os bundles reais de teste do postfx (Sepia, Invert, ...) no lugar do
+    /// que compilaria o `.fx` de mesmo nome; um efeito sem bundle de teste falha. Também anota `calls.log`.
+    pub fn bundles_tool() -> String {
+        let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../postfx/tests/data");
+        format!(
+            "#!/bin/sh\nout=\"\"; prev=\"\"; for a in \"$@\"; do [ \"$prev\" = \"-o\" ] && out=\"$a\"; prev=\"$a\"; src=\"$a\"; done\n\
+             echo \"$@\" >> \"$(dirname \"$0\")/calls.log\"\n\
+             name=$(basename \"$src\" .fx)\n[ -d \"{d}/$name\" ] || {{ echo \"sem bundle de teste para $name\" >&2; exit 1; }}\n\
+             mkdir -p \"$out\" && cp -r \"{d}/$name/.\" \"$out/\"\n",
+            d = data.display()
+        )
+    }
+
+    /// Como [`fake`], com `bundles_tool` e os efeitos `Invert` e `Quebrado` (este não tem bundle de teste).
+    pub fn fake_with_bundles(name: &str) -> Fake {
+        let f = fake(name, &bundles_tool());
+        for fx in ["Invert", "Quebrado"] {
+            fs::write(f.root.join(format!("effects/{fx}.fx")), "// de mentira").unwrap();
+        }
+        f
+    }
+
     pub fn calls(f: &Fake) -> Vec<String> {
         fs::read_to_string(f.root.join("calls.log")).map(|t| t.lines().map(String::from).collect()).unwrap_or_default()
     }

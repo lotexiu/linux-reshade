@@ -152,16 +152,22 @@ fn describe(e: &CompileError) -> String {
 }
 
 /// Vigia para sempre: a cada [`INTERVAL`] olha as layers vivas e compila o que falta, contando o que fez.
-pub fn run(compiler: &Compiler, state: &ipc::Writer) -> ! {
+pub fn run(compiler: &Compiler, state: &ipc::Writer, presets_dir: Option<std::path::PathBuf>) -> ! {
     let mut failures = Failures::new();
+    let mut games = presets_dir.map(crate::games::Games::new);
     let mut last_prune = std::time::Instant::now();
     loop {
         let layers = ipc::live_layers().unwrap_or_default();
         let report = tick(compiler, state, &layers, &mut failures);
+        let games_report = games.as_mut().map(|g| g.tick(compiler, state, &layers, &mut failures));
         if last_prune.elapsed() >= PRUNE_EVERY {
             last_prune = std::time::Instant::now();
             state.prune_channels();
-            let removed = compiler.prune(&in_use(compiler, &effective(state, &layers)), KEEP_PER_EFFECT);
+            let mut used = in_use(compiler, &effective(state, &layers));
+            if let Some(g) = &games {
+                used.extend(g.in_use(&layers));
+            }
+            let removed = compiler.prune(&used, KEEP_PER_EFFECT);
             if removed > 0 {
                 println!("cache: {removed} bundle(s) antigo(s) removido(s)");
             }
@@ -171,6 +177,17 @@ pub fn run(compiler: &Compiler, state: &ipc::Writer) -> ! {
         }
         for (job, why) in &report.failed {
             eprintln!("falhou ao compilar {} para {}x{}: {why}", job.name, job.width, job.height);
+        }
+        if let Some(r) = games_report {
+            for (game, steps) in &r.published {
+                println!("plano de {game} publicado: {steps} etapa(s)");
+            }
+            for job in &r.compiled {
+                println!("compilado {} para {}x{}", job.name, job.width, job.height);
+            }
+            for (who, why) in &r.warnings {
+                eprintln!("aviso ({who}): {why}");
+            }
         }
         std::thread::sleep(INTERVAL);
     }

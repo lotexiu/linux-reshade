@@ -107,28 +107,10 @@ pub fn build(compiler: &Compiler, preset: &Preset, width: u32, height: u32) -> B
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compiler::testing::fake;
-    use std::fs;
-    use std::path::Path;
-
-    /// Um `fx2spv` de mentira que entrega os bundles reais de teste do postfx (Sepia, Invert) no lugar do que
-    /// compilaria o `.fx` de mesmo nome; um efeito sem bundle de teste falha.
-    fn tool() -> String {
-        let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("../postfx/tests/data");
-        format!(
-            "#!/bin/sh\nout=\"\"; prev=\"\"; for a in \"$@\"; do [ \"$prev\" = \"-o\" ] && out=\"$a\"; prev=\"$a\"; src=\"$a\"; done\n\
-             name=$(basename \"$src\" .fx)\n[ -d \"{d}/$name\" ] || {{ echo \"sem bundle de teste para $name\" >&2; exit 1; }}\n\
-             mkdir -p \"$out\" && cp -r \"{d}/$name/.\" \"$out/\"\n",
-            d = data.display()
-        )
-    }
+    use crate::compiler::testing::fake_with_bundles;
 
     fn setup(name: &str) -> crate::compiler::testing::Fake {
-        let f = fake(name, &tool());
-        for fx in ["Invert", "Quebrado"] {
-            fs::write(f.root.join(format!("effects/{fx}.fx")), "// de mentira").unwrap();
-        }
-        f
+        fake_with_bundles(name)
     }
 
     fn strength(step: &PlanStep) -> f32 {
