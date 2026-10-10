@@ -90,6 +90,12 @@ Teste ao vivo com `lrctl depth pick pass N` (foto da profundidade depois do N-é
   (macro automática); o `RESHADE_DEPTH_INPUT_IS_UPSIDE_DOWN=1` precisa ser posto à mão (campo Macros do painel).
   Não há como detectar de forma confiável: vira escolha por jogo (D3). Com o "Show live preview" ligado os controles
   `iUIReversed`/`iUIUpsideDown` valem; com ele desligado valem só as macros.
+- Efeitos de profundidade reais no Haste (2026-10-10, regra do `DontCare`, `UPSIDE_DOWN=1`, preset de teste apagado depois):
+  `DepthHaze`, `AdaptiveFog` (névoa por distância, correta), `CinematicDOF` (desfoque) e `DepthDarkness` (tela preta é o
+  padrão do próprio efeito: foco em 0,0005 do plano distante) funcionam. `HeightFog` não aplica: pede `fognoise.jpg` (JPEG
+  ainda não suportado). O DOF borra também o texto da UI do jogo: falta o modo "antes da UI". `smoke-depth` e
+  `smoke-depth-effect` passaram depois da regra.
+
 - Falha achada no teste: uma cadeia que falhava por falta de profundidade nunca era tentada de novo (corrigido).
 
 ## Passos (cada um verificável e commitado)
