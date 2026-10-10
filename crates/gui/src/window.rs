@@ -716,53 +716,26 @@ impl Ui {
         names.append(&title);
         names.append(&subtitle);
 
-        // Efeito de uma técnica só: o estado no jogo e o problema, direto embaixo do nome. Com várias: uma linha por técnica.
-        if multi {
-            for t in &g.techniques {
-                let line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-                line.set_margin_top(2);
-                let sub = gtk::CheckButton::with_label(&t.label);
-                sub.set_active(t.enabled);
-                sub.set_tooltip_text(Some("Ligar ou desligar só esta técnica"));
-                sub.connect_toggled({
-                    let (weak, id) = (weak.clone(), t.id.clone());
-                    move |c| {
-                        if let Some(ui) = weak.upgrade()
-                            && !ui.updating.get()
-                        {
-                            let on = c.is_active();
-                            ui.act(|h| h.set_technique_enabled(&id, on));
-                        }
-                    }
-                });
-                line.append(&sub);
-                if let Some(state) = &t.runtime {
-                    line.append(&Self::runtime_label(state));
-                }
-                names.append(&line);
-                if let Some(problem) = &t.problem {
-                    let p = gtk::Label::new(Some(problem));
-                    p.set_halign(gtk::Align::Start);
-                    p.set_xalign(0.0);
-                    p.set_wrap(true);
-                    p.add_css_class("warning");
-                    p.add_css_class("caption");
-                    names.append(&p);
-                }
-            }
-        } else if let Some(t) = g.techniques.first() {
-            if let Some(state) = &t.runtime {
-                names.append(&Self::runtime_label(state));
-            }
-            if let Some(problem) = &t.problem {
-                let p = gtk::Label::new(Some(problem));
-                p.set_halign(gtk::Align::Start);
-                p.set_xalign(0.0);
-                p.set_wrap(true);
-                p.add_css_class("warning");
-                p.add_css_class("caption");
-                names.append(&p);
-            }
+        // Embaixo do nome fica só um resumo do que a layer fez no jogo aberto e de problemas; as técnicas de um efeito
+        // com várias ficam dentro do painel que abre (⋮), como os parâmetros.
+        let skipped = g.techniques.iter().find_map(|t| match &t.runtime {
+            Some(ipc::TechniqueState::Skipped(why)) => Some(why.clone()),
+            _ => None,
+        });
+        let applied = g.techniques.iter().filter(|t| matches!(t.runtime, Some(ipc::TechniqueState::Applied))).count();
+        if let Some(why) = &skipped {
+            names.append(&Self::runtime_label(&ipc::TechniqueState::Skipped(why.clone())));
+        } else if applied > 0 {
+            names.append(&Self::runtime_label(&ipc::TechniqueState::Applied));
+        }
+        if let Some(problem) = g.techniques.iter().find_map(|t| t.problem.as_ref()) {
+            let p = gtk::Label::new(Some(problem));
+            p.set_halign(gtk::Align::Start);
+            p.set_xalign(0.0);
+            p.set_wrap(true);
+            p.add_css_class("warning");
+            p.add_css_class("caption");
+            names.append(&p);
         }
 
         let icon_button = |icon: &str, tip: &str| {
@@ -806,7 +779,7 @@ impl Ui {
         head.append(&check);
         head.append(&names);
 
-        // Os parâmetros do efeito, num painel que abre e fecha.
+        // O painel que abre e fecha (⋮): as técnicas do efeito (se são várias) e os parâmetros dele.
         let controls = (!g.controls.is_empty()).then(|| {
             let view = ControlsView::new(
                 {
@@ -825,29 +798,63 @@ impl Ui {
         margins(&outer, 8);
         let top = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         top.append(&head);
-        if let Some(view) = &controls {
-            let revealer = gtk::Revealer::new();
+        let has_panel = multi || controls.is_some();
+        let revealer = gtk::Revealer::new();
+        if has_panel {
             let panel = gtk::Box::new(gtk::Orientation::Vertical, 8);
             panel.set_margin_start(32);
             panel.set_margin_top(6);
-            panel.append(&view.borrow().root);
-            let reset = gtk::Button::with_label("Restaurar os padrões do efeito");
-            reset.set_halign(gtk::Align::Start);
-            reset.connect_clicked({
-                let (weak, file) = (weak.clone(), file.clone());
-                move |_| {
-                    if let Some(ui) = weak.upgrade() {
-                        ui.act(|h| h.reset_effect(&file));
+            if multi {
+                let list = gtk::Box::new(gtk::Orientation::Vertical, 4);
+                let heading = gtk::Label::new(Some("Técnicas"));
+                heading.set_halign(gtk::Align::Start);
+                heading.add_css_class("dim-label");
+                heading.add_css_class("caption");
+                list.append(&heading);
+                for t in &g.techniques {
+                    let line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+                    let sub = gtk::CheckButton::with_label(&t.label);
+                    sub.set_active(t.enabled);
+                    sub.set_tooltip_text(Some("Ligar ou desligar só esta técnica"));
+                    sub.connect_toggled({
+                        let (weak, id) = (weak.clone(), t.id.clone());
+                        move |c| {
+                            if let Some(ui) = weak.upgrade()
+                                && !ui.updating.get()
+                            {
+                                let on = c.is_active();
+                                ui.act(|h| h.set_technique_enabled(&id, on));
+                            }
+                        }
+                    });
+                    line.append(&sub);
+                    if let Some(state) = &t.runtime {
+                        line.append(&Self::runtime_label(state));
                     }
+                    list.append(&line);
                 }
-            });
-            panel.append(&reset);
+                panel.append(&list);
+            }
+            if let Some(view) = &controls {
+                panel.append(&view.borrow().root);
+                let reset = gtk::Button::with_label("Restaurar os padrões do efeito");
+                reset.set_halign(gtk::Align::Start);
+                reset.connect_clicked({
+                    let (weak, file) = (weak.clone(), file.clone());
+                    move |_| {
+                        if let Some(ui) = weak.upgrade() {
+                            ui.act(|h| h.reset_effect(&file));
+                        }
+                    }
+                });
+                panel.append(&reset);
+            }
             revealer.set_child(Some(&panel));
             let open = self.expanded.borrow().contains(&file);
             revealer.set_reveal_child(open);
             let toggle = gtk::ToggleButton::new();
             toggle.set_icon_name("view-more-symbolic");
-            toggle.set_tooltip_text(Some("Parâmetros"));
+            toggle.set_tooltip_text(Some(if multi { "Técnicas e parâmetros" } else { "Parâmetros" }));
             toggle.add_css_class("flat");
             toggle.set_valign(gtk::Align::Center);
             toggle.set_active(open);
@@ -865,16 +872,13 @@ impl Ui {
                 }
             });
             top.append(&toggle);
-            top.append(&up);
-            top.append(&down);
-            top.append(&remove);
-            outer.append(&top);
+        }
+        top.append(&up);
+        top.append(&down);
+        top.append(&remove);
+        outer.append(&top);
+        if has_panel {
             outer.append(&revealer);
-        } else {
-            top.append(&up);
-            top.append(&down);
-            top.append(&remove);
-            outer.append(&top);
         }
 
         let row = gtk::ListBoxRow::new();
