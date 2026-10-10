@@ -5,16 +5,20 @@
 //! resolução do swapchain, e assim um mesmo efeito escolhido serve a jogos de resoluções diferentes
 //! (cada resolução tem o seu bundle compilado).
 //!
+//! Com um *plano* publicado no canal do jogo (ver `ipc::plan`) vale o plano: uma lista de etapas, cada uma com
+//! o seu modelo de caminho, a técnica e o bloco de uniforms. Sem plano, vale a escolha única de antes, que
+//! é uma cadeia de uma etapa.
+//!
 //! O custo por frame é uma leitura atômica (a geração da seleção). O trabalho de verdade (ler o
 //! disco, validar) só acontece quando a escolha é publicada de novo, e isso sobe a *época*: cada
 //! swapchain compara a época que viu com a atual e, se mudou, resolve seu bundle outra vez.
 
 use crate::log::log;
 use fx_bundle::Bundle;
-use ipc::{ChannelSelection, SelectionRead};
+use ipc::{ChannelSelection, Plan, PlanRead, SelectionRead};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
 /// Valor de `LAST_GENERATION` antes de a seleção ter sido lida.
@@ -24,27 +28,49 @@ const ABSENT: u32 = u32::MAX - 1;
 
 /// Última geração da seleção que já foi processada.
 static LAST_GENERATION: AtomicU64 = AtomicU64::new(NEVER);
+/// Última geração do plano do jogo que já foi processada (`ABSENT` se não há canal).
+static LAST_PLAN_GENERATION: AtomicU32 = AtomicU32::new(ABSENT);
 /// Sobe a cada vez que a escolha é publicada de novo. 0 = nunca foi lida.
 static EPOCH: AtomicU64 = AtomicU64::new(0);
 
 struct State {
-    /// O modelo de caminho vigente, se houver.
+    /// O modelo de caminho vigente, se houver (sem plano).
     template: Option<String>,
+    /// O plano do jogo, se o app de controle publicou um: manda sobre `template`.
+    plan: Option<Plan>,
     /// Bundles já carregados nesta época, por diretório. É esvaziado a cada nova publicação, para um
     /// efeito recompilado (mesmo diretório, conteúdo novo) ser lido de novo.
     cache: HashMap<PathBuf, Arc<Bundle>>,
 }
 
-static STATE: LazyLock<Mutex<State>> = LazyLock::new(|| Mutex::new(State { template: None, cache: HashMap::new() }));
+static STATE: LazyLock<Mutex<State>> = LazyLock::new(|| Mutex::new(State { template: None, plan: None, cache: HashMap::new() }));
 
-/// O que a escolha dá para um swapchain de certo tamanho.
+/// De onde vêm os uniforms de uma etapa.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StepParams {
+    /// Os blocos do app de controle (canal do jogo e global), como sempre foi com a escolha única.
+    Legacy,
+    /// Os do plano: a imagem do buffer de uniforms, ou os padrões do manifesto se vazia ou de outro efeito.
+    Plan(Option<Vec<u8>>),
+}
+
+/// Uma etapa pronta para construir: o bundle da resolução, a técnica e de onde vêm os uniforms.
+#[derive(Clone)]
+pub struct ResolvedStep {
+    pub bundle: Arc<Bundle>,
+    pub technique: usize,
+    pub params: StepParams,
+}
+
+/// O que a escolha (ou o plano) dá para um swapchain de certo tamanho.
 pub enum Resolved {
-    /// Nenhum efeito escolhido.
+    /// Nenhum efeito escolhido (ou plano sem etapas).
     None,
-    /// Há efeito escolhido, mas ainda não existe um bundle para esta resolução (o app de controle o compila).
-    Waiting(PathBuf),
-    Ready(Arc<Bundle>),
-    /// O diretório existe, mas o bundle não carrega.
+    /// Há efeito escolhido, mas ainda faltam bundles para esta resolução (o app de controle os compila).
+    Waiting(Vec<PathBuf>),
+    /// A cadeia, na ordem de execução.
+    Ready(Vec<ResolvedStep>),
+    /// Um diretório existe, mas o bundle não carrega, ou a técnica pedida não existe.
     Invalid(String),
 }
 
@@ -86,38 +112,60 @@ fn choose(own: Option<ChannelSelection>, global: impl FnOnce() -> SelectionRead,
 pub fn epoch() -> u64 {
     let global = crate::control::reader();
     let own = crate::control::channel();
-    // As gerações dos dois canais viram uma só chave: qualquer publicação em qualquer um a muda.
+    // As gerações dos canais viram uma chave: qualquer publicação em qualquer um a muda.
     let generation = u64::from(global.map_or(ABSENT, |r| r.selection_generation())) << 32 | u64::from(own.map_or(ABSENT, |c| c.selection_generation()));
-    if generation == LAST_GENERATION.load(Ordering::Acquire) {
+    let plan_generation = own.map_or(ABSENT, |c| c.plan_generation());
+    if generation == LAST_GENERATION.load(Ordering::Acquire) && plan_generation == LAST_PLAN_GENERATION.load(Ordering::Acquire) {
         return EPOCH.load(Ordering::Acquire);
     }
-    let template = match choose(own.map(|c| c.read_selection()), || global.map_or(SelectionRead::Cleared, |r| r.read_selection()), from_environment) {
-        Choice::Unstable => return EPOCH.load(Ordering::Acquire),
-        Choice::Template(template) => template,
+    let plan = match own.map(|c| c.read_plan()) {
+        Some(PlanRead::Unstable) => return EPOCH.load(Ordering::Acquire),
+        Some(PlanRead::Plan(plan)) => Some(plan),
+        Some(PlanRead::None) | None => None,
+    };
+    let template = if plan.is_some() {
+        None
+    } else {
+        match choose(own.map(|c| c.read_selection()), || global.map_or(SelectionRead::Cleared, |r| r.read_selection()), from_environment) {
+            Choice::Unstable => return EPOCH.load(Ordering::Acquire),
+            Choice::Template(template) => template,
+        }
     };
     let mut state = STATE.lock().unwrap();
+    if state.plan != plan {
+        match &plan {
+            Some(p) => log!("plano do jogo: {} etapa(s)", p.steps.len()),
+            None => log!("sem plano do jogo"),
+        }
+        state.plan = plan;
+    }
     if state.template != template {
         match &template {
             Some(t) => log!("efeito escolhido: {t}"),
-            None => log!("nenhum efeito escolhido"),
+            None if state.plan.is_none() => log!("nenhum efeito escolhido"),
+            None => {}
         }
         state.template = template;
     }
     state.cache.clear();
     LAST_GENERATION.store(generation, Ordering::Release);
+    LAST_PLAN_GENERATION.store(plan_generation, Ordering::Release);
     EPOCH.fetch_add(1, Ordering::AcqRel) + 1
 }
 
-/// O bundle da escolha vigente para um swapchain de `width` x `height`.
-pub fn resolve(width: u32, height: u32) -> Resolved {
-    let mut state = STATE.lock().unwrap();
-    let Some(template) = state.template.clone() else { return Resolved::None };
-    let dir = expand(&template, width, height);
+enum Loaded {
+    Ready(Arc<Bundle>),
+    Missing(PathBuf),
+    Invalid(String),
+}
+
+/// O bundle de um diretório, do cache desta época ou do disco.
+fn load(state: &mut State, dir: PathBuf) -> Loaded {
     if let Some(bundle) = state.cache.get(&dir) {
-        return Resolved::Ready(bundle.clone());
+        return Loaded::Ready(bundle.clone());
     }
     if !dir.join("manifest.json").is_file() {
-        return Resolved::Waiting(dir);
+        return Loaded::Missing(dir);
     }
     match Bundle::load(&dir) {
         Ok(bundle) => {
@@ -125,12 +173,59 @@ pub fn resolve(width: u32, height: u32) -> Resolved {
             log!("bundle carregado: {} ({}x{}, {} técnica(s))", dir.display(), t.width, t.height, bundle.manifest.techniques.len());
             let bundle = Arc::new(bundle);
             state.cache.insert(dir, bundle.clone());
-            Resolved::Ready(bundle)
+            Loaded::Ready(bundle)
         }
         Err(e) => {
             log!("bundle {} recusado: {e}", dir.display());
-            Resolved::Invalid(e.to_string())
+            Loaded::Invalid(e.to_string())
         }
+    }
+}
+
+/// A cadeia vigente para um swapchain de `width` x `height`.
+pub fn resolve(width: u32, height: u32) -> Resolved {
+    let mut state = STATE.lock().unwrap();
+    if let Some(plan) = state.plan.clone() {
+        return resolve_plan(&mut state, &plan, width, height);
+    }
+    let Some(template) = state.template.clone() else { return Resolved::None };
+    match load(&mut state, expand(&template, width, height)) {
+        Loaded::Ready(bundle) => Resolved::Ready(vec![ResolvedStep { bundle, technique: 0, params: StepParams::Legacy }]),
+        Loaded::Missing(dir) => Resolved::Waiting(vec![dir]),
+        Loaded::Invalid(why) => Resolved::Invalid(why),
+    }
+}
+
+fn resolve_plan(state: &mut State, plan: &Plan, width: u32, height: u32) -> Resolved {
+    let (mut steps, mut missing) = (Vec::new(), Vec::new());
+    for (n, step) in plan.steps.iter().enumerate() {
+        let bundle = match load(state, expand(&step.template, width, height)) {
+            Loaded::Ready(bundle) => bundle,
+            Loaded::Missing(dir) => {
+                missing.push(dir);
+                continue;
+            }
+            Loaded::Invalid(why) => return Resolved::Invalid(format!("etapa {n}: {why}")),
+        };
+        let technique = if step.technique.is_empty() {
+            0
+        } else {
+            match postfx::chain::technique_index(&bundle, &step.technique) {
+                Some(i) => i,
+                None => return Resolved::Invalid(format!("etapa {n}: o efeito não tem a técnica {:?}", step.technique)),
+            }
+        };
+        // Os uniforms do plano só valem para o efeito que o controlador tinha em mente.
+        let uniforms = (!step.uniforms.is_empty() && step.params_id == bundle.params_id()).then(|| step.uniforms.clone());
+        if !step.uniforms.is_empty() && uniforms.is_none() {
+            log!("etapa {n}: uniforms do plano são de outro efeito; valem os padrões");
+        }
+        steps.push(ResolvedStep { bundle, technique, params: StepParams::Plan(uniforms) });
+    }
+    match (missing.is_empty(), steps.is_empty()) {
+        (false, _) => Resolved::Waiting(missing),
+        (true, true) => Resolved::None,
+        (true, false) => Resolved::Ready(steps),
     }
 }
 

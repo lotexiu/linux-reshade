@@ -1,16 +1,15 @@
 //! Efeito de pós-processamento de um swapchain: criação preguiçosa dos recursos do `postfx`,
 //! submissão a cada present e destruição.
 
-use crate::bundle::{self, Resolved};
+use crate::bundle::{self, Resolved, ResolvedStep, StepParams};
 use crate::log::log;
 use crate::params::ParamState;
 use crate::state::DeviceData;
 use ash::vk::{self, Handle};
-use fx_bundle::Bundle;
 use ipc::{EffectState, SwapchainStatus};
-use postfx::Effect;
 use postfx::effect::{FrameInfo, Target, utc_date};
-use std::sync::{Arc, LazyLock};
+use postfx::{Chain, Step};
+use std::sync::LazyLock;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// Início da contagem do `source = "timer"` (aproximadamente o início do jogo: é tocado na criação da instância).
@@ -29,18 +28,37 @@ fn frame_info(now: Instant, previous: Option<Instant>, frame_count: u64) -> Fram
 
 /// Recursos que só existem depois do primeiro present com os efeitos ligados.
 struct Built {
-    effect: Effect,
-    /// Identifica o bundle (muda a cada resolução); serve para saber se o efeito construído ainda vale.
-    bundle_id: u64,
-    /// Identifica os parâmetros do efeito nos blocos publicados pelo app de controle: igual em todas as
-    /// resoluções, para um valor ajustado valer para todos os jogos.
-    params_id: u64,
-    params: crate::params::ParamState,
+    chain: Chain,
+    /// Identifica o que foi construído (bundle e técnica de cada etapa); serve para saber se a cadeia
+    /// construída ainda vale quando a escolha muda.
+    signature: Vec<(u64, usize)>,
+    /// Um por etapa, na mesma ordem.
+    params: Vec<StepRuntime>,
     /// Um semáforo por imagem do swapchain: o da imagem sinaliza que o efeito terminou nela.
     semaphores: Vec<vk::Semaphore>,
     /// Uma fence por imagem, sinalizada quando o command buffer dela termina. Garante que o buffer
     /// não é reenviado enquanto ainda executa (o que o swapchain sugere, mas não garante).
     fences: Vec<vk::Fence>,
+}
+
+/// De onde uma etapa tira os uniforms a cada frame.
+struct StepRuntime {
+    /// Identifica os parâmetros do efeito nos blocos publicados pelo app de controle: igual em todas as
+    /// resoluções, para um valor ajustado valer para todos os jogos.
+    params_id: u64,
+    source: StepSource,
+}
+
+enum StepSource {
+    /// Os blocos publicados (do jogo, antes do global); só a escolha única de um efeito usa.
+    Published(ParamState),
+    /// A imagem do plano; `None` deixa os padrões do manifesto.
+    Plan(Option<Vec<u8>>),
+}
+
+/// A assinatura de uma cadeia: o que identifica o que foi construído.
+fn signature(steps: &[ResolvedStep]) -> Vec<(u64, usize)> {
+    steps.iter().map(|s| (s.bundle.id, s.technique)).collect()
 }
 
 /// Quanto esperar a execução anterior de uma imagem antes de desistir de aplicar o efeito neste frame.
@@ -64,8 +82,8 @@ pub struct SwapchainFx {
     fx: Fx,
     /// Época da escolha de efeito (ver `bundle::epoch`) que este swapchain já resolveu.
     seen_epoch: u64,
-    /// O bundle que a escolha dá para a resolução deste swapchain.
-    bundle: Option<Arc<Bundle>>,
+    /// A cadeia que a escolha dá para a resolução deste swapchain (vazia = nenhuma).
+    steps: Vec<ResolvedStep>,
     /// O que foi publicado para o app de controle.
     state: EffectState,
     /// Quando o present anterior deste swapchain começou (para o `frametime`).
@@ -79,7 +97,7 @@ unsafe impl Send for SwapchainFx {}
 impl SwapchainFx {
     pub fn new(handle: u64, images: Vec<vk::Image>, format: vk::Format, extent: vk::Extent2D, unusable: Option<String>) -> Self {
         let state = unusable.clone().map_or(EffectState::Idle, EffectState::Unavailable);
-        let fx = Self { handle, images, format, extent, unusable, fx: Fx::Unbuilt, seen_epoch: u64::MAX, bundle: None, state, last_present: None };
+        let fx = Self { handle, images, format, extent, unusable, fx: Fx::Unbuilt, seen_epoch: u64::MAX, steps: Vec::new(), state, last_present: None };
         crate::status::update(handle, fx.status());
         fx
     }
@@ -109,32 +127,40 @@ impl SwapchainFx {
         if self.unusable.is_some() {
             return;
         }
-        let (bundle, state) = match bundle::resolve(self.extent.width, self.extent.height) {
-            Resolved::None => (None, EffectState::Idle),
-            Resolved::Waiting(dir) => {
-                log!("swapchain {}x{}: ainda não há bundle, esperando {}", self.extent.width, self.extent.height, dir.display());
-                (None, EffectState::Waiting)
+        let (steps, state) = match bundle::resolve(self.extent.width, self.extent.height) {
+            Resolved::None => (Vec::new(), EffectState::Idle),
+            Resolved::Waiting(dirs) => {
+                let dirs: Vec<_> = dirs.iter().map(|d| d.display().to_string()).collect();
+                log!("swapchain {}x{}: ainda não há bundle, esperando {}", self.extent.width, self.extent.height, dirs.join(", "));
+                (Vec::new(), EffectState::Waiting)
             }
-            Resolved::Invalid(why) => (None, EffectState::Failed(why)),
-            Resolved::Ready(b) => (Some(b), EffectState::Ready),
+            Resolved::Invalid(why) => (Vec::new(), EffectState::Failed(why)),
+            Resolved::Ready(steps) => (steps, EffectState::Ready),
         };
-        let new_id = bundle.as_ref().map(|b| b.id);
+        let new_signature = signature(&steps);
         if let Fx::Ready(built) = &self.fx {
-            if Some(built.bundle_id) != new_id {
-                log!("efeito do swapchain {:#x} descartado: o bundle mudou", self.handle);
+            if built.signature != new_signature {
+                log!("efeito do swapchain {:#x} descartado: a escolha mudou", self.handle);
                 // A GPU precisa estar ociosa para destruir os recursos.
                 unsafe {
                     let _ = data.device.device_wait_idle();
                     Self::destroy_fx(&mut self.fx, &data.device);
                 }
                 self.fx = Fx::Unbuilt;
+            } else if let Some(built) = match &mut self.fx { Fx::Ready(b) => Some(b), _ => None } {
+                // A mesma cadeia: só os uniforms do plano podem ter mudado.
+                for (runtime, step) in built.params.iter_mut().zip(&steps) {
+                    if let (StepSource::Plan(bytes), StepParams::Plan(new)) = (&mut runtime.source, &step.params) {
+                        *bytes = new.clone();
+                    }
+                }
             }
         }
-        // Uma falha anterior era do bundle antigo: com outro bundle vale tentar de novo.
-        if matches!(self.fx, Fx::Failed(_)) && self.bundle.as_ref().map(|b| b.id) != new_id {
+        // Uma falha anterior era da cadeia antiga: com outra vale tentar de novo.
+        if matches!(self.fx, Fx::Failed(_)) && signature(&self.steps) != new_signature {
             self.fx = Fx::Unbuilt;
         }
-        self.bundle = bundle;
+        self.steps = steps;
         let state = match &self.fx {
             Fx::Failed(why) => EffectState::Failed(why.clone()),
             _ => state,
@@ -155,7 +181,7 @@ impl SwapchainFx {
     unsafe fn destroy_fx(fx: &mut Fx, device: &ash::Device) {
         if let Fx::Ready(mut built) = std::mem::replace(fx, Fx::Unbuilt) {
             unsafe {
-                built.effect.destroy(device);
+                built.chain.destroy(device);
                 for s in built.semaphores.drain(..) {
                     device.destroy_semaphore(s, None);
                 }
@@ -166,13 +192,15 @@ impl SwapchainFx {
         }
     }
 
-    unsafe fn build(&mut self, data: &DeviceData, bundle: &Bundle, queue: vk::Queue, queue_family: u32) -> Result<Built, String> {
-        let t = bundle.manifest.target;
-        if (t.width, t.height) != (self.extent.width, self.extent.height) {
-            return Err(format!(
-                "o bundle foi compilado para {}x{} e o swapchain é {}x{}",
-                t.width, t.height, self.extent.width, self.extent.height
-            ));
+    unsafe fn build(&mut self, data: &DeviceData, steps: &[ResolvedStep], queue: vk::Queue, queue_family: u32) -> Result<Built, String> {
+        for (n, step) in steps.iter().enumerate() {
+            let t = step.bundle.manifest.target;
+            if (t.width, t.height) != (self.extent.width, self.extent.height) {
+                return Err(format!(
+                    "etapa {n}: o bundle foi compilado para {}x{} e o swapchain é {}x{}",
+                    t.width, t.height, self.extent.width, self.extent.height
+                ));
+            }
         }
         let target = Target {
             images: &self.images,
@@ -186,20 +214,28 @@ impl SwapchainFx {
                 if result == vk::Result::SUCCESS { Ok(()) } else { Err(result) }
             }),
         };
+        let chain_steps: Vec<Step<'_>> = steps.iter().map(|s| Step { bundle: &s.bundle, technique: s.technique }).collect();
         unsafe {
-            let effect = Effect::new(&data.device, &data.memory, bundle, 0, &target, queue).map_err(|e| e.to_string())?;
-            let mut semaphores = Vec::new();
-            let mut fences = Vec::new();
+            let chain = Chain::new(&data.device, &data.memory, &chain_steps, &target, queue).map_err(|e| e.to_string())?;
+            let params = steps
+                .iter()
+                .map(|s| StepRuntime {
+                    params_id: s.bundle.params_id(),
+                    source: match &s.params {
+                        StepParams::Legacy => StepSource::Published(ParamState::new(fx_bundle::uniforms::default_block(&s.bundle.manifest))),
+                        StepParams::Plan(bytes) => StepSource::Plan(bytes.clone()),
+                    },
+                })
+                .collect();
+            let mut built = Built { chain, signature: signature(steps), params, semaphores: Vec::new(), fences: Vec::new() };
             for _ in &self.images {
                 let semaphore = data.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None);
                 // Nasce sinalizada: a primeira espera por ela não bloqueia.
-                let fence = data
-                    .device
-                    .create_fence(&vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED), None);
+                let fence = data.device.create_fence(&vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED), None);
                 match (semaphore, fence) {
                     (Ok(s), Ok(f)) => {
-                        semaphores.push(s);
-                        fences.push(f);
+                        built.semaphores.push(s);
+                        built.fences.push(f);
                     }
                     (s, f) => {
                         // Libera o par que deu certo e tudo o que já foi criado.
@@ -210,14 +246,13 @@ impl SwapchainFx {
                         if let Ok(f) = f {
                             data.device.destroy_fence(f, None);
                         }
-                        let mut partial = Fx::Ready(Built { effect, bundle_id: bundle.id, params_id: bundle.params_id(), params: ParamState::new(Vec::new()), semaphores, fences });
+                        let mut partial = Fx::Ready(built);
                         Self::destroy_fx(&mut partial, &data.device);
                         return Err(format!("falha ao criar semáforo/fence (erro {})", error.as_raw()));
                     }
                 }
             }
-            let params = ParamState::new(fx_bundle::uniforms::default_block(&bundle.manifest));
-            Ok(Built { effect, bundle_id: bundle.id, params_id: bundle.params_id(), params, semaphores, fences })
+            Ok(built)
         }
     }
 }
@@ -251,13 +286,17 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
         }
 
         if matches!(fx.fx, Fx::Unbuilt) {
-            let bundle = fx.bundle.clone()?; // sem bundle para esta resolução: nada a desenhar
+            if fx.steps.is_empty() {
+                return None; // sem bundle para esta resolução: nada a desenhar
+            }
+            let steps = fx.steps.clone();
             let family = *data.queues.lock().unwrap().get(&queue.as_raw())?;
-            fx.fx = match fx.build(data, &bundle, queue, family) {
+            fx.fx = match fx.build(data, &steps, queue, family) {
                 Ok(built) => {
                     log!("efeito criado para o swapchain {:#x} ({} imagens)", swapchain.as_raw(), fx.images.len());
-                    for ignored in built.effect.ignored_sources() {
-                        log!("uniform sem fonte no runtime (fica no valor padrão): {ignored}");
+                    log!("cadeia de {} etapa(s) criada", built.chain.len());
+                    for (step, ignored) in built.chain.ignored_sources() {
+                        log!("etapa {step}: uniform sem fonte no runtime (fica no valor padrão): {ignored}");
                     }
                     Fx::Ready(built)
                 }
@@ -280,19 +319,27 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
         }
 
         // A fence garante que a GPU terminou com o buffer de uniforms desta imagem: pode reescrevê-lo.
-        // Primeiro os parâmetros do app de controle (a imagem inteira do buffer)...
+        // Primeiro os parâmetros de cada etapa (a imagem inteira do buffer)...
         let own = crate::control::channel().map(|c| c as &dyn ipc::ParamSource);
         let global = crate::control::reader().map(|r| r as &dyn ipc::ParamSource);
-        if (own.is_some() || global.is_some()) && let Some(bytes) = built.params.next(own, global, built.params_id) {
-            built.effect.write_uniforms(index, 0, bytes);
+        for (step, runtime) in built.params.iter_mut().enumerate() {
+            match &mut runtime.source {
+                StepSource::Published(state) => {
+                    if (own.is_some() || global.is_some()) && let Some(bytes) = state.next(own, global, runtime.params_id) {
+                        built.chain.write_uniforms(step, index, 0, bytes);
+                    }
+                }
+                StepSource::Plan(Some(bytes)) => built.chain.write_uniforms(step, index, 0, bytes),
+                StepSource::Plan(None) => {}
+            }
         }
         // ...depois os valores do runtime (tempo etc.), que valem mais que qualquer parâmetro.
-        built.effect.update_sources(index, &frame_info(now, previous, data.presents.load(std::sync::atomic::Ordering::Relaxed)));
+        built.chain.update_sources(index, &frame_info(now, previous, data.presents.load(std::sync::atomic::Ordering::Relaxed)));
 
         let waits = std::slice::from_raw_parts(info.p_wait_semaphores, info.wait_semaphore_count as usize);
         // ALL_COMMANDS: nada do efeito pode começar antes de o jogo terminar de desenhar o frame.
         let stages = vec![vk::PipelineStageFlags::ALL_COMMANDS; waits.len()];
-        let command_buffers = [built.effect.command_buffer(index)];
+        let command_buffers = built.chain.command_buffers(index);
         let signal = [built.semaphores[index]];
         let submit = vk::SubmitInfo::default()
             .wait_semaphores(waits)
