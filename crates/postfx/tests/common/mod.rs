@@ -92,6 +92,14 @@ impl Gpu {
         }
     }
 
+    /// Vários command buffers num único submit, na ordem (como a layer faz com uma cadeia).
+    pub unsafe fn submit_all(&self, cbs: &[vk::CommandBuffer]) {
+        unsafe {
+            self.device.queue_submit(self.queue, &[vk::SubmitInfo::default().command_buffers(cbs)], vk::Fence::null()).unwrap();
+            self.device.queue_wait_idle(self.queue).unwrap();
+        }
+    }
+
     unsafe fn host_buffer(&self, size: u64) -> (vk::Buffer, vk::DeviceMemory) {
         unsafe {
             let buffer = self

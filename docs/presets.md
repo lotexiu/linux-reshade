@@ -107,7 +107,10 @@ depois. Compute shaders e mipmaps também não existem no nosso `postfx` e ficam
   (`resolve`, `set_enabled`, `move_technique`), macros em três níveis, valores de uniform, `Key<técnica>`;
   ida e volta byte a byte conferida com 4 presets reais. Falta: resolução jogo → arquivo (`game.ini`).)*
   Parser/gravador do formato acima, testado com presets reais; resolução jogo → arquivo.
-- **F3 — cadeia na layer.** Várias técnicas em ordem; `postfx` ganha o encadeamento e a escolha de técnica
+- **F3 — cadeia na layer.** *(parte do `postfx` feita em 2026-10-10: `postfx::Chain` roda várias técnicas em
+  ordem, num único submit; testada na GPU de software com dois efeitos em ordem trocada contra o cálculo na
+  CPU. Falta: a layer usar `Chain` em vez de um `Effect` só, o que depende do plano por jogo (F4).)*
+  Várias técnicas em ordem; `postfx` ganha o encadeamento e a escolha de técnica
   no bundle. Teste: dois efeitos em ordem trocada dão imagens diferentes (golden).
 - **F4 — plano a partir do preset.** O controlador monta o plano de cada jogo e o mantém atualizado.
 - **F5 — interface.** Jogos selecionáveis; técnicas com ligar/desligar e arrastar para reordenar; busca;
