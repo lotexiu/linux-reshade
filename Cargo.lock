@@ -247,6 +247,7 @@ dependencies = [
  "config",
  "fx-bundle",
  "image-file",
+ "ini",
  "ipc",
  "preset",
 ]

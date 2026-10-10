@@ -2,6 +2,7 @@
 //! gráfica usam as mesmas peças.
 //!
 //! - [`action`]: as ações do usuário (ligar/desligar efeitos) sobre o estado compartilhado
+//! - [`analysis`]: o que cada efeito pede e se o runtime dá conta (lista "Adicionar efeito")
 //! - [`compiler`]: compilação sob demanda dos efeitos por resolução, com cache
 //! - [`game_plan`]: do preset do jogo ao plano que a layer executa
 //! - [`games`]: o preset de cada jogo aberto vira o plano da layer dele
@@ -13,6 +14,7 @@
 //! - [`watch`]: o vigia, que mantém compilado o que os jogos abertos precisam
 
 pub mod action;
+pub mod analysis;
 pub mod compiler;
 pub mod game_plan;
 pub mod games;
