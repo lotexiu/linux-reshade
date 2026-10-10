@@ -103,9 +103,9 @@ depois. Compute shaders e mipmaps também não existem no nosso `postfx` e ficam
   parâmetros próprios, o vigia compila para a escolha efetiva de cada jogo, `lrctl ... --layer <pid|nome>`;
   verificada com dois `vkcube` reais em `scripts/dev.sh smoke-layer`. Falta: a interface gráfica ainda
   só mexe nos valores de todos; isso é a F5.)* Escolha e parâmetros por layer;
-- **F2 — crate `preset`.** *(parte 1 feita em 2026-10-09: ler/gravar o formato, técnicas e ordem
+- **F2 — crate `preset`.** *(feita em 2026-10-09: ler/gravar o formato, técnicas e ordem
   (`resolve`, `set_enabled`, `move_technique`), macros em três níveis, valores de uniform, `Key<técnica>`;
-  ida e volta byte a byte conferida com 4 presets reais. Falta: resolução jogo → arquivo (`game.ini`).)*
+  ida e volta byte a byte conferida com 4 presets reais; `preset::game` resolve jogo → arquivo via `game.ini`.)*
   Parser/gravador do formato acima, testado com presets reais; resolução jogo → arquivo.
 - **F3 — cadeia na layer.** *(parte do `postfx` feita em 2026-10-10: `postfx::Chain` roda várias técnicas em
   ordem, num único submit; testada na GPU de software com dois efeitos em ordem trocada contra o cálculo na

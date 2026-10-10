@@ -5,8 +5,12 @@
 //! técnica). Uma seção por efeito, `[Arquivo.fx]`, com as macros dele e o valor de cada uniform.
 //! As regras estão em `docs/reshade-estudo.md`, seção 3.
 //!
+//! [`game`] diz qual preset vale para um jogo.
+//!
 //! O arquivo é um [`ini::Ini`]: ao regravar, o que não foi mexido (comentários, chaves desconhecidas, CRLF,
 //! espaços) sai exatamente como entrou.
+
+pub mod game;
 
 use std::fmt;
 use std::io;

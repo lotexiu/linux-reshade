@@ -18,7 +18,7 @@ Se for uma nova sessão do Claude: leia, nesta ordem, `README.md`, este arquivo,
 | Marcos 0 a 4 do `ROADMAP.md` (layer, passe fixo, bundle, controle, GUI) | **feitos** |
 | F0 configuração e caminhos (`ini`, `config`, `lrctl config`) | **feita** |
 | F1 escolha e parâmetros por jogo (`ctl-<id>`, `--layer`) | **feita** |
-| F2 crate `preset` (ler/gravar o formato do ReShade) | **quase**: falta `game.ini` (jogo → preset) |
+| F2 crate `preset` (ler/gravar o formato do ReShade) | **feita** (`preset`, `preset::game`) |
 | F3 cadeia de vários efeitos na layer | `postfx::Chain` **feito**; falta ligá-la na layer (junto da F4) |
 | F4 plano de cada jogo montado a partir do preset | a fazer |
 | F5 interface por jogo (lista selecionável, técnicas, presets) | a fazer |
