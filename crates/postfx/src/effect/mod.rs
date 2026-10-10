@@ -37,6 +37,10 @@ pub struct DepthInput {
     /// O layout em que a imagem está quando os efeitos começam e para o qual volta quando terminam
     /// (não pode ser `UNDEFINED`: o conteúdo seria descartado).
     pub layout: vk::ImageLayout,
+    /// Tamanho da imagem de profundidade (pode ser menor que a tela: o jogo renderiza a uma resolução interna, como com FSR).
+    pub extent: vk::Extent2D,
+    /// O formato aceita filtro linear ao ser amostrado.
+    pub linear_filter: bool,
 }
 
 /// Formatos de profundidade que também têm estêncil (a barreira precisa nomear os dois aspectos).
@@ -380,7 +384,16 @@ impl Effect {
         for s in &m.samplers {
             // Amostrar profundidade com filtro linear nem sempre é permitido: vizinho mais próximo (como os efeitos pedem).
             let is_depth = m.textures.iter().any(|t| t.unique_name == s.texture && t.semantic.as_deref() == Some("DEPTH"));
-            self.samplers.push(unsafe { resources::create_sampler(device, s, is_depth)? });
+            // Profundidade menor que a tela (FSR, resolução dinâmica): com vizinho mais próximo, cada texel aparece em
+            // vários pixels e as diferenças entre pixels vizinhas (normais, bordas) viram degraus e linhas; filtro
+            // linear suaviza (se o formato permite). Do mesmo tamanho da tela, vizinho mais próximo, que é exato.
+            let upscaled = target.depth.is_some_and(|d| d.linear_filter && d.extent != target.extent);
+            let mode = match (is_depth, upscaled) {
+                (false, _) => resources::DepthFilter::NotDepth,
+                (true, false) => resources::DepthFilter::Nearest,
+                (true, true) => resources::DepthFilter::Linear,
+            };
+            self.samplers.push(unsafe { resources::create_sampler(device, s, mode)? });
         }
         self.sources = Sources::collect(m);
         let has_uniforms = m.total_uniform_size > 0;

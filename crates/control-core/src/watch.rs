@@ -205,7 +205,7 @@ mod tests {
         LiveLayer {
             id: format!("layer-{app}"),
             status: LayerStatus {
-                depth: Vec::new(),
+                depth: Vec::new(), depth_passes: String::new(),
                 techniques: Vec::new(),
                 exe: String::new(),
                 app: app.into(),

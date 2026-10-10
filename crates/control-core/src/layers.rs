@@ -87,6 +87,9 @@ pub fn render(layers: &[LiveLayer]) -> String {
     for l in layers.iter().filter(|l| !l.status.depth.is_empty()) {
         let app = if l.status.app.is_empty() { l.id.clone() } else { l.status.app.clone() };
         text.push_str(&format!("\nprofundidade de {app} (pid {}):\n", pid_of(&l.id).unwrap_or("?")));
+        if !l.status.depth_passes.is_empty() {
+            text.push_str(&format!("  passes da escolhida (posição:desenhos/indiretos tamanho começa->termina): {}\n", l.status.depth_passes));
+        }
         for d in &l.status.depth {
             let reversed = match d.reversed {
                 Some(true) => "invertida",
@@ -163,7 +166,7 @@ mod tests {
     }
 
     fn live_with(app: &str, id: &str, swapchains: Vec<SwapchainStatus>) -> LiveLayer {
-        LiveLayer { id: id.into(), status: LayerStatus { depth: Vec::new(), techniques: Vec::new(), exe: String::new(), app: app.into(), swapchains } }
+        LiveLayer { id: id.into(), status: LayerStatus { depth: Vec::new(), depth_passes: String::new(), techniques: Vec::new(), exe: String::new(), app: app.into(), swapchains } }
     }
 
     fn sc(w: u32, h: u32, format: i32, effect: EffectState) -> SwapchainStatus {

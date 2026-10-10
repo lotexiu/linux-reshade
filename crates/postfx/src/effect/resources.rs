@@ -125,12 +125,24 @@ impl UniformBuffer {
 ///
 /// # Safety
 /// `device` válido.
-pub unsafe fn create_sampler(device: &ash::Device, s: &Sampler, depth: bool) -> Result<vk::Sampler, vk::Result> {
+/// Como se filtra a textura de um sampler quando ela é a profundidade do jogo.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum DepthFilter {
+    NotDepth,
+    Nearest,
+    Linear,
+}
+
+pub unsafe fn create_sampler(device: &ash::Device, s: &Sampler, depth: DepthFilter) -> Result<vk::Sampler, vk::Result> {
     // O ReShade usa ±FLT_MAX como "sem limite"; o Vulkan quer 0..LOD_CLAMP_NONE.
     let min_lod = s.min_lod.max(0.0);
     let max_lod = if s.max_lod >= 1.0e30 { vk::LOD_CLAMP_NONE } else { s.max_lod.max(min_lod) };
     // Profundidade: vizinho mais próximo (filtrar profundidade não é garantido em todo formato e não faz sentido).
-    let (mag, min, mip) = if depth { (vk::Filter::NEAREST, vk::Filter::NEAREST, vk::SamplerMipmapMode::NEAREST) } else { (convert::filter(s.mag_filter), convert::filter(s.min_filter), convert::mipmap_mode(s.mip_filter)) };
+    let (mag, min, mip) = match depth {
+        DepthFilter::Nearest => (vk::Filter::NEAREST, vk::Filter::NEAREST, vk::SamplerMipmapMode::NEAREST),
+        DepthFilter::Linear => (vk::Filter::LINEAR, vk::Filter::LINEAR, vk::SamplerMipmapMode::NEAREST),
+        DepthFilter::NotDepth => (convert::filter(s.mag_filter), convert::filter(s.min_filter), convert::mipmap_mode(s.mip_filter)),
+    };
     let info = vk::SamplerCreateInfo::default()
         .mag_filter(mag)
         .min_filter(min)

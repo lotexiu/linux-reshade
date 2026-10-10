@@ -72,6 +72,10 @@ pub struct Chosen {
     pub format: i32,
     /// Layout em que a imagem está depois do último envio à fila.
     pub layout: i32,
+    pub width: u32,
+    pub height: u32,
+    /// O formato aceita filtro linear ao ser amostrado.
+    pub linear: bool,
 }
 
 pub struct Depth {

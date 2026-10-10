@@ -222,7 +222,13 @@ impl SwapchainFx {
                 let result = unsafe { (data.set_loader_data)(data.device.handle(), cb.as_raw() as *mut std::ffi::c_void) };
                 if result == vk::Result::SUCCESS { Ok(()) } else { Err(result) }
             }),
-            depth: depth.map(|d| DepthInput { image: vk::Image::from_raw(d.image), format: vk::Format::from_raw(d.format), layout: vk::ImageLayout::from_raw(d.layout) }),
+            depth: depth.map(|d| DepthInput {
+                image: vk::Image::from_raw(d.image),
+                format: vk::Format::from_raw(d.format),
+                layout: vk::ImageLayout::from_raw(d.layout),
+                extent: vk::Extent2D { width: d.width, height: d.height },
+                linear_filter: d.linear,
+            }),
         };
         let chain_steps: Vec<Step<'_>> = steps.iter().map(|s| Step { bundle: &s.bundle, technique: s.technique }).collect();
         unsafe {

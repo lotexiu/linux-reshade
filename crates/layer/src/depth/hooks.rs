@@ -683,11 +683,21 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
     let candidates = stats.candidates(frame, &layouts);
     // O que os efeitos podem usar: a escolhida, se a original é amostrável e o layout é conhecido.
     *data.depth.chosen.lock().unwrap() =
-        candidates.iter().find(|c| c.chosen && c.sampled && c.layout != 0).map(|c| super::Chosen { image: c.image, format: c.format, layout: c.layout });
+        candidates.iter().find(|c| c.chosen && c.sampled && c.layout != 0).map(|c| super::Chosen {
+            image: c.image,
+            format: c.format,
+            layout: c.layout,
+            width: c.width,
+            height: c.height,
+            linear: unsafe { data.instance.instance.get_physical_device_format_properties(data.physical_device, vk::Format::from_raw(c.format)) }
+                .optimal_tiling_features
+                .contains(vk::FormatFeatureFlags::SAMPLED_IMAGE_FILTER_LINEAR),
+        });
     let mut last = data.depth.last_published.lock().unwrap();
     if *last == candidates {
         return;
     }
+    let mut passes_summary = String::new();
     if let Some(c) = candidates.iter().find(|c| c.chosen) {
         // Os passes da escolhida, para entender o que o jogo desenha na profundidade (e achar o ponto certo de usá-la).
         let briefs: Vec<String> = stats
@@ -697,6 +707,7 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
             .map(|(i, p)| format!("{i}:{}d/{}i {}x{} {:?}->{:?}", p.draws, p.indirect, p.area.0, p.area.1, p.load, p.store))
             .collect();
         let summary = briefs.join(" ");
+        passes_summary = summary.clone();
         let mut logged = data.depth.passes_logged.lock().unwrap();
         if *logged != summary {
             log!("passes da profundidade escolhida: {summary}");
@@ -730,7 +741,7 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
             log!("pipelines com teste de profundidade fixo: {greater} comparam 'maior', {less} 'menor', {other} outros");
         }
     }
-    crate::status::set_depth(candidates.iter().map(to_status).collect());
+    crate::status::set_depth(candidates.iter().map(to_status).collect(), passes_summary);
     *last = candidates;
 }
 
