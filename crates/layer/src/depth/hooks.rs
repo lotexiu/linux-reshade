@@ -41,6 +41,8 @@ pub fn intercept_name(name: &[u8]) -> vk::PFN_vkVoidFunction {
             erase(cmd_draw_indexed_indirect_count as vk::PFN_vkCmdDrawIndexedIndirectCount)
         }
         b"vkCmdBindPipeline" => erase(cmd_bind_pipeline as vk::PFN_vkCmdBindPipeline),
+        b"vkCmdPipelineBarrier" => erase(cmd_pipeline_barrier as vk::PFN_vkCmdPipelineBarrier),
+        b"vkCmdPipelineBarrier2" | b"vkCmdPipelineBarrier2KHR" => erase(cmd_pipeline_barrier2 as vk::PFN_vkCmdPipelineBarrier2),
         b"vkCmdExecuteCommands" => erase(cmd_execute_commands as vk::PFN_vkCmdExecuteCommands),
         b"vkCmdSetDepthCompareOp" | b"vkCmdSetDepthCompareOpEXT" => erase(cmd_set_depth_compare_op as vk::PFN_vkCmdSetDepthCompareOp),
         b"vkQueueSubmit" => erase(queue_submit as vk::PFN_vkQueueSubmit),
@@ -59,16 +61,40 @@ unsafe extern "system" fn create_image(
 ) -> vk::Result {
     unsafe {
         let Some(data) = data_of(device.as_raw()) else { return vk::Result::ERROR_DEVICE_LOST };
-        let result = (data.device.fp_v1_0().create_image)(device, p_create_info, p_allocator, p_image);
-        if result == vk::Result::SUCCESS {
-            let c = &*p_create_info;
-            if c.image_type == vk::ImageType::TYPE_2D && is_depth_format(c.format) && c.usage.contains(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT) {
-                let info = ImageInfo { width: c.extent.width, height: c.extent.height, format: c.format.as_raw(), samples: c.samples.as_raw() };
-                data.depth.images.lock().unwrap().insert((*p_image).as_raw(), info);
-            }
+        let c = &*p_create_info;
+        let is_depth = c.image_type == vk::ImageType::TYPE_2D && is_depth_format(c.format) && c.usage.contains(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT);
+        // Armado: acrescenta `SAMPLED` (sem MSAA, e só se o formato aceita) para os efeitos amostrarem a imagem original.
+        let mut patched = *c;
+        let mut forward = p_create_info;
+        if is_depth && data.depth.armed && c.samples == vk::SampleCountFlags::TYPE_1 && !c.usage.contains(vk::ImageUsageFlags::SAMPLED) && format_can_be_sampled(&data, c.format, c.tiling) {
+            patched.usage |= vk::ImageUsageFlags::SAMPLED;
+            forward = &patched;
+        }
+        let result = (data.device.fp_v1_0().create_image)(device, forward, p_allocator, p_image);
+        if result == vk::Result::SUCCESS && is_depth {
+            let info = ImageInfo {
+                width: c.extent.width,
+                height: c.extent.height,
+                format: c.format.as_raw(),
+                samples: c.samples.as_raw(),
+                sampled: (*forward).usage.contains(vk::ImageUsageFlags::SAMPLED),
+            };
+            data.depth.images.lock().unwrap().insert((*p_image).as_raw(), info);
         }
         result
     }
+}
+
+/// O formato pode ser amostrado com este tiling? (consulta única por formato)
+unsafe fn format_can_be_sampled(data: &DeviceData, format: vk::Format, tiling: vk::ImageTiling) -> bool {
+    if tiling != vk::ImageTiling::OPTIMAL {
+        return false;
+    }
+    let mut cache = data.depth.formats.lock().unwrap();
+    *cache.entry(format.as_raw()).or_insert_with(|| {
+        let props = unsafe { data.instance.instance.get_physical_device_format_properties(data.physical_device, format) };
+        props.optimal_tiling_features.contains(vk::FormatFeatureFlags::SAMPLED_IMAGE)
+    })
 }
 
 unsafe extern "system" fn destroy_image(device: vk::Device, image: vk::Image, p_allocator: *const vk::AllocationCallbacks<'_>) {
@@ -143,7 +169,7 @@ unsafe extern "system" fn create_render_pass(
                     if is_depth_format(a.format) {
                         data.depth.render_passes.lock().unwrap().insert(
                             (*p_render_pass).as_raw(),
-                            RenderPassInfo { depth_attachment: index, load: load_op(a.load_op), store: store_op(a.store_op) },
+                            RenderPassInfo { depth_attachment: index, load: load_op(a.load_op), store: store_op(a.store_op), final_layout: a.final_layout.as_raw() },
                         );
                     }
                 }
@@ -174,7 +200,7 @@ unsafe extern "system" fn create_render_pass2(
                     if is_depth_format(a.format) {
                         data.depth.render_passes.lock().unwrap().insert(
                             (*p_render_pass).as_raw(),
-                            RenderPassInfo { depth_attachment: index, load: load_op(a.load_op), store: store_op(a.store_op) },
+                            RenderPassInfo { depth_attachment: index, load: load_op(a.load_op), store: store_op(a.store_op), final_layout: a.final_layout.as_raw() },
                         );
                     }
                 }
@@ -245,6 +271,7 @@ fn start_pass(data: &DeviceData, cmd: vk::CommandBuffer, render_pass: vk::Render
         store: rp.store,
         clear_depth: if rp.load == LoadOp::Clear { clear_depth(rp.depth_attachment) } else { None },
         area: (area.extent.width, area.extent.height),
+        end_layout: rp.final_layout,
         ..PassRecord::default()
     };
     if let Some(state) = data.depth.cmds.lock().unwrap().get_mut(&cmd.as_raw()) {
@@ -307,6 +334,9 @@ fn finish_pass(data: &DeviceData, cmd: vk::CommandBuffer) {
     if let Some(state) = data.depth.cmds.lock().unwrap().get_mut(&cmd.as_raw())
         && let Some(pass) = state.current.take()
     {
+        if pass.end_layout != 0 {
+            state.layouts.push((pass.image, pass.end_layout));
+        }
         state.passes.push(pass);
     }
 }
@@ -345,6 +375,7 @@ unsafe extern "system" fn cmd_begin_rendering(cmd: vk::CommandBuffer, p_info: *c
                         store: store_op(a.store_op),
                         clear_depth: (load == LoadOp::Clear).then(|| a.clear_value.depth_stencil.depth),
                         area: (info.render_area.extent.width, info.render_area.extent.height),
+                        end_layout: a.image_layout.as_raw(),
                         ..PassRecord::default()
                     };
                     if let Some(state) = data.depth.cmds.lock().unwrap().get_mut(&cmd.as_raw()) {
@@ -468,6 +499,55 @@ unsafe extern "system" fn cmd_bind_pipeline(cmd: vk::CommandBuffer, bind_point: 
     }
 }
 
+/// Anota as barreiras que mudam o layout de uma imagem de profundidade.
+fn note_layout(data: &DeviceData, cmd: vk::CommandBuffer, image: vk::Image, new_layout: vk::ImageLayout) {
+    if new_layout == vk::ImageLayout::UNDEFINED || !data.depth.images.lock().unwrap().contains_key(&image.as_raw()) {
+        return;
+    }
+    if let Some(state) = data.depth.cmds.lock().unwrap().get_mut(&cmd.as_raw()) {
+        state.layouts.push((image.as_raw(), new_layout.as_raw()));
+    }
+}
+
+unsafe extern "system" fn cmd_pipeline_barrier(
+    cmd: vk::CommandBuffer,
+    src_stage: vk::PipelineStageFlags,
+    dst_stage: vk::PipelineStageFlags,
+    dependency: vk::DependencyFlags,
+    memory_count: u32,
+    p_memory: *const vk::MemoryBarrier<'_>,
+    buffer_count: u32,
+    p_buffer: *const vk::BufferMemoryBarrier<'_>,
+    image_count: u32,
+    p_image: *const vk::ImageMemoryBarrier<'_>,
+) {
+    unsafe {
+        let Some(data) = data_of(cmd.as_raw()) else { return };
+        if data.depth.is_on() && !p_image.is_null() {
+            for b in std::slice::from_raw_parts(p_image, image_count as usize) {
+                note_layout(&data, cmd, b.image, b.new_layout);
+            }
+        }
+        (data.device.fp_v1_0().cmd_pipeline_barrier)(cmd, src_stage, dst_stage, dependency, memory_count, p_memory, buffer_count, p_buffer, image_count, p_image);
+    }
+}
+
+unsafe extern "system" fn cmd_pipeline_barrier2(cmd: vk::CommandBuffer, p_info: *const vk::DependencyInfo<'_>) {
+    unsafe {
+        let Some(data) = data_of(cmd.as_raw()) else { return };
+        let Some(next) = data.depth.next.cmd_pipeline_barrier2 else { return };
+        if data.depth.is_on() && !p_info.is_null() {
+            let info = &*p_info;
+            if !info.p_image_memory_barriers.is_null() {
+                for b in std::slice::from_raw_parts(info.p_image_memory_barriers, info.image_memory_barrier_count as usize) {
+                    note_layout(&data, cmd, b.image, b.new_layout);
+                }
+            }
+        }
+        next(cmd, p_info);
+    }
+}
+
 unsafe extern "system" fn cmd_set_depth_compare_op(cmd: vk::CommandBuffer, op: vk::CompareOp) {
     unsafe {
         let Some(data) = data_of(cmd.as_raw()) else { return };
@@ -504,10 +584,24 @@ fn merge_submitted(data: &DeviceData, buffers: &[vk::CommandBuffer]) {
     if !data.depth.is_on() || buffers.is_empty() {
         return;
     }
-    let passes: Vec<PassRecord> = {
+    let (passes, layouts): (Vec<PassRecord>, Vec<(u64, i32)>) = {
         let cmds = data.depth.cmds.lock().unwrap();
-        buffers.iter().filter_map(|b| cmds.get(&b.as_raw())).flat_map(|s| s.passes.iter().copied()).collect()
+        let states = buffers.iter().filter_map(|b| cmds.get(&b.as_raw()));
+        let mut passes = Vec::new();
+        let mut layouts = Vec::new();
+        for s in states {
+            passes.extend(s.passes.iter().copied());
+            layouts.extend(s.layouts.iter().copied());
+        }
+        (passes, layouts)
     };
+    // O layout de cada imagem segue a ordem dos envios (a ordem em que a GPU os executa).
+    if !layouts.is_empty() {
+        let mut map = data.depth.image_layouts.lock().unwrap();
+        for (image, layout) in layouts {
+            map.insert(image, layout);
+        }
+    }
     if passes.is_empty() {
         return;
     }
@@ -554,7 +648,8 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
     if stats.is_empty() {
         return;
     }
-    let candidates = stats.candidates(frame);
+    let layouts = data.depth.image_layouts.lock().unwrap().clone();
+    let candidates = stats.candidates(frame, &layouts);
     let mut last = data.depth.last_published.lock().unwrap();
     if *last == candidates {
         return;
@@ -617,5 +712,7 @@ fn to_status(c: &super::observe::Candidate) -> ipc::DepthStatus {
         last_pass: c.last_pass,
         chosen: c.chosen,
         unusable: c.unusable.map(String::from),
+        sampled: c.sampled,
+        layout: c.layout,
     }
 }

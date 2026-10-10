@@ -33,6 +33,8 @@ pub struct ImageInfo {
     /// `VkFormat` como número.
     pub format: i32,
     pub samples: u32,
+    /// A imagem pode ser amostrada por um shader (uso `SAMPLED`, original ou acrescentado pela layer).
+    pub sampled: bool,
 }
 
 /// Um passe de renderização gravado que usa uma imagem de profundidade.
@@ -51,6 +53,8 @@ pub struct PassRecord {
     /// Desenhos feitos com comparação de profundidade "maior" (profundidade invertida) e "menor".
     pub greater: u32,
     pub less: u32,
+    /// O layout em que a imagem fica quando o passe termina (`VkImageLayout` como número; 0 = não sei).
+    pub end_layout: i32,
 }
 
 /// Totais de uma imagem de profundidade num quadro.
@@ -90,6 +94,10 @@ pub struct Candidate {
     pub chosen: bool,
     /// Por que não serve, se não serve (MSAA, proporção...). Vazio: serve.
     pub unusable: Option<&'static str>,
+    /// Dá para amostrar a imagem original (uso `SAMPLED`)? Sem isso só uma cópia serviria.
+    pub sampled: bool,
+    /// O layout em que a imagem ficou depois do último envio à fila (`VkImageLayout` como número; 0 = não sei).
+    pub layout: i32,
 }
 
 #[derive(Debug, Default)]
@@ -127,7 +135,7 @@ impl FrameStats {
     }
 
     /// As candidatas do quadro e qual foi escolhida para uma tela de `frame` (largura, altura).
-    pub fn candidates(&self, frame: (u32, u32)) -> Vec<Candidate> {
+    pub fn candidates(&self, frame: (u32, u32), layouts: &HashMap<u64, i32>) -> Vec<Candidate> {
         let mut out: Vec<(u64, Candidate)> = self
             .images
             .iter()
@@ -168,6 +176,8 @@ impl FrameStats {
                         last_pass: a.last_pass,
                         chosen: false,
                         unusable,
+                        sampled: info.sampled,
+                        layout: layouts.get(image).copied().unwrap_or(0),
                     },
                 ))
             })
@@ -219,7 +229,7 @@ mod tests {
     use super::*;
 
     fn info(w: u32, h: u32, samples: u32) -> ImageInfo {
-        ImageInfo { width: w, height: h, format: 126, samples }
+        ImageInfo { width: w, height: h, format: 126, samples, sampled: true }
     }
 
     fn pass(image: u64, draws: u32, vertices: u64) -> PassRecord {
@@ -236,7 +246,7 @@ mod tests {
         let mut s = FrameStats::default();
         // 2 é um mapa de sombras (quadrado, muitos vértices): proporção errada. 3 é a cena. 1 é um passe pequeno.
         s.merge(&[pass(2, 100, 900_000), pass(3, 300, 500_000), pass(1, 5, 30)], &i);
-        let c = s.candidates((1920, 1080));
+        let c = s.candidates((1920, 1080), &HashMap::new());
         assert_eq!(c.len(), 3);
         let chosen: Vec<_> = c.iter().filter(|c| c.chosen).collect();
         assert_eq!(chosen.len(), 1);
@@ -250,7 +260,7 @@ mod tests {
         let i = infos(&[(1, info(1920, 1080, 4)), (2, info(1920, 1080, 1))]);
         let mut s = FrameStats::default();
         s.merge(&[pass(1, 200, 100_000), pass(2, 0, 0)], &i);
-        let c = s.candidates((1920, 1080));
+        let c = s.candidates((1920, 1080), &HashMap::new());
         assert_eq!(c.iter().find(|c| c.samples == 4).unwrap().unusable, Some("MSAA (precisa de resolve de profundidade)"));
         assert_eq!(c.iter().find(|c| c.draws == 0).unwrap().unusable, Some("sem desenhos"));
         assert!(c.iter().all(|c| !c.chosen));
@@ -262,7 +272,7 @@ mod tests {
         let mut s = FrameStats::default();
         // 1: poucos vértices contáveis mas muitas chamadas, quase todas indiretas; 2: mais vértices, menos chamadas.
         s.merge(&[PassRecord { indirect: 90, ..pass(1, 100, 1000) }, pass(2, 40, 50_000)], &i);
-        let c = s.candidates((1920, 1080));
+        let c = s.candidates((1920, 1080), &HashMap::new());
         assert!(c.iter().find(|c| c.draws == 100).unwrap().chosen, "{c:?}");
     }
 
@@ -274,7 +284,7 @@ mod tests {
         let second = PassRecord { load: LoadOp::Load, store: StoreOp::DontCare, greater: 5, less: 1, ..pass(7, 5, 500) };
         s.merge(&[first], &i);
         s.merge(&[second], &i);
-        let c = &s.candidates((1280, 720))[0];
+        let c = &s.candidates((1280, 720), &HashMap::new())[0];
         assert_eq!((c.draws, c.vertices, c.passes), (15, 1500, 2));
         assert_eq!((c.load, c.store), (LoadOp::Load, StoreOp::DontCare), "o último passe manda no que se mostra");
         assert_eq!((c.last_pass, c.reversed), (1, Some(true)), "15 de comparação 'maior' contra 1 de 'menor'");
@@ -287,7 +297,7 @@ mod tests {
         s.merge(&[PassRecord { clear_depth: Some(0.0), load: LoadOp::Clear, ..pass(1, 5, 500) }], &i);
         s.merge(&[PassRecord { clear_depth: Some(1.0), load: LoadOp::Clear, ..pass(2, 5, 500) }], &i);
         s.merge(&[PassRecord { clear_depth: Some(0.5), load: LoadOp::Clear, ..pass(3, 5, 500) }], &i);
-        let all: Vec<_> = s.candidates((1280, 720)).into_iter().map(|c| c.reversed).collect();
+        let all: Vec<_> = s.candidates((1280, 720), &HashMap::new()).into_iter().map(|c| c.reversed).collect();
         assert_eq!(all, [Some(true), Some(false), None]);
     }
 
@@ -296,7 +306,7 @@ mod tests {
         let i = infos(&[(1, info(1280, 720, 1))]);
         let mut s = FrameStats::default();
         s.merge(&[PassRecord { clear_depth: Some(1.0), load: LoadOp::Clear, less: 1, greater: 9, ..pass(1, 10, 1000) }], &i);
-        assert_eq!(s.candidates((1280, 720))[0].reversed, Some(true));
+        assert_eq!(s.candidates((1280, 720), &HashMap::new())[0].reversed, Some(true));
     }
 
     #[test]
@@ -304,9 +314,19 @@ mod tests {
         let i = infos(&[(1, info(100, 100, 1)), (2, info(100, 100, 1))]);
         let mut s = FrameStats::default();
         s.merge(&[pass(9, 5, 5000), pass(2, 5, 5000), pass(1, 5, 5000)], &i);
-        let c = s.candidates((100, 100));
+        let c = s.candidates((100, 100), &HashMap::new());
         assert_eq!(c.len(), 2, "a imagem 9 não tem informação");
         assert!(s.images.contains_key(&2) && !s.images.contains_key(&9));
+    }
+
+    #[test]
+    fn the_layout_and_sampled_flag_are_reported() {
+        let i = infos(&[(1, ImageInfo { sampled: false, ..info(1280, 720, 1) })]);
+        let mut s = FrameStats::default();
+        s.merge(&[pass(1, 5, 500)], &i);
+        let c = &s.candidates((1280, 720), &HashMap::from([(1, 1000)]))[0];
+        assert_eq!((c.sampled, c.layout), (false, 1000));
+        assert_eq!(s.candidates((1280, 720), &HashMap::new())[0].layout, 0, "desconhecido");
     }
 
     #[test]

@@ -94,8 +94,9 @@ pub fn render(layers: &[LiveLayer]) -> String {
                 None => "?",
             };
             let why = d.unusable.as_deref().map(|u| format!("  [não serve: {u}]")).unwrap_or_default();
+            let sampling = if d.sampled { "amostrável" } else { "sem SAMPLED" };
             text.push_str(&format!(
-                "  {} {}x{} {}  {} desenhos, {} vértices, {} passe(s)  {} -> {}  {reversed}{why}\n",
+                "  {} {}x{} {}  {} desenhos, {} vértices, {} passe(s)  {} -> {}  {reversed}  {sampling}, layout {}{why}\n",
                 if d.chosen { "*" } else { " " },
                 d.width,
                 d.height,
@@ -105,10 +106,26 @@ pub fn render(layers: &[LiveLayer]) -> String {
                 d.passes,
                 d.load,
                 d.store,
+                layout_name(d.layout),
             ));
         }
     }
     text
+}
+
+fn layout_name(layout: i32) -> String {
+    match layout {
+        0 => "?".into(),
+        1 => "GENERAL".into(),
+        3 => "DEPTH_STENCIL_ATTACHMENT".into(),
+        4 => "DEPTH_STENCIL_READ_ONLY".into(),
+        5 => "SHADER_READ_ONLY".into(),
+        6 => "TRANSFER_SRC".into(),
+        7 => "TRANSFER_DST".into(),
+        1_000_241_000 => "DEPTH_ATTACHMENT".into(),
+        1_000_241_001 => "DEPTH_READ_ONLY".into(),
+        other => format!("{other}"),
+    }
 }
 
 fn depth_format_name(format: i32) -> String {

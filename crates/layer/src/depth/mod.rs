@@ -36,6 +36,8 @@ pub(crate) struct RenderPassInfo {
     pub depth_attachment: u32,
     pub load: LoadOp,
     pub store: StoreOp,
+    /// O layout em que o passe deixa o anexo de profundidade (o `finalLayout` do render pass).
+    pub final_layout: i32,
 }
 
 /// O que se gravou num command buffer.
@@ -44,6 +46,8 @@ pub(crate) struct CmdState {
     pub passes: Vec<PassRecord>,
     pub current: Option<PassRecord>,
     pub compare: Compare,
+    /// Mudanças de layout de imagens de profundidade, na ordem de gravação (passes e barreiras).
+    pub layouts: Vec<(u64, i32)>,
 }
 
 /// Funções do próximo elo que não estão na tabela 1.0 do `ash` (podem não existir no dispositivo).
@@ -58,10 +62,17 @@ pub(crate) struct NextFns {
     pub cmd_set_depth_compare_op: Option<vk::PFN_vkCmdSetDepthCompareOp>,
     pub cmd_draw_indirect_count: Option<vk::PFN_vkCmdDrawIndirectCount>,
     pub cmd_draw_indexed_indirect_count: Option<vk::PFN_vkCmdDrawIndexedIndirectCount>,
+    pub cmd_pipeline_barrier2: Option<vk::PFN_vkCmdPipelineBarrier2>,
 }
 
 pub struct Depth {
     pub enabled: AtomicBool,
+    /// Armado (`LINUX_RESHADE_DEPTH=1` ao abrir o jogo): a layer acrescenta `SAMPLED` ao uso das imagens de profundidade
+    /// na criação, para os efeitos poderem amostrar a original. Precisa estar armado antes de o jogo criar as imagens.
+    pub armed: bool,
+    pub(crate) formats: Mutex<HashMap<i32, bool>>,
+    /// Layout atual de cada imagem de profundidade (depois do último envio à fila).
+    pub(crate) image_layouts: Mutex<HashMap<u64, i32>>,
     pub(crate) next: NextFns,
     pub(crate) images: Mutex<HashMap<u64, ImageInfo>>,
     /// view -> imagem (só views de imagens de profundidade).
@@ -92,7 +103,9 @@ unsafe fn load<T: Copy>(gdpa: vk::PFN_vkGetDeviceProcAddr, device: vk::Device, n
 
 impl Depth {
     pub fn new(gdpa: vk::PFN_vkGetDeviceProcAddr, device: vk::Device) -> Self {
-        let on = std::env::var_os("LINUX_RESHADE_DEPTH_OBSERVE").is_some_and(|v| v != "0");
+        let flag = |name: &str| std::env::var_os(name).is_some_and(|v| v != "0");
+        let armed = flag("LINUX_RESHADE_DEPTH");
+        let on = armed || flag("LINUX_RESHADE_DEPTH_OBSERVE");
         let next = unsafe {
             NextFns {
                 create_render_pass2: load(gdpa, device, &[c"vkCreateRenderPass2", c"vkCreateRenderPass2KHR"]),
@@ -104,10 +117,14 @@ impl Depth {
                 cmd_set_depth_compare_op: load(gdpa, device, &[c"vkCmdSetDepthCompareOp", c"vkCmdSetDepthCompareOpEXT"]),
                 cmd_draw_indirect_count: load(gdpa, device, &[c"vkCmdDrawIndirectCount", c"vkCmdDrawIndirectCountKHR"]),
                 cmd_draw_indexed_indirect_count: load(gdpa, device, &[c"vkCmdDrawIndexedIndirectCount", c"vkCmdDrawIndexedIndirectCountKHR"]),
+                cmd_pipeline_barrier2: load(gdpa, device, &[c"vkCmdPipelineBarrier2", c"vkCmdPipelineBarrier2KHR"]),
             }
         };
         Self {
             enabled: AtomicBool::new(on),
+            armed,
+            formats: Mutex::new(HashMap::new()),
+            image_layouts: Mutex::new(HashMap::new()),
             next,
             images: Mutex::new(HashMap::new()),
             views: Mutex::new(HashMap::new()),

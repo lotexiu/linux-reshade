@@ -79,6 +79,10 @@ pub struct DepthStatus {
     pub chosen: bool,
     /// Por que não serve (MSAA, proporção...); `None` se serve.
     pub unusable: Option<String>,
+    /// A imagem original pode ser amostrada (uso `SAMPLED`).
+    pub sampled: bool,
+    /// Layout em que ela ficou depois do último envio à fila (`VkImageLayout` como número; 0 = não sei).
+    pub layout: i32,
 }
 
 /// O que aconteceu com uma técnica da cadeia no jogo.
@@ -132,7 +136,7 @@ impl LayerStatus {
                     None => "?",
                 };
                 text.push_str(&format!(
-                    "depth={}\t{}x{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+                    "depth={}\t{}x{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
                     if d.chosen { "*" } else { "-" },
                     d.width,
                     d.height,
@@ -146,6 +150,8 @@ impl LayerStatus {
                     reversed,
                     d.last_pass,
                     one_line(d.unusable.as_deref().unwrap_or(""), 60),
+                    if d.sampled { "sampled" } else { "-" },
+                    d.layout,
                 ));
             }
             for t in self.techniques.iter().take(MAX_TECHNIQUES) {
@@ -232,6 +238,8 @@ fn parse_depth(value: &str) -> Option<DepthStatus> {
         },
         last_pass: f[10].parse().ok()?,
         unusable: Some(f[11].to_string()).filter(|u| !u.is_empty()),
+        sampled: f.get(12).is_some_and(|v| *v == "sampled"),
+        layout: f.get(13).and_then(|v| v.parse().ok()).unwrap_or(0),
     })
 }
 
@@ -429,8 +437,8 @@ mod tests {
     fn depth_candidates_roundtrip() {
         let status = LayerStatus {
             depth: vec![
-                DepthStatus { width: 1920, height: 1080, format: 126, samples: 1, draws: 300, vertices: 500_000, passes: 2, load: "clear".into(), store: "store".into(), reversed: Some(true), last_pass: 3, chosen: true, unusable: None },
-                DepthStatus { width: 2048, height: 2048, format: 126, samples: 4, draws: 10, vertices: 900, passes: 1, load: "load".into(), store: "dont_care".into(), reversed: None, last_pass: 0, chosen: false, unusable: Some("MSAA (precisa de resolve)".into()) },
+                DepthStatus { width: 1920, height: 1080, format: 126, samples: 1, draws: 300, vertices: 500_000, passes: 2, load: "clear".into(), store: "store".into(), reversed: Some(true), last_pass: 3, chosen: true, unusable: None, sampled: true, layout: 1000 },
+                DepthStatus { width: 2048, height: 2048, format: 126, samples: 4, draws: 10, vertices: 900, passes: 1, load: "load".into(), store: "dont_care".into(), reversed: None, last_pass: 0, chosen: false, unusable: Some("MSAA (precisa de resolve)".into()), sampled: false, layout: 0 },
             ],
             ..LayerStatus::default()
         };
