@@ -65,14 +65,6 @@ impl ControlsView {
         }
     }
 
-    pub fn first_reset(&self) -> Option<gtk::Button> {
-        self.rows.first().map(|r| r.reset.clone())
-    }
-
-    pub fn row_count(&self) -> usize {
-        self.rows.len()
-    }
-
     fn rebuild(&mut self, controls: &[Control]) {
         while let Some(child) = self.root.first_child() {
             self.root.remove(&child);

@@ -1,7 +1,7 @@
 //! `lrpanel`: a interface gráfica do linux-reshade.
 //!
 //! Uso normal: `lrpanel`. Para testes automáticos: `--smoke <Efeito>` aciona os widgets e confere o
-//! resultado (sai com código diferente de 0 se algo falhar); `--effect <Efeito>` escolhe um efeito;
+//! resultado (sai com código diferente de 0 se algo falhar); `--effect <Efeito>` o adiciona ao preset do jogo (e o tira ao sair);
 //! `--screenshot <arquivo.png>` grava a janela; `--hold <ms>` a mantém aberta antes de sair; `--wait <ms>` espera antes de agir.
 
 mod controls;
@@ -87,8 +87,8 @@ fn main() -> glib::ExitCode {
         let options = Rc::new(options);
         move |app| {
             let Some(state) = state.borrow_mut().take() else { return };
-            let model = panel::Model::new(Compiler::from_env(), state);
-            let ui = window::Ui::new(app, model);
+            let home = panel::Home::new(Compiler::from_env(), config::Config::load().presets_dir, state);
+            let ui = window::Ui::new(app, home);
             ui.window.present();
             if options.is_test_run() {
                 glib::MainContext::default().spawn_local(test_run(app.clone(), ui, options.clone(), exit.clone()));
@@ -135,6 +135,8 @@ async fn test_run(app: gtk::Application, ui: Rc<window::Ui>, options: Rc<Options
         println!("lrpanel: janela aberta por {} ms", options.hold_ms);
         glib::timeout_future(Duration::from_millis(options.hold_ms)).await;
     }
-    ui.choose_no_effect(); // deixa a escolha como estava
+    if let Some(name) = &options.effect {
+        ui.remove_effect(name); // deixa o preset como estava
+    }
     app.quit();
 }

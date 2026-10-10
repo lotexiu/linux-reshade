@@ -812,10 +812,12 @@ dependencies = [
 name = "linux-reshade-gui"
 version = "0.0.1"
 dependencies = [
+ "config",
  "control-core",
  "gtk4",
  "ipc",
  "panel",
+ "preset",
 ]
 
 [[package]]

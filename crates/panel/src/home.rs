@@ -127,6 +127,7 @@ impl Home {
         // Começa no primeiro jogo aberto, se houver (é o que a pessoa quer ajustar).
         home.game = (home.layers)().first().map(|l| l.status.game_id().to_string()).filter(|id| game::valid_game_id(id));
         home.refresh();
+        home.prepare_effects();
         home
     }
 
