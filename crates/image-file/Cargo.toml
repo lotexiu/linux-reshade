@@ -1,0 +1,9 @@
+[package]
+name = "image-file"
+description = "Decodifica imagens de textura dos efeitos (PNG) para RGBA de 8 bits; só roda no app de controle, nunca na layer"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+png = { version = "0.18", default-features = false }
