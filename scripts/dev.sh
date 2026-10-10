@@ -338,7 +338,7 @@ cmd_smoke_layer() {
   [ "$ok" = 1 ] && say "smoke (por jogo): passou" || { warn "smoke (por jogo): falhou (logs: $LOG_FILE e $cache/watch.log)"; "$lrctl" layers; exit 1; }
 }
 
-# Teste do preset por jogo. Um vkcube com a layer e um preset global de DUAS técnicas (Sépia e Colourfulness):
+# Teste do preset por jogo. Um vkcube com a layer e o preset dele (Presets/vkcube) de DUAS técnicas (Sépia e Colourfulness):
 # o vigia publica o plano, a layer constrói a cadeia de 2 etapas; editar o preset muda a cadeia, mudar só um
 # valor não a reconstrói, e apagar o preset volta à escolha única. Pastas de efeitos e de presets isoladas.
 cmd_smoke_preset() {
@@ -351,7 +351,9 @@ cmd_smoke_preset() {
   trap smoke_auto_cleanup EXIT
   "$lrctl" off >/dev/null; "$lrctl" use none >/dev/null
   : >"$LOG_FILE"
-  local preset="$tmp/Presets/preset.ini"
+  # o preset é do jogo: Presets/vkcube/game.ini aponta para Noturno.ini (o id é o nome do executável)
+  mkdir -p "$tmp/Presets/vkcube"; printf 'preset=Noturno.ini\n' >"$tmp/Presets/vkcube/game.ini"
+  local preset="$tmp/Presets/vkcube/Noturno.ini"
   printf 'Techniques=Sepia@Sepia.fx,Colourfulness@Colourfulness.fx\n\n[Sepia.fx]\nStrength=0.5\n' >"$preset"
   "$lrctl" watch >"$tmp/watch.log" 2>&1 &
   SMOKE_PIDS+=($!)
