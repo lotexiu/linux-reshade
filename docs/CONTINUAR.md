@@ -1,6 +1,6 @@
 # Ponto de retomada
 
-Escrito em 2026-10-09, no fim da F1. Serve a quem for continuar (o dono do projeto em outra máquina, ou uma
+Escrito em 2026-10-09 e atualizado em 2026-10-10 (fim da F4). Serve a quem for continuar (o dono do projeto em outra máquina, ou uma
 nova sessão do Claude): diz onde paramos, o que vem agora, como trabalhar aqui e o que já deu errado.
 A memória do Claude fica na máquina dele (`~/.claude/...`), então o que importa dela está **repetido aqui**.
 
@@ -9,25 +9,31 @@ Se for uma nova sessão do Claude: leia, nesta ordem, `README.md`, este arquivo,
 
 ## Onde paramos
 
-Últimos commits relevantes (do mais novo): documentação e `smoke-layer` (`a86ceac`), CLI `--layer`
-(`b7474fb`), vigia por jogo (`8756a45`), layer lê o canal do jogo (`d514b66`), canal `ctl-<id>` no ipc
-(`a86e4cc`), `lrctl config` (`e558501`), crates `config` e `ini`.
+Fim da F4: um preset do formato do ReShade vale por jogo, o vigia o transforma em plano, e a layer executa a
+cadeia. Commits de referência: `smoke-preset` (`f5eae79`), `lrctl preset` (`7ae4c6a`), sRGB (`5a1fccc`), mipmaps
+(`103fb53`), texturas de arquivo (`a52dff8`, `94079c7`).
 
 | Fase (`docs/presets.md`) | Estado |
 |---|---|
 | Marcos 0 a 4 do `ROADMAP.md` (layer, passe fixo, bundle, controle, GUI) | **feitos** |
-| F0 configuração e caminhos (`ini`, `config`, `lrctl config`) | **feita** |
-| F1 escolha e parâmetros por jogo (`ctl-<id>`, `--layer`) | **feita** |
-| F2 crate `preset` (ler/gravar o formato do ReShade) | **feita** (`preset`, `preset::game`) |
-| F3 cadeia de vários efeitos na layer | **feita** (`postfx::Chain`, a layer usa o plano) |
-| F4 plano de cada jogo montado a partir do preset | **feita** (`game_plan`, `games`, `smoke-preset`) |
-| F5 interface por jogo (lista selecionável, técnicas, presets) | a fazer |
-| F6 macros por nível, atalhos de preset, transição suave | a fazer |
-| F7 o resto do inventário (atalhos por técnica, capturas, OSD, imagens, mouse/teclado) | a fazer |
-| Marco 5: depth buffer | não iniciado (é o diferencial do projeto) |
+| F0 configuração e caminhos | **feita** |
+| F1 escolha e parâmetros por jogo | **feita** |
+| F2 crate `preset` e `game.ini` | **feita** |
+| F3 cadeia de vários efeitos (`postfx::Chain`) | **feita**; etapa não suportada é pulada com aviso |
+| F4 plano a partir do preset (`game_plan`, `games`) | **feita**; `lrctl preset ...` edita |
+| F5 interface por jogo (lista selecionável, técnicas, presets) | **próxima** (a lógica está em `control_core::presets`) |
+| F6 macros por nível (recompilam), atalhos de preset, transição suave | a fazer |
+| F7 o resto do inventário (atalhos por técnica, capturas, OSD, mouse/teclado) | a fazer |
+| Marco 5: depth buffer | não iniciado; 40 dos 152 efeitos do dono pedem |
 
-Verificado ao fim da F1 (todos passaram): `cargo test --workspace --exclude linux-reshade-gui`, e os testes de
-ponta a ponta `validate` (validation layer sem mensagens), `smoke-steam`, `smoke-auto`, `smoke-layer`.
+Também feito nesta etapa: sRGB (8 bits), mipmaps, texturas de arquivo (PNG), o remendo de `#include` do Windows
+no `fx2spv` (`tools/fx2spv/patches`), a pasta de dados padrão (`~/.local/share/linux-reshade`), o id do jogo
+pelo executável (`exe=` no status).
+
+Verificado ao fim: `cargo test --workspace --exclude linux-reshade-gui`, e de ponta a ponta `validate`,
+`smoke-auto`, `smoke-layer` e `smoke-preset` (todos passaram). **Não rodados depois das mudanças**: `smoke-steam`
+e `panel-smoke`. Numa cadeia real de 4 a 7 efeitos da pasta do dono, na GPU NVIDIA com a validation layer: sem
+mensagens.
 
 ## Decisões já tomadas (não reabrir sem motivo)
 
@@ -45,20 +51,16 @@ ponta a ponta `validate` (validation layer sem mensagens), `smoke-steam`, `smoke
 8. **Liga/desliga é global** (o atalho liga e desliga tudo); só a escolha e os parâmetros são por jogo.
 9. Presets por jogo vivem fora da pasta do jogo; reinstalar o jogo ou a máquina não os perde.
 
-## Próximo passo: F2, o crate `preset`
+## Próximo passo
 
-Objetivo: ler e gravar presets no formato do ReShade, sem dependências novas (usa o crate `ini`).
-
-- API esperada: `Preset::load/parse/save`, técnicas ligadas e ordem (`techniques()`, com `Nome@Arquivo.fx`),
-  `set_enabled`, `move_technique`, macros em três níveis (global < preset < efeito; valor vazio vale `1`),
-  valores de uniform por efeito (`values(effect_file)`), `Key<técnica>`.
-- Regras já lidas no código do ReShade (`docs/reshade-estudo.md`, seção 3): `Techniques` só tem as ligadas;
-  `TechniqueSorting` tem todas, só é gravada se já existia ou se a ordem difere; técnica desconhecida = aviso, não erro;
-  ordenação estável pela lista, e técnicas fora dela seguem a ordem de declaração no arquivo e, entre arquivos,
-  a ordem alfabética do rótulo; uniforms com `source` ou `nosave` não são gravados.
-- Testes: ida e volta byte a byte de presets reais da comunidade (**baixar alguns** exemplos de presets; ainda não
-  há nenhum no repositório), preservar comentários e chaves desconhecidas, CRLF, e as regras acima.
-- Depois: resolução jogo → arquivo (`<Presets>/<Jogo>/game.ini` com `preset=`), ainda na F2 ou no início da F4.
+1. **F5, a interface** (decisões de negócio para conversar com o dono: a lista de jogos, como se cria e se
+   escolhe um preset, onde fica o seletor de técnicas e como reordenar). A lógica pronta: `control_core::presets`
+   (`rows`, `set_enabled`/`move_technique` do `preset::Preset`, `set_uniform`, `new_for_game`, `use_preset`).
+2. **F6, macros**: `PreprocessorDefinitions` em três níveis precisa recompilar o efeito (hoje `game_plan` as ignora
+   e o `fx2spv` aceita `-D`?). Conferir.
+3. **Marco 5, depth buffer**: o maior ganho em efeitos (40 de 152) e o diferencial do projeto.
+4. Dívidas pequenas: JPEG/DDS nas texturas; sRGB de render target; `[Games]` no `config.ini` para corrigir um id;
+   a interface ainda não conhece planos (só a escolha única).
 
 ## Combinados de trabalho (do dono do projeto)
 
