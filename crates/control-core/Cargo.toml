@@ -9,3 +9,4 @@ publish.workspace = true
 config = { path = "../config" }
 ipc = { path = "../ipc" }
 fx-bundle = { path = "../fx-bundle" }
+preset = { path = "../preset" }

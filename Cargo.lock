@@ -241,6 +241,7 @@ dependencies = [
  "config",
  "fx-bundle",
  "ipc",
+ "preset",
 ]
 
 [[package]]
