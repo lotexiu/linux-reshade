@@ -68,8 +68,9 @@ PreprocessorDefinitions=
 
 ## Identificar o jogo
 
-A layer já informa o nome. Ordem de decisão: entrada no mapa `[Games]` do `config.ini` → nome do executável
-sem extensão (via Proton, o `.exe`) → nome do `VkApplicationInfo`. Sem pasta correspondente, vale o preset
+A layer informa o nome do executável sem extensão (`exe=` no status; sob Proton, o `.exe` do jogo, lido do
+primeiro argumento do processo) e o nome do `VkApplicationInfo` (`app=`). O id é o executável e, sem ele, o
+`app`. (O mapa `[Games]` do `config.ini` para corrigir um id continua previsto, ainda não existe.) Sem pasta correspondente, vale o preset
 global. A pasta só é criada quando o usuário salva algo.
 
 ## Como isso conversa com a layer

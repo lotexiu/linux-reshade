@@ -56,6 +56,9 @@ pub struct SwapchainStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct LayerStatus {
+    /// Nome do executável sem a extensão (`RocketLeague` para `RocketLeague.exe`); vazio se a layer não soube.
+    pub exe: String,
+    /// O nome que o jogo deu ao Vulkan (`VkApplicationInfo`), ou o do processo.
     pub app: String,
     pub swapchains: Vec<SwapchainStatus>,
 }
@@ -65,12 +68,17 @@ fn one_line(text: &str, max: usize) -> String {
 }
 
 impl LayerStatus {
+    /// O id do jogo para achar o preset dele: o executável (estável e fácil de saber) e, sem ele, o nome da aplicação.
+    pub fn game_id(&self) -> &str {
+        if self.exe.is_empty() { &self.app } else { &self.exe }
+    }
+
     /// Texto do status, com no máximo `MAX_STATUS_BYTES`. Se não couber, descarta os swapchains mais antigos.
     pub fn encode(&self) -> String {
         let mut swapchains: Vec<&SwapchainStatus> =
             self.swapchains.iter().rev().take(MAX_SWAPCHAINS).collect::<Vec<_>>().into_iter().rev().collect();
         loop {
-            let mut text = format!("app={}\n", one_line(&self.app, 120));
+            let mut text = format!("app={}\nexe={}\n", one_line(&self.app, 120), one_line(&self.exe, 120));
             for s in &swapchains {
                 let (state, detail) = match &s.effect {
                     EffectState::Idle => ("idle", String::new()),
@@ -96,6 +104,7 @@ impl LayerStatus {
             let Some((key, value)) = line.split_once('=') else { continue };
             match key {
                 "app" => status.app = value.to_string(),
+                "exe" => status.exe = value.to_string(),
                 "swapchain" => {
                     if let Some(s) = parse_swapchain(value) {
                         status.swapchains.push(s);
@@ -265,6 +274,7 @@ mod tests {
     #[test]
     fn text_roundtrips_every_state() {
         let status = LayerStatus {
+            exe: String::new(),
             app: "Idols of Ash".into(),
             swapchains: vec![
                 swapchain(1920, 1080, EffectState::Ready),
@@ -288,7 +298,7 @@ mod tests {
     #[test]
     fn encoding_keeps_the_most_recent_swapchains_within_the_size_limit() {
         let many: Vec<_> = (0..40).map(|i| swapchain(1000 + i, 1000, EffectState::Failed("x".repeat(500)))).collect();
-        let text = LayerStatus { app: "A".repeat(500), swapchains: many }.encode();
+        let text = LayerStatus { exe: String::new(), app: "A".repeat(500), swapchains: many }.encode();
         assert!(text.len() <= MAX_STATUS_BYTES, "{} bytes", text.len());
         let back = LayerStatus::parse(&text);
         assert!(back.app.len() <= 120, "o nome do jogo é cortado");
@@ -299,6 +309,7 @@ mod tests {
     #[test]
     fn control_characters_cannot_break_the_format() {
         let s = LayerStatus {
+            exe: String::new(),
             app: "Jogo\nswapchain=1x1 44 3 ready".into(),
             swapchains: vec![swapchain(10, 10, EffectState::Failed("a\nb\u{0}c".into()))],
         };
@@ -313,13 +324,13 @@ mod tests {
         let writer = StatusWriter::create_in(&d).unwrap();
         assert!(live_layers_in(&d, Duration::ZERO).unwrap().is_empty(), "sem nada publicado ainda");
 
-        let status = LayerStatus { app: "RocketLeague.exe".into(), swapchains: vec![swapchain(1920, 1080, EffectState::Ready)] };
+        let status = LayerStatus { exe: String::new(), app: "RocketLeague.exe".into(), swapchains: vec![swapchain(1920, 1080, EffectState::Ready)] };
         writer.publish(&status).unwrap();
         let live = live_layers_in(&d, Duration::ZERO).unwrap();
         assert_eq!(live.len(), 1);
         assert_eq!(live[0].status, status);
 
-        let newer = LayerStatus { app: "RocketLeague.exe".into(), swapchains: vec![swapchain(1914, 1048, EffectState::Waiting)] };
+        let newer = LayerStatus { exe: String::new(), app: "RocketLeague.exe".into(), swapchains: vec![swapchain(1914, 1048, EffectState::Waiting)] };
         writer.publish(&newer).unwrap();
         assert_eq!(live_layers_in(&d, Duration::ZERO).unwrap()[0].status, newer, "a publicação nova substitui a antiga");
 
@@ -333,8 +344,8 @@ mod tests {
         let d = dir("two");
         let a = StatusWriter::create_in(&d).unwrap();
         let b = StatusWriter::create_in(&d).unwrap();
-        a.publish(&LayerStatus { app: "A".into(), swapchains: vec![] }).unwrap();
-        b.publish(&LayerStatus { app: "B".into(), swapchains: vec![] }).unwrap();
+        a.publish(&LayerStatus { exe: String::new(), app: "A".into(), swapchains: vec![] }).unwrap();
+        b.publish(&LayerStatus { exe: String::new(), app: "B".into(), swapchains: vec![] }).unwrap();
         let mut apps: Vec<_> = live_layers_in(&d, Duration::ZERO).unwrap().into_iter().map(|l| l.status.app).collect();
         apps.sort();
         assert_eq!(apps, ["A", "B"]);
@@ -344,7 +355,7 @@ mod tests {
     fn a_dead_layers_file_is_pruned_by_the_reader() {
         let d = dir("dead");
         let writer = StatusWriter::create_in(&d).unwrap();
-        writer.publish(&LayerStatus { app: "Morto".into(), swapchains: vec![] }).unwrap();
+        writer.publish(&LayerStatus { exe: String::new(), app: "Morto".into(), swapchains: vec![] }).unwrap();
         writer.abandon(); // solta o flock sem apagar: é o que acontece quando o processo morre
         assert_eq!(fs::read_dir(&d).unwrap().count(), 1, "o arquivo ficou para trás");
 

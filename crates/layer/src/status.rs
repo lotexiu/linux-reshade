@@ -39,6 +39,26 @@ pub fn instance_destroyed() {
     }
 }
 
+/// O nome do executável do jogo, sem extensão. Sob Wine/Proton o processo é o do Wine; o `.exe` do jogo está no
+/// primeiro argumento (`Z:\\...\\RocketLeague.exe`), então ele vale mais que o nome do binário.
+fn exe_name() -> String {
+    let from_cmdline = std::fs::read("/proc/self/cmdline").ok().and_then(|bytes| {
+        let first = bytes.split(|b| *b == 0).next()?;
+        exe_stem(&String::from_utf8_lossy(first)).filter(|_| first.windows(4).any(|w| w.eq_ignore_ascii_case(b".exe")))
+    });
+    from_cmdline.or_else(|| exe_stem(&process_name())).unwrap_or_default()
+}
+
+/// `Z:\\jogo\\Rocket League.exe` e `/usr/bin/vkcube` viram `Rocket League` e `vkcube`.
+fn exe_stem(path: &str) -> Option<String> {
+    let file = path.rsplit(['/', '\\']).next()?;
+    let stem = match file.rsplit_once('.') {
+        Some((stem, ext)) if ext.eq_ignore_ascii_case("exe") => stem,
+        _ => file,
+    };
+    (!stem.is_empty()).then(|| stem.to_string())
+}
+
 fn process_name() -> String {
     std::env::current_exe().ok().and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())).unwrap_or_else(|| "?".into())
 }
@@ -54,7 +74,7 @@ fn publish(state: &mut State) {
         }
     }
     if let Some(writer) = &state.writer {
-        let status = LayerStatus { app: state.app.clone(), swapchains: state.swapchains.iter().map(|(_, s)| s.clone()).collect() };
+        let status = LayerStatus { exe: exe_name(), app: state.app.clone(), swapchains: state.swapchains.iter().map(|(_, s)| s.clone()).collect() };
         if let Err(e) = writer.publish(&status) {
             log!("não consegui publicar o status: {e}");
         }
@@ -84,5 +104,19 @@ pub fn remove(handle: u64) {
     state.swapchains.retain(|(h, _)| *h != handle);
     if state.swapchains.len() != before {
         publish(&mut state);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::exe_stem;
+
+    #[test]
+    fn the_executable_name_loses_the_directory_and_the_exe_extension() {
+        assert_eq!(exe_stem("Z:\\home\\u\\Rocket League\\RocketLeague.exe").as_deref(), Some("RocketLeague"));
+        assert_eq!(exe_stem("/usr/bin/vkcube").as_deref(), Some("vkcube"));
+        assert_eq!(exe_stem("C:\\Game\\GAME.EXE").as_deref(), Some("GAME"));
+        assert_eq!(exe_stem("/opt/app.bin").as_deref(), Some("app.bin"), "só .exe é extensão de verdade");
+        assert_eq!(exe_stem(""), None);
     }
 }

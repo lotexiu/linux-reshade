@@ -3,7 +3,8 @@
 //! compila as etapas para cada resolução de cada swapchain do jogo.
 //!
 //! Quando um jogo tem preset (o dele ou o global), o plano manda sobre a escolha única de efeito (`lrctl use`).
-//! O id do jogo é o nome que a layer informa (o do `VkApplicationInfo`, ou o do processo se o jogo não deu um).
+//! O id do jogo é o nome do executável que a layer informa (`RocketLeague` para `RocketLeague.exe`, também sob
+//! Proton) e, se ela não o souber, o nome da aplicação no Vulkan.
 
 use crate::compiler::{Compiler, Ensured};
 use crate::game_plan;
@@ -83,7 +84,7 @@ impl Games {
     }
 
     fn tick_layer(&mut self, compiler: &Compiler, state: &ipc::Writer, layer: &LiveLayer, failures: &mut Failures, report: &mut Report) {
-        let game = layer.status.app.as_str();
+        let game = layer.status.game_id();
         let found = preset::game::find(&self.presets_dir, game);
         let Some(found) = found else {
             // Perdeu o preset (apagado, ou game.ini mudou): a layer volta à escolha única.
@@ -167,6 +168,7 @@ mod tests {
         LiveLayer {
             id: format!("layer-{app}"),
             status: LayerStatus {
+                exe: String::new(),
                 app: app.into(),
                 swapchains: sizes.iter().map(|&(w, h)| SwapchainStatus { width: w, height: h, format: 44, images: 3, effect: EffectState::Waiting }).collect(),
             },

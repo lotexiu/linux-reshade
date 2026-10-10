@@ -40,7 +40,7 @@ pub fn find<'a>(layers: &'a [LiveLayer], query: &str) -> Result<&'a LiveLayer, S
         return Ok(l);
     }
     let by_pid: Vec<_> = layers.iter().filter(|l| pid_of(&l.id) == Some(query)).collect();
-    let matches = if by_pid.is_empty() { layers.iter().filter(|l| l.status.app.eq_ignore_ascii_case(query)).collect() } else { by_pid };
+    let matches = if by_pid.is_empty() { layers.iter().filter(|l| l.status.app.eq_ignore_ascii_case(query) || l.status.exe.eq_ignore_ascii_case(query)).collect() } else { by_pid };
     match matches.as_slice() {
         [one] => Ok(one),
         [] if layers.is_empty() => Err(format!("nenhum jogo com a layer ativa (procurei {query:?})")),
@@ -85,7 +85,7 @@ mod tests {
     }
 
     fn live_with(app: &str, id: &str, swapchains: Vec<SwapchainStatus>) -> LiveLayer {
-        LiveLayer { id: id.into(), status: LayerStatus { app: app.into(), swapchains } }
+        LiveLayer { id: id.into(), status: LayerStatus { exe: String::new(), app: app.into(), swapchains } }
     }
 
     fn sc(w: u32, h: u32, format: i32, effect: EffectState) -> SwapchainStatus {

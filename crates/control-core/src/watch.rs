@@ -205,6 +205,7 @@ mod tests {
         LiveLayer {
             id: format!("layer-{app}"),
             status: LayerStatus {
+                exe: String::new(),
                 app: app.into(),
                 swapchains: swapchains
                     .iter()
