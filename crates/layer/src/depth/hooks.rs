@@ -747,16 +747,25 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
     let mut chosen = None;
     data.depth.snapshot_pass.store(0, Ordering::Relaxed);
     if let Some(c) = &active {
-        match pick.pass {
-            Some(pass) => {
-                // A foto depois do passe N: precisa da imagem da foto, e a imagem original precisa ter TRANSFER_SRC (armado).
-                let image = unsafe { super::snapshot::ensure(data, vk::Format::from_raw(c.format), c.width, c.height) };
-                if let Some(image) = image {
-                    data.depth.snapshot_pass.store(pass, Ordering::Relaxed);
-                    // Antes da primeira foto a imagem não tem layout: os efeitos só a recebem depois.
-                    if data.depth.snapshot_written.load(Ordering::Relaxed) {
-                        chosen = Some(super::Chosen { image: image.as_raw(), format: c.format, layout: vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL.as_raw(), width: c.width, height: c.height, linear: linear(c.format) });
-                    }
+        // Sem pedido: um passe que começa com DontCare depois do primeiro recomeça a imagem (outra câmera ou camada no
+        // mesmo alvo), então a cena é a foto do passe anterior; sem foto possível, vale a original.
+        let auto_pass = || {
+            let passes = stats.passes_of(c.image);
+            let first = passes.iter().skip(1).position(|p| p.load == super::observe::LoadOp::DontCare)?;
+            u32::try_from(first + 1).ok()
+        };
+        let wanted = pick.pass.or_else(auto_pass);
+        let snapshot = wanted.and_then(|pass| {
+            // A foto depois do passe N: precisa da imagem da foto, e a imagem original precisa ter TRANSFER_SRC (armado).
+            let image = unsafe { super::snapshot::ensure(data, vk::Format::from_raw(c.format), c.width, c.height) }?;
+            Some((pass, image))
+        });
+        match snapshot {
+            Some((pass, image)) => {
+                data.depth.snapshot_pass.store(pass, Ordering::Relaxed);
+                // Antes da primeira foto a imagem não tem layout: os efeitos só a recebem depois.
+                if data.depth.snapshot_written.load(Ordering::Relaxed) {
+                    chosen = Some(super::Chosen { image: image.as_raw(), format: c.format, layout: vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL.as_raw(), width: c.width, height: c.height, linear: linear(c.format) });
                 }
             }
             None if c.sampled && c.layout != 0 => {
@@ -775,7 +784,8 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
             .passes_of(c.image)
             .iter()
             .enumerate()
-            .map(|(i, p)| format!("{}:{}d/{}i {}x{} {:?}->{:?}", i + 1, p.draws, p.indirect, p.area.0, p.area.1, p.load, p.store))
+            .filter(|(_, p)| p.draws > 0 || !matches!(p.load, super::observe::LoadOp::Load))
+            .map(|(i, p)| format!("{}:{}d/{}i {:?}->{:?}", i + 1, p.draws, p.indirect, p.load, p.store))
             .collect();
         passes_summary = briefs.join(" ");
         let mut logged = data.depth.passes_logged.lock().unwrap();
