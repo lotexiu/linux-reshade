@@ -5,11 +5,32 @@ use super::observe::LoadOp;
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
-/// Um passe que desenhou numa imagem do swapchain.
+/// O que aconteceu com uma imagem do swapchain.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub enum Kind {
+    /// Um passe de renderização.
+    #[default]
+    Pass,
+    Blit,
+    Copy,
+    Resolve,
+    Clear,
+    /// Uma barreira para este layout (número do `VkImageLayout`).
+    Barrier(i32),
+}
+
+/// Um evento na imagem do swapchain: um passe de renderização, uma escrita por transferência ou uma barreira.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct ScreenPass {
+    pub kind: Kind,
     pub load: LoadOp,
     pub draws: u32,
+}
+
+impl ScreenPass {
+    pub fn event(kind: Kind) -> Self {
+        Self { kind, load: LoadOp::None, draws: 0 }
+    }
 }
 
 #[derive(Default)]
@@ -22,6 +43,8 @@ pub(crate) struct Screen {
     render_pass_loads: Mutex<HashMap<u64, Vec<LoadOp>>>,
     /// Os passes do quadro, na ordem dos envios à fila.
     frame: Mutex<Vec<ScreenPass>>,
+    /// Cache de "esta imagem é do swapchain?".
+    images: Mutex<HashMap<u64, bool>>,
 }
 
 impl Screen {
@@ -48,7 +71,12 @@ impl Screen {
         let views = views.or_else(|| self.framebuffers.lock().unwrap().get(&framebuffer).cloned())?;
         let position = views.iter().position(|v| self.is_view(*v))?;
         let load = self.render_pass_loads.lock().unwrap().get(&render_pass).and_then(|l| l.get(position).copied()).unwrap_or(LoadOp::None);
-        Some(ScreenPass { load, draws: 0 })
+        Some(ScreenPass { kind: Kind::Pass, load, draws: 0 })
+    }
+
+    /// A imagem é de um swapchain? `probe` pergunta de verdade na primeira vez.
+    pub fn is_image(&self, image: u64, probe: impl FnOnce() -> bool) -> bool {
+        *self.images.lock().unwrap().entry(image).or_insert_with(probe)
     }
 
     pub fn push_frame(&self, passes: impl IntoIterator<Item = ScreenPass>) {
@@ -58,6 +86,13 @@ impl Screen {
     /// Os passes do quadro que acabou, num resumo de uma linha (`vazio` se nenhum desenhou na tela).
     pub fn take_summary(&self) -> String {
         let passes = std::mem::take(&mut *self.frame.lock().unwrap());
-        passes.iter().enumerate().map(|(i, p)| format!("{}:{}d {:?}", i + 1, p.draws, p.load)).collect::<Vec<_>>().join(" ")
+        passes.iter().enumerate().map(|(i, p)| match p.kind {
+                Kind::Pass => format!("{}:pass {}d {:?}", i + 1, p.draws, p.load),
+                Kind::Blit => format!("{}:blit", i + 1),
+                Kind::Copy => format!("{}:copy", i + 1),
+                Kind::Resolve => format!("{}:resolve", i + 1),
+                Kind::Clear => format!("{}:clear", i + 1),
+                Kind::Barrier(l) => format!("{}:barreira->{l}", i + 1),
+            }).collect::<Vec<_>>().join(" ")
     }
 }

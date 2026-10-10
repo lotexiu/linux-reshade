@@ -46,6 +46,10 @@ pub fn intercept_name(name: &[u8]) -> vk::PFN_vkVoidFunction {
         b"vkCmdPipelineBarrier2" | b"vkCmdPipelineBarrier2KHR" => erase(cmd_pipeline_barrier2 as vk::PFN_vkCmdPipelineBarrier2),
         b"vkCmdExecuteCommands" => erase(cmd_execute_commands as vk::PFN_vkCmdExecuteCommands),
         b"vkCmdSetDepthCompareOp" | b"vkCmdSetDepthCompareOpEXT" => erase(cmd_set_depth_compare_op as vk::PFN_vkCmdSetDepthCompareOp),
+        b"vkCmdBlitImage" => erase(cmd_blit_image as vk::PFN_vkCmdBlitImage),
+        b"vkCmdCopyImage" => erase(cmd_copy_image as vk::PFN_vkCmdCopyImage),
+        b"vkCmdResolveImage" => erase(cmd_resolve_image as vk::PFN_vkCmdResolveImage),
+        b"vkCmdClearColorImage" => erase(cmd_clear_color_image as vk::PFN_vkCmdClearColorImage),
         b"vkQueueSubmit" => erase(queue_submit as vk::PFN_vkQueueSubmit),
         b"vkQueueSubmit2" | b"vkQueueSubmit2KHR" => erase(queue_submit2 as vk::PFN_vkQueueSubmit2),
         _ => None,
@@ -445,7 +449,7 @@ unsafe extern "system" fn cmd_begin_rendering(cmd: vk::CommandBuffer, p_info: *c
                 if let Some(a) = colors.iter().find(|a| data.depth.screen.is_view(a.image_view.as_raw()))
                     && let Some(state) = data.depth.cmds.lock().unwrap().get_mut(&cmd.as_raw())
                 {
-                    state.screen_current = Some(super::screen::ScreenPass { load: load_op(a.load_op), draws: 0 });
+                    state.screen_current = Some(super::screen::ScreenPass { kind: super::screen::Kind::Pass, load: load_op(a.load_op), draws: 0 });
                 }
             }
             if !info.p_depth_attachment.is_null() {
@@ -588,7 +592,18 @@ unsafe extern "system" fn cmd_bind_pipeline(cmd: vk::CommandBuffer, bind_point: 
 }
 
 /// Anota as barreiras que mudam o layout de uma imagem de profundidade.
+/// Anota (no command buffer) um evento sobre uma imagem do swapchain.
+fn screen_event(data: &DeviceData, cmd: vk::CommandBuffer, image: vk::Image, kind: super::screen::Kind) {
+    if !data.depth.is_on() || !data.depth.screen.is_image(image.as_raw(), || crate::effect::is_swapchain_image(data, image.as_raw())) {
+        return;
+    }
+    if let Some(state) = data.depth.cmds.lock().unwrap().get_mut(&cmd.as_raw()) {
+        state.screen_passes.push(super::screen::ScreenPass::event(kind));
+    }
+}
+
 fn note_layout(data: &DeviceData, cmd: vk::CommandBuffer, image: vk::Image, new_layout: vk::ImageLayout) {
+    screen_event(data, cmd, image, super::screen::Kind::Barrier(new_layout.as_raw()));
     if new_layout == vk::ImageLayout::UNDEFINED || !data.depth.images.lock().unwrap().contains_key(&image.as_raw()) {
         return;
     }
@@ -656,10 +671,14 @@ unsafe extern "system" fn cmd_execute_commands(cmd: vk::CommandBuffer, count: u3
         // (o ReShade faz o mesmo), para a imagem aparecer nas candidatas.
         if data.depth.is_on()
             && let Some(state) = data.depth.cmds.lock().unwrap().get_mut(&cmd.as_raw())
-            && let Some(p) = state.current.as_mut()
         {
-            p.draws += count;
-            p.indirect += count;
+            if let Some(s) = state.screen_current.as_mut() {
+                s.draws += count;
+            }
+            if let Some(p) = state.current.as_mut() {
+                p.draws += count;
+                p.indirect += count;
+            }
         }
         (data.device.fp_v1_0().cmd_execute_commands)(cmd, count, p_buffers);
     }
@@ -897,5 +916,37 @@ fn to_status(c: &super::observe::Candidate) -> ipc::DepthStatus {
         unusable: c.unusable.map(String::from),
         sampled: c.sampled,
         layout: c.layout,
+    }
+}
+
+unsafe extern "system" fn cmd_blit_image(cmd: vk::CommandBuffer, src: vk::Image, src_layout: vk::ImageLayout, dst: vk::Image, dst_layout: vk::ImageLayout, count: u32, p_regions: *const vk::ImageBlit, filter: vk::Filter) {
+    unsafe {
+        let Some(data) = data_of(cmd.as_raw()) else { return };
+        screen_event(&data, cmd, dst, super::screen::Kind::Blit);
+        (data.device.fp_v1_0().cmd_blit_image)(cmd, src, src_layout, dst, dst_layout, count, p_regions, filter);
+    }
+}
+
+unsafe extern "system" fn cmd_copy_image(cmd: vk::CommandBuffer, src: vk::Image, src_layout: vk::ImageLayout, dst: vk::Image, dst_layout: vk::ImageLayout, count: u32, p_regions: *const vk::ImageCopy) {
+    unsafe {
+        let Some(data) = data_of(cmd.as_raw()) else { return };
+        screen_event(&data, cmd, dst, super::screen::Kind::Copy);
+        (data.device.fp_v1_0().cmd_copy_image)(cmd, src, src_layout, dst, dst_layout, count, p_regions);
+    }
+}
+
+unsafe extern "system" fn cmd_resolve_image(cmd: vk::CommandBuffer, src: vk::Image, src_layout: vk::ImageLayout, dst: vk::Image, dst_layout: vk::ImageLayout, count: u32, p_regions: *const vk::ImageResolve) {
+    unsafe {
+        let Some(data) = data_of(cmd.as_raw()) else { return };
+        screen_event(&data, cmd, dst, super::screen::Kind::Resolve);
+        (data.device.fp_v1_0().cmd_resolve_image)(cmd, src, src_layout, dst, dst_layout, count, p_regions);
+    }
+}
+
+unsafe extern "system" fn cmd_clear_color_image(cmd: vk::CommandBuffer, image: vk::Image, layout: vk::ImageLayout, p_color: *const vk::ClearColorValue, count: u32, p_ranges: *const vk::ImageSubresourceRange) {
+    unsafe {
+        let Some(data) = data_of(cmd.as_raw()) else { return };
+        screen_event(&data, cmd, image, super::screen::Kind::Clear);
+        (data.device.fp_v1_0().cmd_clear_color_image)(cmd, image, layout, p_color, count, p_ranges);
     }
 }
