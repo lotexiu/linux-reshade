@@ -8,7 +8,7 @@ use gtk4 as gtk;
 use gtk::glib;
 use gtk::prelude::*;
 use control_core::analysis::{EffectInfo, Feature};
-use panel::{Home, TechniqueView};
+use panel::{EffectGroup, Home};
 use preset::TechId;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -57,11 +57,12 @@ pub struct Ui {
     updating: Cell<bool>,
 }
 
-/// Os widgets de uma técnica da lista.
+/// Os widgets de um efeito da lista (com as técnicas dele).
 struct TechRow {
-    id: TechId,
+    /// Arquivo do efeito (`cGaussianBlur.fx`).
     file: String,
-    label: String,
+    /// O que a busca compara: nome do efeito, arquivo e nomes das técnicas.
+    haystack: String,
     check: gtk::CheckButton,
     controls: Option<RefCell<ControlsView>>,
     row: gtk::ListBoxRow,
@@ -119,13 +120,6 @@ fn caption(text: &str) -> gtk::Label {
 
 impl Ui {
     pub fn new(app: &gtk::Application, home: Home) -> Rc<Ui> {
-        // O vermelho dos efeitos incompatíveis (a classe `error` do tema nem sempre é vermelha).
-        let css = gtk::CssProvider::new();
-        css.load_from_data(".lr-bad { color: #e5484d; } .lr-ok { color: #3dd68c; }");
-        if let Some(display) = gtk::gdk::Display::default() {
-            #[allow(deprecated)]
-            gtk::style_context_add_provider_for_display(&display, &css, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
-        }
         let home = Rc::new(RefCell::new(home));
         let hook: Hook = Rc::new(RefCell::new(None));
         let redraw = {
@@ -499,7 +493,7 @@ impl Ui {
     fn apply_search(&self) {
         let q = self.search.text().to_lowercase();
         for row in self.rows.borrow().iter() {
-            let hit = q.is_empty() || row.label.to_lowercase().contains(&q) || row.file.to_lowercase().contains(&q) || row.id.name.to_lowercase().contains(&q);
+            let hit = q.is_empty() || row.haystack.contains(&q);
             row.row.set_visible(hit);
         }
     }
@@ -593,18 +587,18 @@ impl Ui {
                                 None => tags.join(" · "),
                             });
                             if info.compatible() {
-                                row.title.remove_css_class("lr-bad");
-                                row.detail.remove_css_class("lr-bad");
+                                row.title.remove_css_class("error");
+                                row.detail.remove_css_class("error");
                                 row.detail.add_css_class("dim-label");
                             } else {
-                                row.title.add_css_class("lr-bad");
-                                row.detail.add_css_class("lr-bad");
+                                row.title.add_css_class("error");
+                                row.detail.add_css_class("error");
                                 row.detail.remove_css_class("dim-label");
                             }
                         }
                         None => {
                             row.detail.set_text("");
-                            row.title.remove_css_class("lr-bad");
+                            row.title.remove_css_class("error");
                         }
                     }
                 }
@@ -616,10 +610,10 @@ impl Ui {
             self.add_progress.set_visible(done < total);
             self.add_progress.set_text(&format!("Analisando os efeitos para saber quais servem… {done}/{total}"));
 
-            self.show_techniques(&s.techniques);
+            self.show_groups(&s.groups);
 
-            self.empty.set_visible(s.techniques.is_empty());
-            self.empty.set_text(if s.techniques.is_empty() {
+            self.empty.set_visible(s.groups.is_empty());
+            self.empty.set_text(if s.groups.is_empty() {
                 "Nenhum efeito no preset.\nUse \"Adicionar efeito\" para começar."
             } else {
                 ""
@@ -631,33 +625,39 @@ impl Ui {
         self.updating.set(false);
     }
 
-    fn signature_of(techniques: &[TechniqueView]) -> String {
-        techniques.iter().map(|t| format!("{}|{}|{}|{:?}|{:?}\n", t.id, t.label, t.enabled, t.problem, t.runtime)).collect()
+    fn signature_of(groups: &[EffectGroup]) -> String {
+        groups
+            .iter()
+            .map(|g| {
+                let techniques: Vec<String> = g.techniques.iter().map(|t| format!("{}:{}:{}:{:?}:{:?}", t.id, t.label, t.enabled, t.problem, t.runtime)).collect();
+                format!("{}|{}\n", g.file, techniques.join(";"))
+            })
+            .collect()
     }
 
-    /// A lista de técnicas: refeita quando a estrutura muda; senão só atualiza os valores dos controles.
-    fn show_techniques(self: &Rc<Self>, techniques: &[TechniqueView]) {
-        let signature = Self::signature_of(techniques);
+    /// A lista de efeitos: refeita quando a estrutura muda; senão só atualiza os valores dos controles.
+    fn show_groups(self: &Rc<Self>, groups: &[EffectGroup]) {
+        let signature = Self::signature_of(groups);
         if signature != *self.signature.borrow() {
-            self.rebuild(techniques);
+            self.rebuild(groups);
             *self.signature.borrow_mut() = signature;
         }
-        for (row, t) in self.rows.borrow().iter().zip(techniques) {
+        for (row, g) in self.rows.borrow().iter().zip(groups) {
             if let Some(view) = &row.controls {
-                view.borrow_mut().show(&t.controls);
+                view.borrow_mut().show(&g.controls);
             }
         }
         self.apply_search();
     }
 
-    fn rebuild(self: &Rc<Self>, techniques: &[TechniqueView]) {
+    fn rebuild(self: &Rc<Self>, groups: &[EffectGroup]) {
         while let Some(child) = self.list.first_child() {
             self.list.remove(&child);
         }
         let mut rows = Vec::new();
-        let last = techniques.len().saturating_sub(1);
-        for (index, t) in techniques.iter().enumerate() {
-            rows.push(self.build_row(index, last, t));
+        let last = groups.len().saturating_sub(1);
+        for (index, g) in groups.iter().enumerate() {
+            rows.push(self.build_row(index, last, g));
         }
         for r in &rows {
             self.list.append(&r.row);
@@ -665,31 +665,49 @@ impl Ui {
         *self.rows.borrow_mut() = rows;
     }
 
-    fn build_row(self: &Rc<Self>, index: usize, last: usize, t: &TechniqueView) -> TechRow {
-        let weak = Rc::downgrade(self);
-        let id = t.id.clone();
+    /// O texto e a cor do que a layer fez com uma técnica no jogo aberto.
+    fn runtime_label(state: &ipc::TechniqueState) -> gtk::Label {
+        let (text, class) = match state {
+            ipc::TechniqueState::Applied => ("● aplicada no jogo".to_string(), "success"),
+            ipc::TechniqueState::Skipped(why) => (format!("pulada no jogo: {why}"), "error"),
+        };
+        let l = gtk::Label::new(Some(&text));
+        l.set_halign(gtk::Align::Start);
+        l.set_xalign(0.0);
+        l.set_wrap(true);
+        l.add_css_class(class);
+        l.add_css_class("caption");
+        l
+    }
 
+    fn build_row(self: &Rc<Self>, index: usize, last: usize, g: &EffectGroup) -> TechRow {
+        let weak = Rc::downgrade(self);
+        let file = g.file.clone();
+        let multi = g.techniques.len() > 1;
+
+        // A caixa do efeito liga e desliga todas as técnicas dele (marcada pela metade se só algumas estão ligadas).
         let check = gtk::CheckButton::new();
-        check.set_active(t.enabled);
+        check.set_active(g.any_enabled());
+        check.set_inconsistent(g.any_enabled() && !g.all_enabled());
         check.set_valign(gtk::Align::Center);
-        check.set_tooltip_text(Some("Ligar ou desligar a técnica"));
+        check.set_tooltip_text(Some("Ligar ou desligar o efeito"));
         check.connect_toggled({
-            let (weak, id) = (weak.clone(), id.clone());
+            let (weak, file) = (weak.clone(), file.clone());
             move |c| {
                 if let Some(ui) = weak.upgrade()
                     && !ui.updating.get()
                 {
                     let on = c.is_active();
-                    ui.act(|h| h.set_technique_enabled(&id, on));
+                    ui.act(|h| h.set_effect_enabled(&file, on));
                 }
             }
         });
 
-        let title = gtk::Label::new(Some(&t.label));
+        let title = gtk::Label::new(Some(&g.name));
         title.set_halign(gtk::Align::Start);
         title.set_xalign(0.0);
         title.add_css_class("heading");
-        let subtitle = gtk::Label::new(Some(&t.file));
+        let subtitle = gtk::Label::new(Some(&g.file));
         subtitle.set_halign(gtk::Align::Start);
         subtitle.add_css_class("dim-label");
         subtitle.add_css_class("caption");
@@ -697,30 +715,54 @@ impl Ui {
         names.set_hexpand(true);
         names.append(&title);
         names.append(&subtitle);
-        match &t.runtime {
-            Some(panel_state) => {
-                let (text, class) = match panel_state {
-                    ipc::TechniqueState::Applied => ("● aplicada no jogo".to_string(), "lr-ok"),
-                    ipc::TechniqueState::Skipped(why) => (format!("pulada no jogo: {why}"), "lr-bad"),
-                };
-                let l = gtk::Label::new(Some(&text));
-                l.set_halign(gtk::Align::Start);
-                l.set_xalign(0.0);
-                l.set_wrap(true);
-                l.add_css_class(class);
-                l.add_css_class("caption");
-                names.append(&l);
+
+        // Efeito de uma técnica só: o estado no jogo e o problema, direto embaixo do nome. Com várias: uma linha por técnica.
+        if multi {
+            for t in &g.techniques {
+                let line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+                line.set_margin_top(2);
+                let sub = gtk::CheckButton::with_label(&t.label);
+                sub.set_active(t.enabled);
+                sub.set_tooltip_text(Some("Ligar ou desligar só esta técnica"));
+                sub.connect_toggled({
+                    let (weak, id) = (weak.clone(), t.id.clone());
+                    move |c| {
+                        if let Some(ui) = weak.upgrade()
+                            && !ui.updating.get()
+                        {
+                            let on = c.is_active();
+                            ui.act(|h| h.set_technique_enabled(&id, on));
+                        }
+                    }
+                });
+                line.append(&sub);
+                if let Some(state) = &t.runtime {
+                    line.append(&Self::runtime_label(state));
+                }
+                names.append(&line);
+                if let Some(problem) = &t.problem {
+                    let p = gtk::Label::new(Some(problem));
+                    p.set_halign(gtk::Align::Start);
+                    p.set_xalign(0.0);
+                    p.set_wrap(true);
+                    p.add_css_class("warning");
+                    p.add_css_class("caption");
+                    names.append(&p);
+                }
             }
-            None => {}
-        }
-        if let Some(problem) = &t.problem {
-            let p = gtk::Label::new(Some(problem));
-            p.set_halign(gtk::Align::Start);
-            p.set_xalign(0.0);
-            p.set_wrap(true);
-            p.add_css_class("warning");
-            p.add_css_class("caption");
-            names.append(&p);
+        } else if let Some(t) = g.techniques.first() {
+            if let Some(state) = &t.runtime {
+                names.append(&Self::runtime_label(state));
+            }
+            if let Some(problem) = &t.problem {
+                let p = gtk::Label::new(Some(problem));
+                p.set_halign(gtk::Align::Start);
+                p.set_xalign(0.0);
+                p.set_wrap(true);
+                p.add_css_class("warning");
+                p.add_css_class("caption");
+                names.append(&p);
+            }
         }
 
         let icon_button = |icon: &str, tip: &str| {
@@ -733,29 +775,29 @@ impl Ui {
         let up = icon_button("go-up-symbolic", "Rodar antes");
         up.set_sensitive(index > 0);
         up.connect_clicked({
-            let (weak, id) = (weak.clone(), id.clone());
+            let (weak, file) = (weak.clone(), file.clone());
             move |_| {
                 if let Some(ui) = weak.upgrade() {
-                    ui.act(|h| h.move_technique(&id, -1));
+                    ui.act(|h| h.move_effect(&file, -1));
                 }
             }
         });
         let down = icon_button("go-down-symbolic", "Rodar depois");
         down.set_sensitive(index < last);
         down.connect_clicked({
-            let (weak, id) = (weak.clone(), id.clone());
+            let (weak, file) = (weak.clone(), file.clone());
             move |_| {
                 if let Some(ui) = weak.upgrade() {
-                    ui.act(|h| h.move_technique(&id, 1));
+                    ui.act(|h| h.move_effect(&file, 1));
                 }
             }
         });
-        let remove = icon_button("user-trash-symbolic", "Tirar do preset");
+        let remove = icon_button("user-trash-symbolic", "Tirar o efeito do preset (apaga as configurações dele)");
         remove.connect_clicked({
-            let (weak, id) = (weak.clone(), id.clone());
+            let (weak, file) = (weak.clone(), file.clone());
             move |_| {
                 if let Some(ui) = weak.upgrade() {
-                    ui.act(|h| h.remove_technique(&id));
+                    ui.act(|h| h.remove_effect(&file));
                 }
             }
         });
@@ -764,11 +806,11 @@ impl Ui {
         head.append(&check);
         head.append(&names);
 
-        // Os parâmetros do efeito, num painel que abre e fecha (só na primeira técnica de cada arquivo).
-        let controls = (!t.controls.is_empty()).then(|| {
+        // Os parâmetros do efeito, num painel que abre e fecha.
+        let controls = (!g.controls.is_empty()).then(|| {
             let view = ControlsView::new(
                 {
-                    let (weak, file) = (weak.clone(), t.file.clone());
+                    let (weak, file) = (weak.clone(), file.clone());
                     Rc::new(move |name: &str, values: &[f64]| {
                         if let Some(ui) = weak.upgrade() {
                             ui.act(|h| h.set_control(&file, name, values));
@@ -792,7 +834,7 @@ impl Ui {
             let reset = gtk::Button::with_label("Restaurar os padrões do efeito");
             reset.set_halign(gtk::Align::Start);
             reset.connect_clicked({
-                let (weak, file) = (weak.clone(), t.file.clone());
+                let (weak, file) = (weak.clone(), file.clone());
                 move |_| {
                     if let Some(ui) = weak.upgrade() {
                         ui.act(|h| h.reset_effect(&file));
@@ -801,7 +843,7 @@ impl Ui {
             });
             panel.append(&reset);
             revealer.set_child(Some(&panel));
-            let open = self.expanded.borrow().contains(&t.file);
+            let open = self.expanded.borrow().contains(&file);
             revealer.set_reveal_child(open);
             let toggle = gtk::ToggleButton::new();
             toggle.set_icon_name("view-more-symbolic");
@@ -810,7 +852,7 @@ impl Ui {
             toggle.set_valign(gtk::Align::Center);
             toggle.set_active(open);
             toggle.connect_toggled({
-                let (weak, file, revealer) = (weak.clone(), t.file.clone(), revealer.clone());
+                let (weak, file, revealer) = (weak.clone(), file.clone(), revealer.clone());
                 move |b| {
                     revealer.set_reveal_child(b.is_active());
                     if let Some(ui) = weak.upgrade() {
@@ -838,7 +880,8 @@ impl Ui {
         let row = gtk::ListBoxRow::new();
         row.set_activatable(false);
         row.set_child(Some(&outer));
-        TechRow { id: t.id.clone(), file: t.file.clone(), label: t.label.clone(), check, controls, row }
+        let haystack = std::iter::once(g.name.clone()).chain(std::iter::once(g.file.clone())).chain(g.techniques.iter().flat_map(|t| [t.label.clone(), t.id.name.clone()])).collect::<Vec<_>>().join(" ").to_lowercase();
+        TechRow { file: g.file.clone(), haystack, check, controls, row }
     }
 
     /// O que a tela sabe dos jogos, em texto (para os testes automáticos conferirem de fora).

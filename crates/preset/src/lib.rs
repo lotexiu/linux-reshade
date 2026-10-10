@@ -253,6 +253,19 @@ impl Preset {
         self.store(&order, &enabled);
     }
 
+    /// Define a ordem de execução de todas as técnicas que o preset conhece. Só vale se `order` tem exatamente as mesmas
+    /// técnicas que o preset (nenhuma a mais, nenhuma a menos); `false` se não. O estado ligado/desligado não muda.
+    pub fn set_order(&mut self, order: &[TechId]) -> bool {
+        let current = self.full_order();
+        let same = order.len() == current.len() && order.iter().all(|o| current.iter().any(|c| c.matches(o)));
+        if !same {
+            return false;
+        }
+        let enabled = self.techniques();
+        self.store(order, &enabled);
+        true
+    }
+
     /// Tira a técnica do preset (da lista de ligadas e da ordem). `false` se ele não a conhecia.
     pub fn remove_technique(&mut self, id: &TechId) -> bool {
         let mut order = self.full_order();

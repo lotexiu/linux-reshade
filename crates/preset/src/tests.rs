@@ -324,3 +324,14 @@ fn removing_an_effect_deletes_its_section_only() {
     assert_eq!(p.value("Bloom.fx", "Force"), Some("0.3"), "o resto fica");
     assert!(!p.remove_effect("Sepia.fx"));
 }
+
+#[test]
+fn set_order_reorders_everything_at_once_and_refuses_a_different_set() {
+    let mut p = Preset::parse("Techniques=A@a.fx,C@c.fx\nTechniqueSorting=A@a.fx,B@b.fx,C@c.fx\n");
+    assert!(p.set_order(&ids(&["C@c.fx", "B@b.fx", "A@a.fx"])));
+    assert_eq!(p.sorting(), ids(&["C@c.fx", "B@b.fx", "A@a.fx"]));
+    assert_eq!(p.techniques(), ids(&["C@c.fx", "A@a.fx"]), "continuam ligadas só as mesmas");
+    assert!(!p.set_order(&ids(&["A@a.fx", "B@b.fx"])), "falta uma");
+    assert!(!p.set_order(&ids(&["A@a.fx", "B@b.fx", "C@c.fx", "D@d.fx"])), "sobra uma");
+    assert!(!p.set_order(&ids(&["A@a.fx", "B@b.fx", "X@x.fx"])), "uma é outra");
+}

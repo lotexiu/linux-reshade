@@ -57,6 +57,31 @@ pub struct TechniqueView {
     pub problem: Option<String>,
 }
 
+/// Um efeito (um arquivo `.fx`) com as técnicas dele: é a unidade que a pessoa vê, move e remove. As técnicas de um
+/// mesmo efeito (por exemplo o desfoque horizontal e o vertical) andam juntas e partilham os parâmetros do efeito;
+/// dá para ligar e desligar cada uma, mas não remover só uma.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EffectGroup {
+    /// Arquivo do efeito (`cGaussianBlur.fx`).
+    pub file: String,
+    /// Nome para mostrar: o do arquivo sem `.fx`.
+    pub name: String,
+    pub techniques: Vec<TechniqueView>,
+    /// Os parâmetros do efeito (de um só lugar, não repetidos por técnica).
+    pub controls: Vec<Control>,
+}
+
+impl EffectGroup {
+    /// Alguma técnica do efeito está ligada.
+    pub fn any_enabled(&self) -> bool {
+        self.techniques.iter().any(|t| t.enabled)
+    }
+
+    pub fn all_enabled(&self) -> bool {
+        self.techniques.iter().all(|t| t.enabled)
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct HomeSnapshot {
     /// Os efeitos estão ligados (a flag global que o atalho alterna).
@@ -69,6 +94,8 @@ pub struct HomeSnapshot {
     pub active_preset: Option<String>,
     pub preset: Option<PresetInfo>,
     pub techniques: Vec<TechniqueView>,
+    /// As mesmas técnicas agrupadas por efeito, na ordem em que cada efeito aparece pela primeira vez.
+    pub groups: Vec<EffectGroup>,
     /// Efeitos que podem ser adicionados (nomes de arquivo sem `.fx`).
     pub effects: Vec<String>,
     /// O que se sabe de cada efeito (compatibilidade e características), conforme a análise em segundo plano avança.
@@ -266,6 +293,7 @@ impl Home {
         }
 
         self.snapshot.techniques.clear();
+        self.snapshot.groups.clear();
         let Some(loaded) = &self.loaded else { return };
         let preset = loaded.preset.clone();
         let mut shown_files: Vec<String> = Vec::new();
@@ -305,6 +333,23 @@ impl Home {
                 None
             };
             self.snapshot.techniques.push(TechniqueView { id: row.id, label, file, enabled: row.enabled, controls, runtime, problem });
+        }
+        // Agrupa por efeito: os parâmetros vêm da primeira técnica de cada arquivo.
+        for t in &self.snapshot.techniques {
+            match self.snapshot.groups.iter_mut().find(|g| g.file == t.file) {
+                Some(g) => {
+                    if g.controls.is_empty() {
+                        g.controls = t.controls.clone();
+                    }
+                    g.techniques.push(TechniqueView { controls: Vec::new(), ..t.clone() });
+                }
+                None => self.snapshot.groups.push(EffectGroup {
+                    file: t.file.clone(),
+                    name: effect_name(&t.file).to_string(),
+                    controls: t.controls.clone(),
+                    techniques: vec![TechniqueView { controls: Vec::new(), ..t.clone() }],
+                }),
+            }
         }
     }
 
@@ -431,6 +476,56 @@ impl Home {
             let at = rows.iter().position(|r| r.id.matches(&id)).ok_or("o preset não conhece esta técnica")?;
             let to = (at as i32 + delta).clamp(0, rows.len() as i32 - 1) as usize;
             p.move_technique(&id, to);
+            Ok(None)
+        });
+    }
+
+    /// Liga ou desliga todas as técnicas de um efeito.
+    pub fn set_effect_enabled(&mut self, file: &str, on: bool) {
+        let ids: Vec<TechId> = self.snapshot.groups.iter().filter(|g| g.file == file).flat_map(|g| g.techniques.iter().map(|t| t.id.clone())).collect();
+        self.edit(move |p, _| {
+            for id in &ids {
+                p.set_enabled(id, on);
+            }
+            Ok(None)
+        });
+    }
+
+    /// Move um efeito inteiro `delta` posições entre os efeitos (negativo: para cima, que roda antes). As técnicas dele
+    /// ficam juntas e na mesma ordem entre si.
+    pub fn move_effect(&mut self, file: &str, delta: i32) {
+        let file = file.to_string();
+        self.edit(move |p, _| {
+            let rows = presets::rows(p);
+            let mut order: Vec<String> = Vec::new(); // arquivos na ordem em que aparecem
+            for r in &rows {
+                let f = r.id.file.clone().unwrap_or_else(|| format!("{}.fx", r.id.name));
+                if !order.contains(&f) {
+                    order.push(f);
+                }
+            }
+            let at = order.iter().position(|f| *f == file).ok_or("o preset não conhece este efeito")?;
+            let to = (at as i32 + delta).clamp(0, order.len() as i32 - 1) as usize;
+            let item = order.remove(at);
+            order.insert(to, item);
+            let new: Vec<TechId> = order
+                .iter()
+                .flat_map(|f| rows.iter().filter(move |r| r.id.file.clone().unwrap_or_else(|| format!("{}.fx", r.id.name)) == *f).map(|r| r.id.clone()))
+                .collect();
+            p.set_order(&new);
+            Ok(None)
+        });
+    }
+
+    /// Tira um efeito inteiro do preset, com as configurações dele.
+    pub fn remove_effect(&mut self, file: &str) {
+        let file = file.to_string();
+        let ids: Vec<TechId> = self.snapshot.groups.iter().filter(|g| g.file == file).flat_map(|g| g.techniques.iter().map(|t| t.id.clone())).collect();
+        self.edit(move |p, _| {
+            for id in &ids {
+                p.remove_technique(id);
+            }
+            p.remove_effect(&file);
             Ok(None)
         });
     }
@@ -699,6 +794,54 @@ mod tests {
         assert!(!fs::read_to_string(&file).unwrap().contains("Sepia"), "{}", fs::read_to_string(&file).unwrap());
         h.add_effect("Sepia");
         assert_eq!(h.snapshot().techniques[0].controls[0].value, vec![1.0]);
+    }
+
+    fn blur_techniques(h: &mut Home) {
+        // Um efeito com duas técnicas (como o desfoque gaussiano horizontal e vertical), no mesmo arquivo.
+        h.edit(|p, _| {
+            p.set_enabled(&TechId::new("Horizontal", "Blur.fx"), true);
+            p.set_enabled(&TechId::new("Vertical", "Blur.fx"), true);
+            Ok(None)
+        });
+    }
+
+    #[test]
+    fn techniques_of_one_effect_are_one_group_with_one_set_of_controls() {
+        let (mut h, _) = home(env("groups"), open_game("vkcube"));
+        h.add_effect("Sepia");
+        blur_techniques(&mut h);
+        let g = &h.snapshot().groups;
+        assert_eq!(g.iter().map(|g| (g.file.as_str(), g.techniques.len())).collect::<Vec<_>>(), [("Sepia.fx", 1), ("Blur.fx", 2)]);
+        assert_eq!(g[0].name, "Sepia");
+        assert_eq!(g[0].controls.len(), 1, "os parâmetros são do efeito");
+        assert!(g[1].techniques.iter().all(|t| t.controls.is_empty()), "e não se repetem em cada técnica");
+    }
+
+    #[test]
+    fn an_effect_moves_removes_and_toggles_as_a_whole() {
+        let (mut h, presets) = home(env("group-actions"), open_game("vkcube"));
+        h.add_effect("Sepia");
+        blur_techniques(&mut h);
+        h.set_control("Sepia.fx", "Strength", &[0.5]);
+        let order = |h: &Home| h.snapshot().techniques.iter().map(|t| t.id.name.clone()).collect::<Vec<_>>();
+        assert_eq!(order(&h), ["Sepia", "Horizontal", "Vertical"]);
+
+        h.move_effect("Blur.fx", -1); // as duas técnicas sobem juntas, na mesma ordem
+        assert_eq!(order(&h), ["Horizontal", "Vertical", "Sepia"]);
+        h.move_effect("Blur.fx", 1);
+        assert_eq!(order(&h), ["Sepia", "Horizontal", "Vertical"]);
+        h.move_effect("Sepia.fx", -5);
+        assert_eq!(order(&h), ["Sepia", "Horizontal", "Vertical"], "já é o primeiro");
+
+        h.set_effect_enabled("Blur.fx", false);
+        assert!(h.snapshot().groups[1].techniques.iter().all(|t| !t.enabled));
+        assert!(h.snapshot().groups[0].all_enabled());
+        h.set_technique_enabled(&TechId::new("Horizontal", "Blur.fx"), true);
+        assert!(h.snapshot().groups[1].any_enabled() && !h.snapshot().groups[1].all_enabled());
+
+        h.remove_effect("Sepia.fx");
+        assert_eq!(order(&h), ["Horizontal", "Vertical"]);
+        assert!(!fs::read_to_string(presets.join("vkcube/Padrão.ini")).unwrap().contains("Sepia"), "as configurações vão junto");
     }
 
     #[test]

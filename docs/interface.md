@@ -24,6 +24,20 @@ a roda do mouse sobre um controle rola a lista (não mexe no controle).
    funcione.
 5. A janela trava enquanto compila ao abrir um preset grande (compilar em segundo plano).
 
+## Observações do dono depois de usar no Haste (2026-10-10)
+- **Efeito com várias técnicas = um só efeito** (feito): o `cGaussianBlur` aparecia como dois efeitos independentes e só
+  o primeiro tinha os parâmetros. Agora é uma linha por efeito: caixa do efeito liga/desliga todas as técnicas, cada
+  técnica tem a própria caixa, os parâmetros são do efeito, mover e remover valem para o efeito inteiro.
+- **Cor dos incompatíveis**: manter a do tema, não forçar vermelho (feito).
+- **Custo de cada efeito**: o `ZXPose.fx` derrubou um jogo de 200 para 166 fps. Idea: medir o tempo de GPU de cada
+  técnica (consultas de timestamp na layer) e mostrar na lista, como a aba Statistics do ReShade. Também ajuda a achar
+  os efeitos caros por mau uso (ver a pesquisa em reshade-feedback.md).
+- **Efeitos que pegam a interface do jogo** (desfoque, motion blur...): é limitação do ReShade original também, mas
+  talvez dê para fazer melhor. Caminho possível, depois do depth buffer: a mesma interceptação das passagens de
+  renderização que o depth precisa serve para achar o ponto "a cena 3D acabou e a interface vai começar" e aplicar os
+  efeitos ali (o jogo desenha a interface por cima do resultado). Depende de cada jogo e de heurística; a escolha
+  ficaria por jogo no preset, com "aplicar antes da interface" ligável. Incerto: precisa de teste em jogos reais.
+
 ## Direção de design (referências que o dono mandou, 2026-10-10)
 Referências: a própria interface do ReShade (abas Home, Settings, Statistics, Log, About; na Home: seletor de preset
 com + e −, busca, "Active to top", "Collapse all", lista de técnicas e, embaixo, os ajustes do efeito com "Reset all to
