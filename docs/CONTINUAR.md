@@ -22,7 +22,8 @@ cadeia. Commits de referência: `smoke-preset` (`f5eae79`), `lrctl preset` (`7ae
 | F3 cadeia de vários efeitos (`postfx::Chain`) | **feita**; etapa não suportada é pulada com aviso |
 | F4 plano a partir do preset (`game_plan`, `games`) | **feita**; `lrctl preset ...` edita |
 | F5 interface por jogo (no estilo da aba Home do ReShade) | **primeira versão feita** (`panel::Home`, `lrpanel`); ver pendências abaixo |
-| F6 macros por nível (recompilam), atalhos de preset, transição suave | a fazer |
+| F6 macros por nível (recompilam) | **feita**; atalhos de preset e transição suave ainda não |
+| D1 observar a profundidade (`LINUX_RESHADE_DEPTH_OBSERVE=1`) | **feita**, testada no vkcube e no Haste; ver `docs/depth.md` |
 | F7 o resto do inventário (atalhos por técnica, capturas, OSD, mouse/teclado) | a fazer |
 | Marco 5: depth buffer | não iniciado; 40 dos 152 efeitos do dono pedem |
 

@@ -152,9 +152,9 @@ fn describe(e: &CompileError) -> String {
 }
 
 /// Vigia para sempre: a cada [`INTERVAL`] olha as layers vivas e compila o que falta, contando o que fez.
-pub fn run(compiler: &Compiler, state: &ipc::Writer, presets_dir: Option<std::path::PathBuf>) -> ! {
+pub fn run(compiler: &Compiler, state: &ipc::Writer, presets_dir: Option<std::path::PathBuf>, global_macros: &str) -> ! {
     let mut failures = Failures::new();
-    let mut games = presets_dir.map(crate::games::Games::new);
+    let mut games = presets_dir.map(|dir| crate::games::Games::new(dir).with_global_macros(global_macros));
     let mut last_prune = std::time::Instant::now();
     loop {
         let layers = ipc::live_layers().unwrap_or_default();

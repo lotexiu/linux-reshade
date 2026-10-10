@@ -77,6 +77,30 @@ impl Ensured {
     }
 }
 
+/// Definições de pré-processador (`NOME`, `VALOR`) com que um efeito é compilado.
+pub type Defines = Vec<(String, String)>;
+
+/// A chave de um efeito compilado com certas definições: o próprio nome sem definições, e `Nome.m<hash>` com elas
+/// (o hash é das definições em ordem alfabética, então a mesma combinação cai no mesmo bundle). Serve de nome de
+/// bundle no cache e de modelo de caminho para a layer, que não precisa saber o que as definições significam.
+pub fn variant_key(name: &str, defines: &[(String, String)]) -> String {
+    if defines.is_empty() {
+        return name.to_string();
+    }
+    let mut sorted: Vec<String> = defines.iter().map(|(n, v)| format!("{n}={v}")).collect();
+    sorted.sort();
+    let hash = sorted.join("\u{1}").bytes().fold(0x811C_9DC5u32, |h, b| (h ^ u32::from(b)).wrapping_mul(0x0100_0193));
+    format!("{name}.m{hash:08x}")
+}
+
+/// O nome do efeito de uma chave de [`variant_key`] (tira o `.m<hash>`, se houver).
+pub fn base_name(key: &str) -> &str {
+    match key.rsplit_once(".m") {
+        Some((base, hash)) if hash.len() == 8 && hash.bytes().all(|b| b.is_ascii_hexdigit()) && !base.is_empty() => base,
+        _ => key,
+    }
+}
+
 /// Resolução usada para compilar um bundle só para ler os controles quando não há jogo aberto.
 pub const DEFAULT_SIZE: (u32, u32) = (1920, 1080);
 
@@ -119,6 +143,14 @@ pub(crate) fn prune_plan(entries: &[CacheEntry], in_use: &std::collections::Hash
 
 /// Um nome de efeito é só letras, números, `_`, `-` e `.` (e não começa com ponto). Isso impede que
 /// `../x` ou um caminho absoluto escapem do cache ao virarem um diretório.
+/// Uma definição que pode ir na linha de comando do compilador: nome de identificador e valor sem quebra de linha.
+pub fn valid_define(name: &str, value: &str) -> bool {
+    !name.is_empty()
+        && name.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && !value.contains(['\n', '\r', '\0'])
+}
+
 pub fn valid_name(name: &str) -> bool {
     !name.is_empty()
         && !name.starts_with('.')
@@ -233,6 +265,7 @@ impl Compiler {
         if !valid_name(name) {
             return Err(CompileError::BadName(name.to_string()));
         }
+        let name = base_name(name); // uma chave com definições aponta para o mesmo `.fx`
         let dirs = self.effect_dirs();
         dirs.iter()
             .map(|d| d.join(format!("{name}.fx")))
@@ -342,9 +375,16 @@ impl Compiler {
     /// Garante um bundle atual de `name` para `width`x`height`: usa o do cache se o `.fx` não mudou
     /// desde a compilação, senão compila. (Mudanças só num `#include` não são notadas.)
     pub fn ensure(&self, name: &str, width: u32, height: u32) -> Result<Ensured, CompileError> {
+        self.ensure_with(name, width, height, &[])
+    }
+
+    /// Como [`ensure`](Self::ensure), compilando com `defines` (macros do preset e do efeito). Cada combinação tem o
+    /// seu bundle (ver [`variant_key`]).
+    pub fn ensure_with(&self, name: &str, width: u32, height: u32, defines: &[(String, String)]) -> Result<Ensured, CompileError> {
         let source = self.source(name)?;
-        let dir = self.bundle_dir(name, width, height);
-        if self.is_current(name, width, height) {
+        let key = variant_key(name, defines);
+        let dir = self.bundle_dir(&key, width, height);
+        if self.is_current(&key, width, height) {
             return Ok(Ensured::Cached(dir));
         }
         std::fs::create_dir_all(&self.cache).map_err(|e| CompileError::Io(format!("{}: {e}", self.cache.display())))?;
@@ -352,6 +392,12 @@ impl Compiler {
         command.arg("--width").arg(width.to_string()).arg("--height").arg(height.to_string());
         for include in config::expand(&self.includes) {
             command.arg("-I").arg(include);
+        }
+        for (name, value) in defines {
+            if !valid_define(name, value) {
+                return Err(CompileError::BadName(format!("{name}={value}")));
+            }
+            command.arg("-D").arg(format!("{name}={value}"));
         }
         command.arg("-o").arg(&dir).arg(&source);
         let output = run_retrying_busy(&mut command).map_err(|e| CompileError::Io(format!("{}: {e}", self.fx2spv.display())))?;
@@ -512,6 +558,38 @@ mod tests {
         fs::write(f.root.join("textures/img.png"), b"nao sou um png").unwrap();
         let err = f.compiler.ensure("Tex", 8, 4).unwrap_err();
         assert!(matches!(err, CompileError::Texture(_)), "{err}");
+    }
+
+    #[test]
+    fn definitions_make_a_separate_bundle_with_a_stable_key() {
+        assert_eq!(variant_key("Sepia", &[]), "Sepia");
+        let a = variant_key("Sepia", &[("A".into(), "1".into()), ("B".into(), "2".into())]);
+        let b = variant_key("Sepia", &[("B".into(), "2".into()), ("A".into(), "1".into())]);
+        assert_eq!(a, b, "a ordem não importa");
+        assert_ne!(a, variant_key("Sepia", &[("A".into(), "1".into())]));
+        assert!(a.starts_with("Sepia.m") && valid_name(&a), "{a}");
+        assert_eq!(base_name(&a), "Sepia");
+        assert_eq!(base_name("Sepia"), "Sepia");
+        assert_eq!(base_name("a.b"), "a.b", "um ponto no nome não é uma definição");
+        assert_eq!(base_name("Film.mcafebabe"), "Film");
+    }
+
+    #[test]
+    fn compiling_with_definitions_passes_them_and_keeps_a_separate_bundle() {
+        let f = fake("defines", OK_TOOL);
+        let defs = vec![("QUALITY".to_string(), "2".to_string()), ("FAST".to_string(), "1".to_string())];
+        let with = f.compiler.ensure_with("Sepia", 800, 600, &defs).unwrap();
+        let plain = f.compiler.ensure("Sepia", 800, 600).unwrap();
+        assert_ne!(with.dir(), plain.dir());
+        let calls = calls(&f);
+        assert!(calls[0].contains("-D QUALITY=2") && calls[0].contains("-D FAST=1"), "{}", calls[0]);
+        assert!(!calls[1].contains("-D"), "{}", calls[1]);
+        // O mesmo pedido de novo usa o cache, e a data do .fx vale para as duas variantes.
+        assert!(matches!(f.compiler.ensure_with("Sepia", 800, 600, &defs).unwrap(), Ensured::Cached(_)));
+        assert!(f.compiler.is_current(&variant_key("Sepia", &defs), 800, 600));
+        // Definição que não é um identificador não chega à linha de comando.
+        assert!(f.compiler.ensure_with("Sepia", 1, 1, &[("A B".into(), "1".into())]).is_err());
+        assert!(f.compiler.ensure_with("Sepia", 1, 1, &[("A".into(), "x\ny".into())]).is_err());
     }
 
     #[test]

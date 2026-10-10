@@ -33,6 +33,9 @@ uso: lrctl <comando> [opções]
   preset move <técnica> <posição> muda a posição na ordem de execução (começa em 1)
   preset set <Arquivo.fx> <parâmetro> <valor...>
                                   grava o valor de um parâmetro no preset
+  preset macros [Arquivo.fx] [NOME=VALOR,...]
+                                  mostra ou define as definições de pré-processador do preset (ou só do efeito); vazio
+                                  apaga; mudar recompila os efeitos afetados
   preset new <nome> --game <id>   cria um preset do jogo, copiando o que vale agora, e o escolhe
   preset use <nome|none> --game <id>
                                   escolhe o preset do jogo; none volta ao preset global
@@ -83,6 +86,8 @@ pub enum PresetAction {
     Move(String, usize),
     Set { file: String, parameter: String, values: Vec<String> },
     New(String),
+    /// Mostra (`text: None`) ou define (`Some`, vazio apaga) as definições de pré-processador do preset (`file: None`) ou de um efeito.
+    Macros { file: Option<String>, text: Option<String> },
     /// `None`: volta ao preset global.
     Use(Option<String>),
 }
@@ -160,9 +165,13 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
                     PresetAction::Set { file: (*f).into(), parameter: (*parameter).into(), values: values.iter().map(|v| (*v).into()).collect() }
                 }
                 ["new", name] if !name.starts_with('-') => PresetAction::New((*name).into()),
+                ["macros"] => PresetAction::Macros { file: None, text: None },
+                ["macros", f] if f.ends_with(".fx") => PresetAction::Macros { file: Some((*f).into()), text: None },
+                ["macros", text] => PresetAction::Macros { file: None, text: Some((*text).into()) },
+                ["macros", f, text] if f.ends_with(".fx") => PresetAction::Macros { file: Some((*f).into()), text: Some((*text).into()) },
                 ["use", "none"] => PresetAction::Use(None),
                 ["use", name] if !name.starts_with('-') => PresetAction::Use(Some((*name).into())),
-                _ => return Err("uso: lrctl preset show | enable|disable <técnica> | move <técnica> <posição> | set <Arquivo.fx> <parâmetro> <valor...> | new <nome> | use <nome|none>  (com --game <id> ou --file <arquivo>)".into()),
+                _ => return Err("uso: lrctl preset show | enable|disable <técnica> | move <técnica> <posição> | macros [Arquivo.fx] [NOME=VALOR,...] | set <Arquivo.fx> <parâmetro> <valor...> | new <nome> | use <nome|none>  (com --game <id> ou --file <arquivo>)".into()),
             };
             Ok(Command::Preset { action, game, file })
         }
@@ -231,6 +240,10 @@ mod tests {
         assert!(matches!(parse(&args(&["preset", "use", "none", "--game", "g"])), Ok(Command::Preset { action: PresetAction::Use(None), .. })));
         assert!(matches!(parse(&args(&["preset", "use", "Noturno", "--game", "g"])), Ok(Command::Preset { action: PresetAction::Use(Some(_)), .. })));
         // Posição começa em 1; nome de preset não é uma opção; as opções só valem em 'preset'.
+        let m = parse(&args(&["preset", "macros", "Sepia.fx", "Q=2,FAST", "--game", "g"]));
+        assert!(matches!(m, Ok(Command::Preset { action: PresetAction::Macros { file: Some(f), text: Some(t) }, .. }) if f == "Sepia.fx" && t == "Q=2,FAST"));
+        assert!(matches!(parse(&args(&["preset", "macros", "--game", "g"])), Ok(Command::Preset { action: PresetAction::Macros { file: None, text: None }, .. })));
+        assert!(matches!(parse(&args(&["preset", "macros", "Q=1", "--game", "g"])), Ok(Command::Preset { action: PresetAction::Macros { file: None, text: Some(_) }, .. })));
         assert!(parse(&args(&["preset", "move", "Sepia", "0"])).is_err());
         assert!(parse(&args(&["preset", "new", "--help"])).is_err());
         assert!(parse(&args(&["preset", "set", "Sepia.fx", "Strength"])).is_err());

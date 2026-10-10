@@ -214,3 +214,15 @@ fn the_default_data_dir_counts_only_once_it_exists() {
     sb.write("home/.config/linux-reshade/location.ini", "data_dir=/outra\n");
     assert_eq!(resolve(&sb.env(&[])).data_dir, Some(PathBuf::from("/outra")));
 }
+
+#[test]
+fn global_macros_come_from_config_ini_or_the_environment() {
+    let sb = Sandbox::new("macros");
+    let data = sb.path("dados");
+    sb.write("dados/config.ini", "[GENERAL]\nPreprocessorDefinitions=RESHADE_DEPTH_INPUT_IS_REVERSED=1,FLAG\n");
+    let c = resolve(&sb.env(&[("LINUX_RESHADE_DATA", data.to_str().unwrap())]));
+    assert_eq!(c.global_macros, "RESHADE_DEPTH_INPUT_IS_REVERSED=1,FLAG");
+    let c = resolve(&sb.env(&[("LINUX_RESHADE_DATA", data.to_str().unwrap()), ("LINUX_RESHADE_DEFINES", "X=2")]));
+    assert_eq!(c.global_macros, "X=2", "a variável de ambiente vale mais");
+    assert_eq!(resolve(&sb.env(&[])).global_macros, "");
+}

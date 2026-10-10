@@ -8,16 +8,18 @@
 //!
 //! Macros (`PreprocessorDefinitions`) ainda não recompilam o efeito: ficam para a F6.
 
-use crate::compiler::{Compiler, valid_name};
+use crate::compiler::{Compiler, Defines, valid_define, valid_name, variant_key};
 use fx_bundle::{Bundle, uniforms};
 use ipc::{Plan, PlanStep};
-use preset::{Preset, TechId};
+use preset::{Macros, Preset, TechId};
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Built {
     pub plan: Plan,
     /// O que ficou de fora e por quê (uma linha por problema).
     pub warnings: Vec<String>,
+    /// Cada efeito do plano com as definições com que foi compilado (para compilar as outras resoluções).
+    pub variants: Vec<(String, Defines)>,
 }
 
 /// As técnicas ligadas do preset, na ordem de execução.
@@ -68,9 +70,24 @@ pub fn uniform_block(bundle: &Bundle, preset: &Preset, file: &str, warnings: &mu
     block
 }
 
+/// As definições de um efeito: as globais (`config.ini`), as do preset e as do próprio efeito, nessa ordem de
+/// precedência. As que não podem ir ao compilador (nome que não é identificador) viram avisos.
+pub fn defines_for(preset: &Preset, global: &Macros, file: &str, warnings: &mut Vec<String>) -> Defines {
+    let mut all = preset.effective_macros(global, file);
+    all.retain(|(name, value)| {
+        let ok = valid_define(name, value);
+        if !ok {
+            warnings.push(format!("{file}: definição {name}={value:?} inválida; ignorada"));
+        }
+        ok
+    });
+    all
+}
+
 /// Monta o plano de `preset` para uma resolução (compila o que faltar). A resolução só serve para obter o
-/// manifesto: o plano vale para qualquer tamanho (o modelo de caminho leva `{W}x{H}`).
-pub fn build(compiler: &Compiler, preset: &Preset, width: u32, height: u32) -> Built {
+/// manifesto: o plano vale para qualquer tamanho (o modelo de caminho leva `{W}x{H}`). Cada efeito é compilado com as
+/// definições (macros) que valem para ele; a mesma combinação reaproveita o bundle.
+pub fn build(compiler: &Compiler, preset: &Preset, global: &Macros, width: u32, height: u32) -> Built {
     let mut built = Built::default();
     for id in enabled_order(preset) {
         let Some(file) = id.file.as_deref() else {
@@ -82,7 +99,11 @@ pub fn build(compiler: &Compiler, preset: &Preset, width: u32, height: u32) -> B
             built.warnings.push(format!("{id}: nome de efeito inválido"));
             continue;
         }
-        let dir = match compiler.ensure(name, width, height) {
+        let mut warnings = Vec::new();
+        let defines = defines_for(preset, global, file, &mut warnings);
+        let fresh: Vec<String> = warnings.into_iter().filter(|w| !built.warnings.contains(w)).collect();
+        built.warnings.extend(fresh);
+        let dir = match compiler.ensure_with(name, width, height, &defines) {
             Ok(ensured) => ensured.dir_owned(),
             Err(e) => {
                 built.warnings.push(format!("{id}: {e}"));
@@ -101,7 +122,11 @@ pub fn build(compiler: &Compiler, preset: &Preset, width: u32, height: u32) -> B
             continue;
         }
         let block = uniform_block(&bundle, preset, file, &mut built.warnings);
-        built.plan.steps.push(PlanStep { template: compiler.template(name), technique: id.name.clone(), params_id: bundle.params_id(), uniforms: block });
+        let key = variant_key(name, &defines);
+        if !built.variants.iter().any(|(n, d)| n == name && *d == defines) {
+            built.variants.push((name.to_string(), defines.clone()));
+        }
+        built.plan.steps.push(PlanStep { template: compiler.template(&key), technique: id.name.clone(), params_id: bundle.params_id(), uniforms: block });
     }
     built
 }
@@ -123,7 +148,7 @@ mod tests {
     fn builds_the_enabled_techniques_in_preset_order_with_their_values() {
         let f = setup("plan-order");
         let preset = Preset::parse("Techniques=Invert@Invert.fx,Sepia@Sepia.fx\nTechniqueSorting=Sepia@Sepia.fx,Invert@Invert.fx\n\n[Sepia.fx]\nStrength=0.25\n");
-        let built = build(&f.compiler, &preset, 8, 4);
+        let built = build(&f.compiler, &preset, &Macros::new(), 8, 4);
         assert!(built.warnings.is_empty(), "{:?}", built.warnings);
         let names: Vec<_> = built.plan.steps.iter().map(|s| s.technique.as_str()).collect();
         assert_eq!(names, ["Sepia", "Invert"], "a ordem é a de TechniqueSorting");
@@ -135,7 +160,7 @@ mod tests {
     #[test]
     fn the_default_applies_when_the_preset_has_no_value() {
         let f = setup("plan-default");
-        let built = build(&f.compiler, &Preset::parse("Techniques=Sepia@Sepia.fx\n"), 8, 4);
+        let built = build(&f.compiler, &Preset::parse("Techniques=Sepia@Sepia.fx\n"), &Macros::new(), 8, 4);
         assert_eq!(strength(&built.plan.steps[0]), 1.0, "Strength padrão do efeito");
     }
 
@@ -143,7 +168,7 @@ mod tests {
     fn disabled_techniques_are_left_out() {
         let f = setup("plan-disabled");
         let preset = Preset::parse("Techniques=Sepia@Sepia.fx\nTechniqueSorting=Invert@Invert.fx,Sepia@Sepia.fx\n");
-        let built = build(&f.compiler, &preset, 8, 4);
+        let built = build(&f.compiler, &preset, &Macros::new(), 8, 4);
         assert_eq!(built.plan.steps.len(), 1);
         assert_eq!(built.plan.steps[0].technique, "Sepia");
     }
@@ -154,7 +179,7 @@ mod tests {
         let preset = Preset::parse(
             "Techniques=Fantasma@Fantasma.fx,Quebrado@Quebrado.fx,SemArquivo,Outra@Sepia.fx,Sepia@Sepia.fx,Sepia@..%2Fx.fx\n",
         );
-        let built = build(&f.compiler, &preset, 8, 4);
+        let built = build(&f.compiler, &preset, &Macros::new(), 8, 4);
         let kept: Vec<_> = built.plan.steps.iter().map(|s| s.technique.as_str()).collect();
         assert_eq!(kept, ["Sepia"]);
         let text = built.warnings.join("\n");
@@ -169,7 +194,7 @@ mod tests {
     fn bad_values_warn_and_keep_the_default() {
         let f = setup("plan-values");
         let preset = Preset::parse("Techniques=Sepia@Sepia.fx\n\n[Sepia.fx]\nStrength=muito\nNaoExiste=3\n");
-        let built = build(&f.compiler, &preset, 8, 4);
+        let built = build(&f.compiler, &preset, &Macros::new(), 8, 4);
         assert_eq!(strength(&built.plan.steps[0]), 1.0);
         assert_eq!(built.warnings, ["Sepia.fx: Strength=\"muito\" não é número"], "uniform desconhecido é ignorado sem aviso");
     }
@@ -177,7 +202,7 @@ mod tests {
     #[test]
     fn an_empty_preset_gives_an_empty_plan() {
         let f = setup("plan-empty");
-        let built = build(&f.compiler, &Preset::parse("Techniques=\n"), 8, 4);
+        let built = build(&f.compiler, &Preset::parse("Techniques=\n"), &Macros::new(), 8, 4);
         assert_eq!(built, Built::default());
     }
 

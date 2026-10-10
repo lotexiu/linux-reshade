@@ -17,3 +17,4 @@ shortcuts = { path = "../shortcuts" }
 shortcuts-portal = { path = "../shortcuts-portal" }
 fx-bundle = { path = "../fx-bundle" }
 preset = { path = "../preset" }
+panel = { path = "../panel" }

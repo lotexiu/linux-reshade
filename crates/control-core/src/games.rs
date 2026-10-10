@@ -6,11 +6,11 @@
 //! O id do jogo é o nome do executável que a layer informa (`RocketLeague` para `RocketLeague.exe`, também sob
 //! Proton) e, se ela não o souber, o nome da aplicação no Vulkan.
 
-use crate::compiler::{Compiler, Ensured};
+use crate::compiler::{Compiler, Defines, Ensured, variant_key};
 use crate::game_plan;
 use crate::watch::{Failures, Job};
 use ipc::{EffectState, LiveLayer};
-use preset::Preset;
+use preset::{Macros, Preset};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -19,8 +19,9 @@ use std::time::SystemTime;
 struct Published {
     file: PathBuf,
     modified: Option<SystemTime>,
-    /// Efeitos do plano (nomes), para compilar em outras resoluções e para a poda do cache não os apagar.
-    effects: Vec<String>,
+    /// Efeitos do plano (nome e definições com que foram compilados), para compilar em outras resoluções e para a
+    /// poda do cache não os apagar.
+    effects: Vec<(String, Defines)>,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -34,6 +35,8 @@ pub struct Report {
 
 pub struct Games {
     presets_dir: PathBuf,
+    /// Definições globais (`config.ini`), já lidas.
+    global_macros: Macros,
     published: HashMap<String, Published>,
 }
 
@@ -57,7 +60,13 @@ fn resolutions(layer: &LiveLayer) -> Vec<(u32, u32)> {
 
 impl Games {
     pub fn new(presets_dir: PathBuf) -> Self {
-        Self { presets_dir, published: HashMap::new() }
+        Self { presets_dir, global_macros: Macros::new(), published: HashMap::new() }
+    }
+
+    /// As definições de pré-processador globais (`NOME=VALOR,OUTRO`); valem para todos os efeitos, abaixo do preset.
+    pub fn with_global_macros(mut self, text: &str) -> Self {
+        self.global_macros = preset::parse_macros(text);
+        self
     }
 
     /// Os bundles que os planos publicados usam nos jogos abertos (o que a poda do cache não pode apagar).
@@ -65,8 +74,9 @@ impl Games {
         let mut used = HashSet::new();
         for layer in layers {
             let Some(p) = self.published.get(&layer.id) else { continue };
-            for effect in &p.effects {
-                used.extend(layer.status.swapchains.iter().map(|s| (effect.clone(), s.width, s.height)));
+            for (name, defines) in &p.effects {
+                let key = variant_key(name, defines);
+                used.extend(layer.status.swapchains.iter().map(|s| (key.clone(), s.width, s.height)));
             }
         }
         used
@@ -108,9 +118,9 @@ impl Games {
                     return;
                 }
             };
-            let built = game_plan::build(compiler, &Preset::parse(&text), width, height);
+            let built = game_plan::build(compiler, &Preset::parse(&text), &self.global_macros, width, height);
             report.warnings.extend(built.warnings.into_iter().map(|w| (game.to_string(), w)));
-            let effects = built.plan.steps.iter().filter_map(|s| compiler.name_from_template(&s.template)).collect();
+            let effects = built.variants.clone();
             self.published.insert(layer.id.clone(), Published { file: found.path.clone(), modified: stamp, effects });
             plan = Some(built.plan);
             republish = true;
@@ -118,13 +128,14 @@ impl Games {
 
         // Cada etapa em cada resolução do jogo (a primeira já foi compilada ao montar o plano).
         let effects = self.published.get(&layer.id).map(|p| p.effects.clone()).unwrap_or_default();
-        for name in &effects {
+        for (name, defines) in &effects {
+            let key = variant_key(name, defines);
             for &(w, h) in &resolutions {
-                let job = Job { name: name.clone(), width: w, height: h };
-                if compiler.is_current(name, w, h) || failures.get(&job).is_some_and(|at| *at == compiler.source_modified(name)) {
+                let job = Job { name: key.clone(), width: w, height: h };
+                if compiler.is_current(&key, w, h) || failures.get(&job).is_some_and(|at| *at == compiler.source_modified(name)) {
                     continue;
                 }
-                match compiler.ensure(name, w, h) {
+                match compiler.ensure_with(name, w, h, defines) {
                     Ok(Ensured::Compiled(_)) => {
                         failures.remove(&job);
                         report.compiled.push(job);
@@ -133,7 +144,7 @@ impl Games {
                     Ok(Ensured::Cached(_)) => {}
                     Err(e) => {
                         failures.insert(job.clone(), compiler.source_modified(name));
-                        report.warnings.push((name.clone(), format!("{w}x{h}: {e}")));
+                        report.warnings.push((key.clone(), format!("{w}x{h}: {e}")));
                     }
                 }
             }
@@ -217,6 +228,50 @@ mod tests {
         assert_eq!(plan.steps.iter().map(|s| s.technique.as_str()).collect::<Vec<_>>(), ["Sepia", "Invert"], "o preset do jogo, não o global");
         assert_eq!(f32::from_le_bytes(plan.steps[0].uniforms[..4].try_into().unwrap()), 0.5);
         assert_eq!(games.in_use(&layers).len(), 4, "dois efeitos em duas resoluções");
+    }
+
+    #[test]
+    fn macros_recompile_the_effect_and_each_combination_has_its_own_bundle() {
+        let e = env("games-macros");
+        fs::write(e.presets.join("preset.ini"), "PreprocessorDefinitions=QUALITY=1\nTechniques=Sepia@Sepia.fx,Invert@Invert.fx\n\n[Sepia.fx]\nPreprocessorDefinitions=FAST=2\n").unwrap();
+        let layers = [layer("Jogo", &[(800, 600), (640, 480)])];
+        let mut games = Games::new(e.presets.clone()).with_global_macros("QUALITY=0,GLOBAL=9");
+        let report = games.tick(&e.f.compiler, &e.state, &layers, &mut Failures::new());
+        assert!(report.warnings.is_empty(), "{report:?}");
+        let calls = calls(&e.f);
+        let sepia: Vec<_> = calls.iter().filter(|c| c.contains("/Sepia.fx")).collect();
+        // Preset (QUALITY=1) vence o global (QUALITY=0); o efeito acrescenta FAST; o global sem conflito vale.
+        assert!(sepia.iter().all(|c| c.contains("-D QUALITY=1") && c.contains("-D FAST=2") && c.contains("-D GLOBAL=9")), "{sepia:?}");
+        let invert: Vec<_> = calls.iter().filter(|c| c.contains("/Invert.fx")).collect();
+        assert!(invert.iter().all(|c| c.contains("-D QUALITY=1") && !c.contains("FAST")), "{invert:?}");
+        assert_eq!(sepia.len(), 2, "uma compilação por resolução: {sepia:?}");
+
+        // O plano aponta para os bundles das variantes, e a layer os resolve pelo modelo.
+        let ipc::PlanRead::Plan(plan) = reader(&e, "layer-Jogo").read_plan() else { panic!("sem plano") };
+        assert!(plan.steps[0].template.contains("Sepia.m") && plan.steps[1].template.contains("Invert.m"), "{plan:?}");
+        for step in &plan.steps {
+            assert!(std::path::PathBuf::from(step.template.replace("{W}", "800").replace("{H}", "600")).join("manifest.json").is_file(), "{}", step.template);
+        }
+        // Os bundles em uso não são apagados pela poda.
+        assert_eq!(games.in_use(&layers).len(), 4);
+    }
+
+    #[test]
+    fn editing_a_macro_publishes_a_plan_with_the_new_bundle() {
+        let e = env("games-macro-edit");
+        let file = e.presets.join("preset.ini");
+        fs::write(&file, "Techniques=Sepia@Sepia.fx\n").unwrap();
+        let layers = [layer("Jogo", &[(800, 600)])];
+        let mut games = Games::new(e.presets.clone());
+        let mut failures = Failures::new();
+        games.tick(&e.f.compiler, &e.state, &layers, &mut failures);
+        let channel = reader(&e, "layer-Jogo");
+        let ipc::PlanRead::Plan(before) = channel.read_plan() else { panic!() };
+        fs::write(&file, "PreprocessorDefinitions=Q=3\nTechniques=Sepia@Sepia.fx\n").unwrap();
+        fs::File::options().write(true).open(&file).unwrap().set_modified(SystemTime::now() + Duration::from_secs(30)).unwrap();
+        games.tick(&e.f.compiler, &e.state, &layers, &mut failures);
+        let ipc::PlanRead::Plan(after) = channel.read_plan() else { panic!() };
+        assert_ne!(before.steps[0].template, after.steps[0].template, "outra definição, outro bundle");
     }
 
     #[test]

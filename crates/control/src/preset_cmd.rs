@@ -104,6 +104,29 @@ fn run_inner(action: PresetAction, game: Option<String>, file: Option<PathBuf>) 
                 eprintln!("aviso: {warning}");
             }
         }
+        PresetAction::Macros { file, text } => {
+            let current = |p: &Preset| match &file {
+                Some(f) => p.effect_macros(f),
+                None => p.macros(),
+            };
+            match text {
+                None => {
+                    let list = panel::macros_text(&current(&preset));
+                    println!("{}", if list.is_empty() { "(sem definições)".to_string() } else { list });
+                    return Ok(());
+                }
+                Some(text) => {
+                    let parsed = preset::parse_macros(&text);
+                    if let Some(bad) = parsed.iter().find(|(n, v)| !control_core::compiler::valid_define(n, v)) {
+                        return Err(format!("definição inválida: {}={:?} (o nome precisa ser um identificador)", bad.0, bad.1));
+                    }
+                    match &file {
+                        Some(f) => preset.set_effect_macros(f, &parsed),
+                        None => preset.set_macros(&parsed),
+                    }
+                }
+            }
+        }
         PresetAction::New(_) | PresetAction::Use(_) => unreachable!("tratados acima"),
     }
     preset.save(&path).map_err(|e| format!("{}: {e}", path.display()))?;

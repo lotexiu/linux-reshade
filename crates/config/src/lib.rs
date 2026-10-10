@@ -119,6 +119,9 @@ pub struct Config {
     pub texture_paths: Vec<SearchPath>,
     /// Onde ficam `preset.ini` e as pastas de cada jogo.
     pub presets_dir: Option<PathBuf>,
+    /// Definições de pré-processador valendo para todos os efeitos (`PreprocessorDefinitions` do `config.ini`, como no
+    /// `ReShade.ini`): `NOME=VALOR,OUTRO`. Os presets e os efeitos as sobrepõem.
+    pub global_macros: String,
     /// Onde ficam os bundles compilados.
     pub cache_dir: PathBuf,
 }
@@ -204,7 +207,8 @@ impl Config {
             .or_else(|| ini.as_ref().and_then(|i| i.get("GENERAL", "IntermediateCachePath")).filter(|v| !v.is_empty()).zip(base.as_ref()).map(|(v, b)| SearchPath::parse(v, b, home).dir))
             .unwrap_or_else(|| default_cache(env));
 
-        Self { data_dir, config_file: configured, effect_paths, texture_paths, presets_dir, cache_dir }
+        let global_macros = env("LINUX_RESHADE_DEFINES").map(|v| v.to_string_lossy().into_owned()).or_else(|| ini.as_ref().and_then(|i| i.get("GENERAL", "PreprocessorDefinitions")).map(String::from)).unwrap_or_default();
+        Self { data_dir, config_file: configured, effect_paths, texture_paths, presets_dir, global_macros, cache_dir }
     }
 
     /// Nada foi configurado: sem pasta de dados e sem lista de efeitos por variável.

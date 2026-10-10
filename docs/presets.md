@@ -136,7 +136,7 @@ mudança assim que o arquivo é gravado. Sem `--game`/`--file` o comando diz o q
   plano de cada jogo e o mantém atualizado.
 - **F5 — interface.** Jogos selecionáveis; técnicas com ligar/desligar e arrastar para reordenar; busca;
   seletor de preset, "+" (herdando o atual), salvar e restaurar tudo.
-- **F6 — macros por nível** (recompila), atalhos de preset, anterior/próximo, transição suave de valores.
+- **F6 — macros por nível** *(parte das macros feita em 2026-10-11: `PreprocessorDefinitions` nos três níveis — `config.ini`/`LINUX_RESHADE_DEFINES`, preset, efeito — chegam ao `fx2spv -D`; cada combinação tem o seu bundle (`Nome.m<hash>`) e o plano aponta para ele; campo no painel e `lrctl preset macros`; falta atalhos de preset e transição suave)*  (recompila), atalhos de preset, anterior/próximo, transição suave de valores.
 - **F7 — o resto:** atalhos por técnica, capturas de tela, OSD, imagens (LUTs), fontes de mouse/teclado.
 
 ## Decisões em aberto

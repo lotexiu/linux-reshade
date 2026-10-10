@@ -386,6 +386,14 @@ cmd_smoke_preset() {
   sleep 2
   check "só um valor mudou: a cadeia não foi reconstruída" '[ "$(grep -c "etapa(s) criada" "$LOG_FILE")" = "$before" ]'
 
+  # uma macro do preset: recompila o efeito (outro bundle, com o nome da variante) e a layer reconstrói a cadeia
+  sleep 1.2
+  local before_macro; before_macro="$(grep -c "etapa(s) criada" "$LOG_FILE")"
+  printf 'PreprocessorDefinitions=SMOKE_Q=2\nTechniques=Colourfulness@Colourfulness.fx\n' >"$preset"
+  check "a macro recompilou o efeito (bundle da variante)" 'waitfor "ls \"$tmp\"/cache | grep -q \"^Colourfulness\\.m.*-400x300\$\""'
+  check "a layer carregou o bundle da variante" 'waitfor "grep -q \"bundle carregado: .*Colourfulness\\.m\" \"$LOG_FILE\""'
+  check "a layer reconstruiu a cadeia com o bundle novo" 'waitfor "[ \$(grep -c \"etapa(s) criada\" \"$LOG_FILE\") -gt $before_macro ]"'
+
   # apagar o preset: volta à escolha única
   rm -f "$preset"
   check "sem preset a layer volta à escolha única" 'waitfor "grep -q \"sem plano do jogo\" \"$LOG_FILE\""'

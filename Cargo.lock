@@ -804,6 +804,7 @@ dependencies = [
  "control-core",
  "fx-bundle",
  "ipc",
+ "panel",
  "preset",
  "shortcuts",
  "shortcuts-portal",

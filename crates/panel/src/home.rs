@@ -69,6 +69,8 @@ pub struct EffectGroup {
     pub techniques: Vec<TechniqueView>,
     /// Os parâmetros do efeito (de um só lugar, não repetidos por técnica).
     pub controls: Vec<Control>,
+    /// As definições de pré-processador só deste efeito (`NOME=VALOR,OUTRO=2`). Mudar recompila o efeito.
+    pub macros: String,
 }
 
 impl EffectGroup {
@@ -96,6 +98,8 @@ pub struct HomeSnapshot {
     pub techniques: Vec<TechniqueView>,
     /// As mesmas técnicas agrupadas por efeito, na ordem em que cada efeito aparece pela primeira vez.
     pub groups: Vec<EffectGroup>,
+    /// As definições de pré-processador do preset inteiro (`NOME=VALOR,OUTRO=2`); valem para todos os efeitos dele.
+    pub preset_macros: String,
     /// Efeitos que podem ser adicionados (nomes de arquivo sem `.fx`).
     pub effects: Vec<String>,
     /// O que se sabe de cada efeito (compatibilidade e características), conforme a análise em segundo plano avança.
@@ -131,6 +135,11 @@ pub struct Home {
 
 fn stamp(path: &Path) -> Option<SystemTime> {
     std::fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
+/// `NOME=VALOR,OUTRO=2`, como se mostra e se digita.
+pub fn macros_text(macros: &[(String, String)]) -> String {
+    macros.iter().map(|(n, v)| format!("{n}={v}")).collect::<Vec<_>>().join(",")
 }
 
 fn effect_name(file: &str) -> &str {
@@ -294,8 +303,10 @@ impl Home {
 
         self.snapshot.techniques.clear();
         self.snapshot.groups.clear();
+        self.snapshot.preset_macros.clear();
         let Some(loaded) = &self.loaded else { return };
         let preset = loaded.preset.clone();
+        self.snapshot.preset_macros = macros_text(&preset.macros());
         let mut shown_files: Vec<String> = Vec::new();
         // O que a layer do jogo aberto informou da cadeia dela: casa por nome, na ordem, com as técnicas ligadas.
         let mut reported: Vec<ipc::TechniqueStatus> = match &self.game {
@@ -347,6 +358,7 @@ impl Home {
                     file: t.file.clone(),
                     name: effect_name(&t.file).to_string(),
                     controls: t.controls.clone(),
+                    macros: macros_text(&preset.effect_macros(&t.file)),
                     techniques: vec![TechniqueView { controls: Vec::new(), ..t.clone() }],
                 }),
             }
@@ -513,6 +525,34 @@ impl Home {
                 .flat_map(|f| rows.iter().filter(move |r| r.id.file.clone().unwrap_or_else(|| format!("{}.fx", r.id.name)) == *f).map(|r| r.id.clone()))
                 .collect();
             p.set_order(&new);
+            Ok(None)
+        });
+    }
+
+    /// Define as definições de pré-processador do preset inteiro (`NOME=VALOR,OUTRO`; vazio apaga). O vigia recompila os
+    /// efeitos afetados quando o arquivo muda. Nomes que o compilador não aceita são recusados, com o motivo.
+    pub fn set_preset_macros(&mut self, text: &str) {
+        let parsed = preset::parse_macros(text);
+        if let Some(bad) = parsed.iter().find(|(n, v)| !control_core::compiler::valid_define(n, v)) {
+            self.done(Some(format!("definição inválida: {}={:?} (o nome precisa ser um identificador)", bad.0, bad.1)));
+            return;
+        }
+        self.edit(move |p, _| {
+            p.set_macros(&parsed);
+            Ok(None)
+        });
+    }
+
+    /// Define as definições de pré-processador só de um efeito (as dele valem mais que as do preset).
+    pub fn set_effect_macros(&mut self, file: &str, text: &str) {
+        let parsed = preset::parse_macros(text);
+        if let Some(bad) = parsed.iter().find(|(n, v)| !control_core::compiler::valid_define(n, v)) {
+            self.done(Some(format!("definição inválida: {}={:?} (o nome precisa ser um identificador)", bad.0, bad.1)));
+            return;
+        }
+        let file = file.to_string();
+        self.edit(move |p, _| {
+            p.set_effect_macros(&file, &parsed);
             Ok(None)
         });
     }
@@ -843,6 +883,24 @@ mod tests {
         h.remove_effect("Sepia.fx");
         assert_eq!(order(&h), ["Horizontal", "Vertical"]);
         assert!(!fs::read_to_string(presets.join("vkcube/Padrão.ini")).unwrap().contains("Sepia"), "as configurações vão junto");
+    }
+
+    #[test]
+    fn macros_of_the_preset_and_of_an_effect_are_edited_and_validated() {
+        let (mut h, presets) = home(env("macros"), open_game("vkcube"));
+        h.add_effect("Sepia");
+        h.set_preset_macros("QUALITY=2, FLAG");
+        assert_eq!(h.snapshot().preset_macros, "QUALITY=2,FLAG=1", "valor vazio vale 1");
+        h.set_effect_macros("Sepia.fx", "FAST=3");
+        assert_eq!(h.snapshot().groups[0].macros, "FAST=3");
+        let text = fs::read_to_string(presets.join("vkcube/Padrão.ini")).unwrap();
+        assert!(text.contains("PreprocessorDefinitions=QUALITY=2,FLAG=1") && text.contains("PreprocessorDefinitions=FAST=3"), "{text}");
+
+        h.set_preset_macros("1ruim=2");
+        assert!(h.snapshot().notice.as_deref().is_some_and(|n| n.contains("definição inválida")), "{:?}", h.snapshot().notice);
+        assert_eq!(h.snapshot().preset_macros, "QUALITY=2,FLAG=1", "a inválida não foi gravada");
+        h.set_preset_macros("");
+        assert_eq!(h.snapshot().preset_macros, "");
     }
 
     #[test]
