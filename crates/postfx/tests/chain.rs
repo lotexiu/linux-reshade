@@ -120,16 +120,16 @@ fn techniques_are_found_by_name() {
     assert!(Step::named(&invert_fx, "Nao existe").is_none());
 }
 
-/// Um bundle de teste cujo passe pede escrita sRGB, o que o runtime ainda não faz.
-fn srgb_write_bundle() -> Bundle {
+/// Um bundle de teste que pede mipmaps na textura do frame, o que o runtime ainda não faz.
+fn mipmap_bundle() -> Bundle {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/Invert");
-    let dst = std::env::temp_dir().join(format!("chain-srgb-{}", std::process::id()));
+    let dst = std::env::temp_dir().join(format!("chain-mip-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dst);
     std::fs::create_dir_all(&dst).unwrap();
     for entry in std::fs::read_dir(&src).unwrap().flatten() {
         std::fs::copy(entry.path(), dst.join(entry.file_name())).unwrap();
     }
-    let manifest = std::fs::read_to_string(dst.join("manifest.json")).unwrap().replace("\"srgb_write\":false", "\"srgb_write\":true");
+    let manifest = std::fs::read_to_string(dst.join("manifest.json")).unwrap().replace("\"levels\":1", "\"levels\":4");
     std::fs::write(dst.join("manifest.json"), manifest).unwrap();
     let bundle = Bundle::load(&dst).unwrap();
     let _ = std::fs::remove_dir_all(&dst);
@@ -139,12 +139,12 @@ fn srgb_write_bundle() -> Bundle {
 #[test]
 fn a_lenient_chain_skips_what_the_runtime_cannot_do_and_keeps_the_rest() {
     let gpu = gpu_or_skip!();
-    let (sepia_fx, invert_fx, srgb_fx) = (bundle("Sepia"), bundle("Invert"), srgb_write_bundle());
+    let (sepia_fx, invert_fx, mip_fx) = (bundle("Sepia"), bundle("Invert"), mipmap_bundle());
     unsafe {
         let targets = gpu.targets(1, input);
         let steps = [
             Step::named(&invert_fx, "Invert").unwrap(),
-            Step { bundle: &srgb_fx, technique: 0 },
+            Step { bundle: &mip_fx, technique: 0 },
             Step::named(&sepia_fx, "Sepia").unwrap(),
         ];
         // A cadeia estrita recusa o conjunto; a leniente pula só a etapa 1.
@@ -152,7 +152,7 @@ fn a_lenient_chain_skips_what_the_runtime_cannot_do_and_keeps_the_rest() {
         let (mut chain, skipped) = Chain::new_lenient(&gpu.device, &gpu.memory, &steps, &target(&targets.images, &gpu), gpu.queue).unwrap();
         assert_eq!(skipped.len(), 1);
         assert_eq!(skipped[0].step, 1);
-        assert!(skipped[0].why.contains("sRGB"), "{}", skipped[0].why);
+        assert!(skipped[0].why.contains("mipmaps"), "{}", skipped[0].why);
         assert_eq!((chain.len(), chain.origin(0), chain.origin(1)), (2, Some(0), Some(2)));
 
         gpu.submit_all(&chain.command_buffers(0));

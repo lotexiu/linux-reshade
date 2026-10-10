@@ -59,11 +59,19 @@ pub(crate) struct PassRes {
     pub attachment_count: usize,
     pub num_vertices: u32,
     pub samples_color: bool,
+    /// Escreve no frame com `SRGBWriteEnable`: desenha numa imagem sRGB e copia os bytes para o frame.
+    pub srgb_shadow: bool,
+    /// O passe precisa do conteúdo atual do frame (blend, viewport menor): o espelho começa como cópia dele.
+    pub preserves_frame: bool,
 }
 
 #[derive(Default)]
 pub struct Effect {
     copy: BackbufferCopies,
+    /// Cópia do frame em formato sRGB, para samplers com `SRGBTexture` (a leitura decodifica sozinha).
+    copy_srgb: GpuImage,
+    /// Espelho sRGB do frame, onde desenham os passes com `SRGBWriteEnable` (a escrita codifica sozinha).
+    frame_srgb: GpuImage,
     /// Paralelo a `manifest.textures`; só as texturas intermediárias (render targets) têm imagem.
     textures: Vec<GpuImage>,
     samplers: Vec<vk::Sampler>,
@@ -181,15 +189,17 @@ impl Effect {
         // ---- Verificações da v1 (antes de criar qualquer coisa) ----
         let mut samples_color = vec![false; tech.passes.len()];
         for (k, pass) in tech.passes.iter().enumerate() {
-            if pass.srgb_write {
-                return Err(unsupported(format!("passe {k}: escrita sRGB")));
+            let writes_frame = pass.render_targets.iter().flatten().next().is_none();
+            // Escrever sRGB num alvo de textura (e não no frame) ainda não é suportado.
+            if pass.srgb_write && !writes_frame {
+                return Err(unsupported(format!("passe {k}: escrita sRGB numa textura")));
             }
             for sb in &pass.samplers {
                 let sampler = &m.samplers[sb.sampler as usize];
-                if sampler.srgb {
-                    return Err(unsupported(format!("sampler {:?}: leitura sRGB", sampler.name)));
-                }
                 let (tex, _) = sampled_texture(bundle, sb.sampler)?;
+                if sampler.srgb && tex.semantic.as_deref() != Some("COLOR") {
+                    return Err(unsupported(format!("sampler {:?}: leitura sRGB de uma textura", sampler.name)));
+                }
                 match tex.semantic.as_deref() {
                     Some("COLOR") => samples_color[k] = true,
                     None if tex.render_target => {}
@@ -204,6 +214,22 @@ impl Effect {
 
         // ---- Imagens ----
         self.copy = unsafe { BackbufferCopies::new(device, memory, target.format, target.extent, 1)? };
+        if let Some(srgb) = convert::srgb_counterpart(target.format) {
+            let mut needs_copy = false;
+            let mut needs_shadow = false;
+            for pass in &tech.passes {
+                needs_shadow |= pass.srgb_write && pass.render_targets.iter().flatten().next().is_none();
+                needs_copy |= pass.samplers.iter().any(|sb| m.samplers[sb.sampler as usize].srgb);
+            }
+            if needs_copy {
+                let usage = vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED;
+                self.copy_srgb = unsafe { GpuImage::new(device, memory, srgb, target.extent, usage)? };
+            }
+            if needs_shadow {
+                let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST;
+                self.frame_srgb = unsafe { GpuImage::new(device, memory, srgb, target.extent, usage)? };
+            }
+        }
 
         // Texturas intermediárias: todas as que são render target, para qualquer passe poder usá-las.
         let tex_index: HashMap<&str, usize> = m.textures.iter().enumerate().map(|(i, t)| (t.unique_name.as_str(), i)).collect();
@@ -284,6 +310,8 @@ impl Effect {
         // ---- Passes ----
         for (k, pass) in tech.passes.iter().enumerate() {
             let mut res = PassRes { samples_color: samples_color[k], num_vertices: pass.num_vertices, ..PassRes::default() };
+            // Só vale com um espelho (alvo de 8 bits); sem versão sRGB do formato, a flag é ignorada como no ReShade.
+            res.srgb_shadow = pass.srgb_write && self.frame_srgb.image != vk::Image::null();
 
             // Para onde escreve.
             let some: Vec<&str> = pass.render_targets.iter().flatten().map(String::as_str).collect();
@@ -291,7 +319,9 @@ impl Effect {
                 if pass.render_targets.len() > 1 {
                     return Err(unsupported(format!("passe {k}: vários anexos para o frame")));
                 }
-                (Output::Frame, vec![target.format], target.extent)
+                let format = if res.srgb_shadow { convert::srgb_counterpart(target.format).unwrap_or(target.format) } else { target.format };
+                res.preserves_frame = !pass.clear && (pass.blend.iter().any(|b| b.enable) || pass.viewport != [0, 0]);
+                (Output::Frame, vec![format], target.extent)
             } else if some.len() == pass.render_targets.len() {
                 let first = &m.textures[tex_index[some[0]]];
                 let mut formats = Vec::new();
@@ -341,7 +371,11 @@ impl Effect {
             };
             for sb in &pass.samplers {
                 let (tex, index) = sampled_texture(bundle, sb.sampler)?;
-                let view = if tex.semantic.as_deref() == Some("COLOR") { self.copy.images[0].view } else { self.textures[index].view };
+                let view = match (tex.semantic.as_deref(), m.samplers[sb.sampler as usize].srgb) {
+                    (Some("COLOR"), true) if self.copy_srgb.image != vk::Image::null() => self.copy_srgb.view,
+                    (Some("COLOR"), _) => self.copy.images[0].view,
+                    _ => self.textures[index].view,
+                };
                 let image_info = [vk::DescriptorImageInfo::default()
                     .sampler(self.samplers[sb.sampler as usize])
                     .image_view(view)
@@ -362,6 +396,16 @@ impl Effect {
 
             // Framebuffers.
             match output {
+                Output::Frame if res.srgb_shadow => {
+                    let attachments = [self.frame_srgb.view];
+                    let info = vk::FramebufferCreateInfo::default()
+                        .render_pass(res.render_pass)
+                        .attachments(&attachments)
+                        .width(extent.width)
+                        .height(extent.height)
+                        .layers(1);
+                    res.framebuffers.push(unsafe { device.create_framebuffer(&info, None)? });
+                }
                 Output::Frame => {
                     for view in &self.target_views {
                         let attachments = [*view];
@@ -412,6 +456,8 @@ impl Effect {
                 device,
                 passes: &self.passes,
                 copy: self.copy.images[0].image,
+                copy_srgb: (self.copy_srgb.image != vk::Image::null()).then_some(self.copy_srgb.image),
+                shadow: (self.frame_srgb.image != vk::Image::null()).then_some(self.frame_srgb.image),
                 frame: target.images[i],
                 frame_extent: target.extent,
                 rest_layout: target.rest_layout,
@@ -550,6 +596,8 @@ impl Effect {
                 device.destroy_image_view(v, None);
             }
             self.copy.destroy(device);
+            self.copy_srgb.destroy(device);
+            self.frame_srgb.destroy(device);
         }
     }
 }
