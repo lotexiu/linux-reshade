@@ -152,22 +152,37 @@ fn known_row(k: &'static KnownMacro, value: Option<String>, weak: &Weak<MacroEdi
             line.append(&sw);
         }
         MacroKind::Auto => {
-            let combo = gtk::DropDown::from_strings(&["Automático", "Sim", "Não"]);
-            combo.set_selected(match value.as_deref() {
+            // Três botões ligados em vez de um DropDown: o DropDown abre um popover dentro do popover e, ao fechar,
+            // deixa a janela anterior sem receber cliques.
+            let group = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+            group.add_css_class("linked");
+            right(&group);
+            let selected = match value.as_deref() {
                 None => 0,
                 Some("0") => 2,
                 Some(_) => 1,
-            });
-            right(&combo);
-            combo.connect_selected_notify({
-                let weak = weak.clone();
-                move |c| {
-                    if let Some(ed) = weak.upgrade() {
-                        ed.change(k.name, [None, Some("1"), Some("0")][c.selected().min(2) as usize]);
-                    }
+            };
+            let mut first: Option<gtk::ToggleButton> = None;
+            for (i, (caption, written)) in [("Automático", None), ("Sim", Some("1")), ("Não", Some("0"))].into_iter().enumerate() {
+                let b = gtk::ToggleButton::with_label(caption);
+                match &first {
+                    Some(f) => b.set_group(Some(f)),
+                    None => first = Some(b.clone()),
                 }
-            });
-            line.append(&combo);
+                b.set_active(i == selected);
+                b.connect_toggled({
+                    let weak = weak.clone();
+                    move |b| {
+                        if b.is_active()
+                            && let Some(ed) = weak.upgrade()
+                        {
+                            ed.change(k.name, written);
+                        }
+                    }
+                });
+                group.append(&b);
+            }
+            line.append(&group);
         }
         MacroKind::Number { default, min, max, step, digits } => {
             let current = value.as_deref().and_then(|v| v.parse::<f64>().ok()).unwrap_or(default);
