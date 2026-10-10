@@ -29,8 +29,25 @@ impl UniformBuffer {
         memory: &vk::PhysicalDeviceMemoryProperties,
         initial: &[u8],
     ) -> Result<Self, vk::Result> {
+        unsafe { Self::with_usage(device, memory, initial, vk::BufferUsageFlags::UNIFORM_BUFFER) }
+    }
+
+    /// Um buffer de origem de cópias (`TRANSFER_SRC`) com `bytes`, para enviar pixels à GPU.
+    ///
+    /// # Safety
+    /// As mesmas de [`new`](Self::new).
+    pub unsafe fn staging(device: &ash::Device, memory: &vk::PhysicalDeviceMemoryProperties, bytes: &[u8]) -> Result<Self, vk::Result> {
+        unsafe { Self::with_usage(device, memory, bytes, vk::BufferUsageFlags::TRANSFER_SRC) }
+    }
+
+    unsafe fn with_usage(
+        device: &ash::Device,
+        memory: &vk::PhysicalDeviceMemoryProperties,
+        initial: &[u8],
+        usage: vk::BufferUsageFlags,
+    ) -> Result<Self, vk::Result> {
         let mut ub = Self::default();
-        if let Err(e) = unsafe { ub.build(device, memory, initial) } {
+        if let Err(e) = unsafe { ub.build(device, memory, initial, usage) } {
             unsafe { ub.destroy(device) };
             return Err(e);
         }
@@ -42,12 +59,13 @@ impl UniformBuffer {
         device: &ash::Device,
         memory: &vk::PhysicalDeviceMemoryProperties,
         initial: &[u8],
+        usage: vk::BufferUsageFlags,
     ) -> Result<(), vk::Result> {
         self.size = initial.len().max(16);
         unsafe {
             let info = vk::BufferCreateInfo::default()
                 .size(self.size as u64)
-                .usage(vk::BufferUsageFlags::UNIFORM_BUFFER)
+                .usage(usage)
                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
             self.buffer = device.create_buffer(&info, None)?;
             let req = device.get_buffer_memory_requirements(self.buffer);

@@ -57,7 +57,7 @@ unsafe fn transition(device: &ash::Device, cb: vk::CommandBuffer, image: vk::Ima
 
 /// Gera os níveis de mipmap de uma textura que um passe acabou de escrever (o nível 0 chega em
 /// `SHADER_READ_ONLY_OPTIMAL`, como o render pass o deixa) e a devolve a esse layout, em todos os níveis.
-unsafe fn generate_mips(device: &ash::Device, cb: vk::CommandBuffer, chain: &MipChain) {
+pub(super) unsafe fn generate_mips(device: &ash::Device, cb: vk::CommandBuffer, chain: &MipChain) {
     let range = |base: u32, count: u32| vk::ImageSubresourceRange { base_mip_level: base, level_count: count, ..COLOR_RANGE };
     let barrier = |range: vk::ImageSubresourceRange, old: vk::ImageLayout, new: vk::ImageLayout| {
         let b = vk::ImageMemoryBarrier::default()

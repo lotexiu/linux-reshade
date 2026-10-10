@@ -100,6 +100,41 @@ pub struct Effect {
     sources: Sources,
 }
 
+/// Posição de uma textura no manifesto.
+fn tex_position(m: &fx_bundle::Manifest, tex: &Texture) -> usize {
+    m.textures.iter().position(|t| t.unique_name == tex.unique_name).unwrap_or(0)
+}
+
+/// Uma textura de arquivo só roda se o bundle trouxe a imagem e o formato é de 8 bits.
+fn file_texture_supported(bundle: &Bundle, tex: &Texture, index: usize) -> Result<(), Error> {
+    let source = fx_bundle::images::source_of(tex).unwrap_or("?");
+    if bundle.image(index).is_none() {
+        return Err(unsupported(format!("textura {:?}: o bundle não tem a imagem de {source:?}", tex.name)));
+    }
+    if convert::pack_pixels(tex.format, &[0; 4]).is_none() {
+        return Err(unsupported(format!("textura {:?}: formato {:?} a partir de um arquivo", tex.name, tex.format)));
+    }
+    Ok(())
+}
+
+/// Para cada textura de arquivo, se os samplers que a leem pedem sRGB. Os samplers de uma mesma textura têm de
+/// concordar: a imagem tem um formato só.
+fn file_texture_srgb(m: &fx_bundle::Manifest) -> Result<HashMap<usize, bool>, Error> {
+    let mut out: HashMap<usize, bool> = HashMap::new();
+    for s in &m.samplers {
+        let Some((index, tex)) = m.textures.iter().enumerate().find(|(_, t)| t.unique_name == s.texture) else { continue };
+        if tex.semantic.is_some() || tex.render_target {
+            continue;
+        }
+        if let Some(previous) = out.insert(index, s.srgb)
+            && previous != s.srgb
+        {
+            return Err(unsupported(format!("textura {:?}: lida com e sem sRGB", tex.name)));
+        }
+    }
+    Ok(out)
+}
+
 /// Textura que um sampler amostra: o frame (cópia) ou uma textura intermediária.
 fn sampled_texture<'a>(bundle: &'a Bundle, sampler: u32) -> Result<(&'a Texture, usize), Error> {
     let m = &bundle.manifest;
@@ -200,6 +235,7 @@ impl Effect {
 
         // ---- Verificações da v1 (antes de criar qualquer coisa) ----
         let mut samples_color = vec![false; tech.passes.len()];
+        let file_srgb = file_texture_srgb(m)?;
         for (k, pass) in tech.passes.iter().enumerate() {
             let writes_frame = pass.render_targets.iter().flatten().next().is_none();
             // Escrever sRGB num alvo de textura (e não no frame) ainda não é suportado.
@@ -209,13 +245,13 @@ impl Effect {
             for sb in &pass.samplers {
                 let sampler = &m.samplers[sb.sampler as usize];
                 let (tex, _) = sampled_texture(bundle, sb.sampler)?;
-                if sampler.srgb && tex.semantic.as_deref() != Some("COLOR") {
-                    return Err(unsupported(format!("sampler {:?}: leitura sRGB de uma textura", sampler.name)));
+                if sampler.srgb && tex.render_target {
+                    return Err(unsupported(format!("sampler {:?}: leitura sRGB de uma textura de render target", sampler.name)));
                 }
                 match tex.semantic.as_deref() {
                     Some("COLOR") => samples_color[k] = true,
                     None if tex.render_target => {}
-                    None => return Err(unsupported(format!("textura {:?} vem de arquivo (ainda sem carregador de imagens)", tex.name))),
+                    None => file_texture_supported(bundle, tex, tex_position(m, tex))?,
                     Some(other) => return Err(unsupported(format!("textura {:?} com semântica {other}", tex.name))),
                 }
                 // Mipmaps só em texturas de render target (geradas depois de cada passe que as escreve).
@@ -248,7 +284,22 @@ impl Effect {
         let tex_index: HashMap<&str, usize> = m.textures.iter().enumerate().map(|(i, t)| (t.unique_name.as_str(), i)).collect();
         self.textures = m.textures.iter().map(|_| GpuImage::default()).collect();
         for (i, t) in m.textures.iter().enumerate() {
-            if t.semantic.is_none() && t.render_target {
+            if t.semantic.is_none() && !t.render_target {
+                // Textura de arquivo: os pixels são enviados em `initialize_textures`.
+                let Some(image) = bundle.image(i) else { continue };
+                let base = match t.format {
+                    TextureFormat::R8 => vk::Format::R8_UNORM,
+                    TextureFormat::Rg8 => vk::Format::R8G8_UNORM,
+                    _ => vk::Format::R8G8B8A8_UNORM,
+                };
+                let format = if file_srgb.get(&i).copied().unwrap_or(false) { convert::srgb_counterpart(base).unwrap_or(base) } else { base };
+                let extent = vk::Extent2D { width: image.width, height: image.height };
+                let mut usage = vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST;
+                if t.levels > 1 {
+                    usage |= vk::ImageUsageFlags::TRANSFER_SRC;
+                }
+                self.textures[i] = unsafe { GpuImage::with_levels(device, memory, format, extent, usage, t.levels)? };
+            } else if t.semantic.is_none() && t.render_target {
                 let extent = vk::Extent2D { width: t.width, height: t.height };
                 let mut usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST;
                 if t.levels > 1 {
@@ -471,7 +522,7 @@ impl Effect {
             }
         }
 
-        unsafe { self.initialize_textures(device, target, queue)? };
+        unsafe { self.initialize_textures(device, memory, bundle, target, queue)? };
 
         for (i, &cb) in self.command_buffers.iter().enumerate() {
             let rec = record::Recording {
@@ -490,13 +541,64 @@ impl Effect {
         Ok(())
     }
 
-    /// Leva as texturas intermediárias ao layout de repouso (`SHADER_READ_ONLY_OPTIMAL`), zeradas.
-    /// Uma submissão única, no momento da criação.
-    unsafe fn initialize_textures(&self, device: &ash::Device, target: &Target<'_>, queue: vk::Queue) -> Result<(), Error> {
-        let images: Vec<vk::Image> = self.textures.iter().filter(|t| t.image != vk::Image::null()).map(|t| t.image).collect();
-        if images.is_empty() {
+    /// Leva as texturas ao layout de repouso (`SHADER_READ_ONLY_OPTIMAL`): as intermediárias zeradas, as de arquivo
+    /// com os pixels do bundle. Uma submissão única, no momento da criação.
+    unsafe fn initialize_textures(
+        &self,
+        device: &ash::Device,
+        memory: &vk::PhysicalDeviceMemoryProperties,
+        bundle: &Bundle,
+        target: &Target<'_>,
+        queue: vk::Queue,
+    ) -> Result<(), Error> {
+        let m = &bundle.manifest;
+        let mut clear: Vec<vk::Image> = Vec::new();
+        let mut upload: Vec<usize> = Vec::new();
+        for (i, (image, t)) in self.textures.iter().zip(&m.textures).enumerate() {
+            if image.image == vk::Image::null() {
+                continue;
+            }
+            if t.render_target {
+                clear.push(image.image);
+            } else {
+                upload.push(i);
+            }
+        }
+        if clear.is_empty() && upload.is_empty() {
             return Ok(());
         }
+        let mut staging: Vec<resources::UniformBuffer> = Vec::new();
+        let result = unsafe { self.record_texture_init(device, memory, bundle, target, queue, &clear, &upload, &mut staging) };
+        for mut buffer in staging {
+            unsafe { buffer.destroy(device) };
+        }
+        result
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    unsafe fn record_texture_init(
+        &self,
+        device: &ash::Device,
+        memory: &vk::PhysicalDeviceMemoryProperties,
+        bundle: &Bundle,
+        target: &Target<'_>,
+        queue: vk::Queue,
+        clear: &[vk::Image],
+        upload: &[usize],
+        staging: &mut Vec<resources::UniformBuffer>,
+    ) -> Result<(), Error> {
+        let barrier = |image: vk::Image, range, old, new, src: vk::AccessFlags, dst: vk::AccessFlags| {
+            vk::ImageMemoryBarrier::default()
+                .image(image)
+                .old_layout(old)
+                .new_layout(new)
+                .src_access_mask(src)
+                .dst_access_mask(dst)
+                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .subresource_range(range)
+        };
+        use vk::ImageLayout as L;
         unsafe {
             let cb = device.allocate_command_buffers(
                 &vk::CommandBufferAllocateInfo::default()
@@ -508,60 +610,52 @@ impl Effect {
                 init(cb)?;
             }
             device.begin_command_buffer(cb, &vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT))?;
-            let to_dst: Vec<_> = images
-                .iter()
-                .map(|&image| {
-                    vk::ImageMemoryBarrier::default()
-                        .image(image)
-                        .old_layout(vk::ImageLayout::UNDEFINED)
-                        .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                        .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                        .subresource_range(ALL_LEVELS)
-                })
-                .collect();
-            device.cmd_pipeline_barrier(
-                cb,
-                vk::PipelineStageFlags::TOP_OF_PIPE,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::DependencyFlags::empty(),
-                &[],
-                &[],
-                &to_dst,
-            );
-            for &image in &images {
-                device.cmd_clear_color_image(
-                    cb,
-                    image,
-                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                    &vk::ClearColorValue { float32: [0.0; 4] },
-                    &[ALL_LEVELS],
-                );
+
+            // Tudo vai a TRANSFER_DST de uma vez.
+            let all: Vec<vk::Image> = clear.iter().copied().chain(upload.iter().map(|&i| self.textures[i].image)).collect();
+            let to_dst: Vec<_> = all.iter().map(|&im| barrier(im, ALL_LEVELS, L::UNDEFINED, L::TRANSFER_DST_OPTIMAL, vk::AccessFlags::empty(), vk::AccessFlags::TRANSFER_WRITE)).collect();
+            device.cmd_pipeline_barrier(cb, vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &to_dst);
+
+            for &image in clear {
+                device.cmd_clear_color_image(cb, image, L::TRANSFER_DST_OPTIMAL, &vk::ClearColorValue { float32: [0.0; 4] }, &[ALL_LEVELS]);
             }
-            let to_read: Vec<_> = images
-                .iter()
-                .map(|&image| {
-                    vk::ImageMemoryBarrier::default()
-                        .image(image)
-                        .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                        .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                        .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                        .dst_access_mask(vk::AccessFlags::SHADER_READ)
-                        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                        .subresource_range(ALL_LEVELS)
-                })
-                .collect();
+            let mut mipped: Vec<MipChain> = Vec::new();
+            for &i in upload {
+                let (t, gpu) = (&bundle.manifest.textures[i], &self.textures[i]);
+                let image = bundle.image(i).expect("só há imagem GPU para textura com imagem");
+                let pixels = convert::pack_pixels(t.format, &image.rgba).ok_or_else(|| unsupported(format!("textura {:?}", t.name)))?;
+                staging.push(resources::UniformBuffer::staging(device, memory, &pixels)?);
+                let region = vk::BufferImageCopy::default()
+                    .image_subresource(vk::ImageSubresourceLayers { aspect_mask: vk::ImageAspectFlags::COLOR, mip_level: 0, base_array_layer: 0, layer_count: 1 })
+                    .image_extent(vk::Extent3D { width: image.width, height: image.height, depth: 1 });
+                device.cmd_copy_buffer_to_image(cb, staging.last().expect("acabou de entrar").buffer(), gpu.image, L::TRANSFER_DST_OPTIMAL, &[region]);
+                if gpu.levels > 1 {
+                    mipped.push(MipChain { image: gpu.image, extent: vk::Extent2D { width: image.width, height: image.height }, levels: gpu.levels, linear: true });
+                }
+            }
+
+            // Para a leitura: o que não tem mipmaps vai direto; o que tem passa pelo gerador (que espera o nível 0 lido).
+            let mut to_read: Vec<_> = Vec::new();
+            for &image in clear {
+                to_read.push(barrier(image, ALL_LEVELS, L::TRANSFER_DST_OPTIMAL, L::SHADER_READ_ONLY_OPTIMAL, vk::AccessFlags::TRANSFER_WRITE, vk::AccessFlags::SHADER_READ));
+            }
+            for &i in upload {
+                let gpu = &self.textures[i];
+                let range = if gpu.levels > 1 { COLOR_RANGE } else { ALL_LEVELS };
+                to_read.push(barrier(gpu.image, range, L::TRANSFER_DST_OPTIMAL, L::SHADER_READ_ONLY_OPTIMAL, vk::AccessFlags::TRANSFER_WRITE, vk::AccessFlags::SHADER_READ));
+            }
             device.cmd_pipeline_barrier(
                 cb,
                 vk::PipelineStageFlags::TRANSFER,
-                vk::PipelineStageFlags::FRAGMENT_SHADER | vk::PipelineStageFlags::VERTEX_SHADER,
+                vk::PipelineStageFlags::FRAGMENT_SHADER | vk::PipelineStageFlags::VERTEX_SHADER | vk::PipelineStageFlags::TRANSFER,
                 vk::DependencyFlags::empty(),
                 &[],
                 &[],
                 &to_read,
             );
+            for chain in &mipped {
+                record::generate_mips(device, cb, chain);
+            }
             device.end_command_buffer(cb)?;
             let cbs = [cb];
             device.queue_submit(queue, &[vk::SubmitInfo::default().command_buffers(&cbs)], vk::Fence::null())?;

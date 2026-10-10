@@ -19,6 +19,8 @@ pub struct Bundle {
     /// corpo de um shader (que deixa o manifesto idêntico).
     pub id: u64,
     shaders: HashMap<String, Vec<u32>>,
+    /// Pixels das texturas que vêm de arquivo, pela posição da textura no manifesto.
+    images: HashMap<usize, crate::images::TextureImage>,
 }
 
 fn io(path: &Path, source: std::io::Error) -> Error {
@@ -81,12 +83,26 @@ impl Bundle {
                 id = fnv1a64_extend(id, &word.to_le_bytes());
             }
         }
-        Ok(Self { manifest, id, shaders })
+        // As imagens também identificam o bundle: trocar o PNG de uma textura tem de reconstruir o efeito.
+        let mut images = HashMap::new();
+        for (index, image) in crate::images::load_all(dir, &manifest)? {
+            id = fnv1a64_extend(id, &(index as u32).to_le_bytes());
+            id = fnv1a64_extend(id, &image.width.to_le_bytes());
+            id = fnv1a64_extend(id, &image.height.to_le_bytes());
+            id = fnv1a64_extend(id, &image.rgba);
+            images.insert(index, image);
+        }
+        Ok(Self { manifest, id, shaders, images })
     }
 
     /// Identidade dos parâmetros deste efeito, igual em todas as resoluções (ver `uniforms::params_id`).
     pub fn params_id(&self) -> u64 {
         crate::uniforms::params_id(&self.manifest)
+    }
+
+    /// A imagem da textura `index` do manifesto, se ela vem de arquivo e o bundle a tem.
+    pub fn image(&self, index: usize) -> Option<&crate::images::TextureImage> {
+        self.images.get(&index)
     }
 
     /// SPIR-V do entry point `name` (um nome presente em `manifest.entry_points`).

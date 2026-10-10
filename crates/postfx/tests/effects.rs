@@ -182,3 +182,76 @@ fn mipmaps_are_generated_after_the_pass_that_writes_the_texture() {
         gpu.destroy_targets(targets);
     }
 }
+
+/// O bundle `Tex` com a imagem 4x2 (`pixel(x, y)`) gravada como o app de controle faria; `edit` troca texto no manifesto.
+fn bundle_with_image(name: &str, edit: impl Fn(String) -> String) -> Bundle {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/Tex");
+    let dst = std::env::temp_dir().join(format!("tex-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dst);
+    std::fs::create_dir_all(&dst).unwrap();
+    for entry in std::fs::read_dir(&src).unwrap().flatten() {
+        if entry.path().is_file() {
+            std::fs::copy(entry.path(), dst.join(entry.file_name())).unwrap();
+        }
+    }
+    let manifest = std::fs::read_to_string(dst.join("manifest.json")).unwrap();
+    std::fs::write(dst.join("manifest.json"), edit(manifest)).unwrap();
+    let rgba = (0..8u32).flat_map(|n| [(n * 30) as u8, (255 - n * 30) as u8, (n * 10) as u8, 255]).collect();
+    let image = fx_bundle::images::TextureImage { width: 4, height: 2, rgba };
+    fx_bundle::images::write(&dst, 0, &image).unwrap();
+    let bundle = Bundle::load(&dst).unwrap();
+    let _ = std::fs::remove_dir_all(&dst);
+    bundle
+}
+
+fn run_bundle(gpu: &Gpu, bundle: &Bundle) -> Vec<[u8; 4]> {
+    unsafe {
+        let targets = gpu.targets(1, input);
+        let mut effect = Effect::new(&gpu.device, &gpu.memory, bundle, 0, &target(&targets.images, gpu), gpu.queue).expect("criar o efeito");
+        gpu.submit(effect.command_buffer(0));
+        let pixels = gpu.read(targets.images[0]);
+        effect.destroy(&gpu.device);
+        gpu.destroy_targets(targets);
+        pixels
+    }
+}
+
+#[test]
+fn a_texture_from_a_file_shows_the_image_the_bundle_carries() {
+    let gpu = gpu_or_skip!();
+    let bundle = bundle_with_image("plain", |m| m);
+    for (n, got) in run_bundle(&gpu, &bundle).into_iter().enumerate() {
+        let (x, y) = (n as u32 % W, n as u32 / W);
+        let texel = (y / 2) * 4 + x / 2; // 8x4 amostrando 4x2 sem filtro
+        assert_pixel(got, [(texel * 30) as u8, (255 - texel * 30) as u8, (texel * 10) as u8, 255], 1, &format!("pixel ({x},{y})"));
+    }
+}
+
+#[test]
+fn a_srgb_sampler_decodes_the_file_texture() {
+    let gpu = gpu_or_skip!();
+    let bundle = bundle_with_image("srgb", |m| m.replacen("\"srgb\":false", "\"srgb\":true", 1));
+    let decode = |c: u32| {
+        let v = c as f32 / 255.0;
+        let l = if v <= 0.040_45 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) };
+        (l * 255.0).round() as u8
+    };
+    for (n, got) in run_bundle(&gpu, &bundle).into_iter().enumerate() {
+        let (x, y) = (n as u32 % W, n as u32 / W);
+        let texel = (y / 2) * 4 + x / 2;
+        assert_pixel(got, [decode(texel * 30), decode(255 - texel * 30), decode(texel * 10), 255], 2, &format!("pixel ({x},{y})"));
+    }
+}
+
+#[test]
+fn a_file_texture_without_its_image_is_refused_explicitly() {
+    let gpu = gpu_or_skip!();
+    unsafe {
+        let targets = gpu.targets(1, input);
+        match Effect::new(&gpu.device, &gpu.memory, &bundle("Tex"), 0, &target(&targets.images, &gpu), gpu.queue) {
+            Err(Error::Unsupported(why)) => assert!(why.contains("img.png"), "{why}"),
+            other => panic!("esperava Unsupported, veio {:?}", other.map(|_| ())),
+        }
+        gpu.destroy_targets(targets);
+    }
+}

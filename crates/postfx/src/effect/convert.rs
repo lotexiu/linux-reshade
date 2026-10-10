@@ -54,6 +54,17 @@ pub fn srgb_counterpart(format: vk::Format) -> Option<vk::Format> {
     })
 }
 
+/// Os pixels RGBA8 de uma imagem de arquivo no formato da textura: `R8` fica com o canal vermelho e `Rg8` com
+/// vermelho e verde. `None` para formatos que um arquivo de 8 bits não preenche (float, 16 bits...).
+pub fn pack_pixels(format: TextureFormat, rgba: &[u8]) -> Option<Vec<u8>> {
+    match format {
+        TextureFormat::Rgba8 | TextureFormat::Unknown => Some(rgba.to_vec()),
+        TextureFormat::Rg8 => Some(rgba.chunks_exact(4).flat_map(|p| [p[0], p[1]]).collect()),
+        TextureFormat::R8 => Some(rgba.chunks_exact(4).map(|p| p[0]).collect()),
+        _ => None,
+    }
+}
+
 pub fn filter(f: Filter) -> vk::Filter {
     match f {
         Filter::Point => vk::Filter::NEAREST,
@@ -137,5 +148,27 @@ mod tests {
         assert_eq!(blend_factor(BlendFactor::OneMinusDestColor), vk::BlendFactor::ONE_MINUS_DST_COLOR);
         assert_eq!(blend_op(BlendOp::ReverseSubtract), vk::BlendOp::REVERSE_SUBTRACT);
         assert_eq!(topology(Topology::TriangleStrip), vk::PrimitiveTopology::TRIANGLE_STRIP);
+    }
+}
+
+#[cfg(test)]
+mod file_tests {
+    use super::*;
+
+    #[test]
+    fn file_pixels_are_packed_to_the_texture_format() {
+        let rgba = [1, 2, 3, 4, 5, 6, 7, 8];
+        assert_eq!(pack_pixels(TextureFormat::Rgba8, &rgba).unwrap(), rgba);
+        assert_eq!(pack_pixels(TextureFormat::Unknown, &rgba).unwrap(), rgba);
+        assert_eq!(pack_pixels(TextureFormat::Rg8, &rgba).unwrap(), [1, 2, 5, 6]);
+        assert_eq!(pack_pixels(TextureFormat::R8, &rgba).unwrap(), [1, 5]);
+        assert!(pack_pixels(TextureFormat::Rgba16f, &rgba).is_none());
+    }
+
+    #[test]
+    fn only_eight_bit_unorm_formats_have_a_srgb_twin() {
+        assert_eq!(srgb_counterpart(vk::Format::R8G8B8A8_UNORM), Some(vk::Format::R8G8B8A8_SRGB));
+        assert_eq!(srgb_counterpart(vk::Format::A2B10G10R10_UNORM_PACK32), None);
+        assert_eq!(srgb_counterpart(vk::Format::R16G16B16A16_SFLOAT), None);
     }
 }
