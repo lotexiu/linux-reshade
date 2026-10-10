@@ -100,8 +100,8 @@ Objetivo: ler e gravar presets no formato do ReShade, sem dependências novas (u
   `lrctl daemon`, e se estava minimizado; (b) o menu mostrava "Bloom" com o texto "Nenhum efeito escolhido": **sem
   explicação**; o Bloom amostra depth e é recusado (esperado). O texto vermelho do estado do jogo sai cortado na lista.
 - **Lacunas do runtime** (medido em 2026-10-10 com os 152 efeitos da pasta do dono, numa GPU de software com a
-  validation layer: **82 rodam**; os outros 70): **40 pedem depth** (marco 5), **8 pedem imagens de arquivo** (LUTs,
-  ruído; falta o carregador de PNG, que não deve entrar sem medir a dependência), 2 escrevem sRGB numa textura, 1
+  validation layer: **82 rodam**; os outros 70): **40 pedem depth** (marco 5), **8 usam imagens de arquivo** (LUTs,
+  ruído; PNG já funciona: o app de controle decodifica para o bundle; falta JPEG/DDS), 2 escrevem sRGB numa textura, 1
   lê sRGB de uma textura, 1 usa outra semântica. Os 17 de compute (`storage`) nem compilam ainda. Ainda sem plano:
   fontes de uniform `mouse*`/`key`/`overlay_*`/`screenshot`/`bufready_depth`, `timeout` de técnica, OSD, capturas
   de tela, layer de 32 bits. O compilador (`fx2spv`) emite `Offset` fora de `OpImage*Gather` em ~10 efeitos: a

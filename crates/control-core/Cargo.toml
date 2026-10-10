@@ -10,3 +10,4 @@ config = { path = "../config" }
 ipc = { path = "../ipc" }
 fx-bundle = { path = "../fx-bundle" }
 preset = { path = "../preset" }
+image-file = { path = "../image-file" }

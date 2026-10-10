@@ -18,6 +18,8 @@ pub struct Compiler {
     pub effects: Vec<SearchPath>,
     /// Diretórios de `#include` (por exemplo, o do `ReShade.fxh`).
     pub includes: Vec<SearchPath>,
+    /// Onde procurar as imagens das texturas que vêm de arquivo (`source = "lut.png"`), em ordem.
+    pub textures: Vec<SearchPath>,
     /// Onde ficam os bundles compilados.
     pub cache: PathBuf,
 }
@@ -29,6 +31,8 @@ pub enum CompileError {
     UnknownEffect { name: String, searched: Vec<PathBuf> },
     /// O `fx2spv` terminou com erro; `output` é o que ele escreveu.
     Tool { status: String, output: String },
+    /// Uma textura de arquivo não foi achada ou não pôde ser lida.
+    Texture(String),
     Io(String),
 }
 
@@ -41,6 +45,7 @@ impl fmt::Display for CompileError {
                 write!(f, "não achei o efeito {name:?} (procurei em: {})", dirs.join(", "))
             }
             CompileError::Tool { status, output } => write!(f, "o fx2spv falhou ({status}):\n{}", output.trim_end()),
+            CompileError::Texture(why) => write!(f, "{why}"),
             CompileError::Io(e) => write!(f, "{e}"),
         }
     }
@@ -140,6 +145,37 @@ fn modified(path: &Path) -> Option<SystemTime> {
     std::fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
+/// Onde o compilador anota de quais arquivos vieram as imagens do bundle (um caminho por linha).
+const IMAGE_SOURCES: &str = "images/sources.txt";
+
+/// As imagens do bundle ainda correspondem aos arquivos de origem (nenhum foi editado depois da compilação)?
+fn images_up_to_date(dir: &Path, compiled: SystemTime) -> bool {
+    let Ok(list) = std::fs::read_to_string(dir.join(IMAGE_SOURCES)) else { return true };
+    list.lines().all(|path| modified(Path::new(path)).is_some_and(|edited| edited <= compiled))
+}
+
+/// O arquivo `source` dentro das pastas de texturas: o nome exato e, se não houver, sem diferenciar maiúsculas
+/// (os efeitos foram escritos no Windows) e com `\` como separador.
+fn find_texture(dirs: &[PathBuf], source: &str) -> Option<PathBuf> {
+    let relative = source.replace('\\', "/");
+    let lower = relative.to_ascii_lowercase();
+    for dir in dirs {
+        let exact = dir.join(&relative);
+        if exact.is_file() {
+            return Some(exact);
+        }
+        let wanted = Path::new(&lower).file_name().map(|n| n.to_string_lossy().into_owned());
+        if relative.contains('/') {
+            continue; // subpasta: só o nome exato
+        }
+        let found = std::fs::read_dir(dir).ok()?.flatten().find(|e| Some(e.file_name().to_string_lossy().to_ascii_lowercase()) == wanted && e.path().is_file());
+        if let Some(entry) = found {
+            return Some(entry.path());
+        }
+    }
+    None
+}
+
 impl Compiler {
     /// A configuração do processo atual: ver [`from_config`](Self::from_config).
     pub fn from_env() -> Result<Self, String> {
@@ -175,7 +211,16 @@ impl Compiler {
             Some(v) => std::env::split_paths(&v).map(SearchPath::flat).collect(),
             None => default_includes,
         };
-        Ok(Self { fx2spv, effects, includes, cache: config.cache_dir.clone() })
+        let textures = if config.is_configured() {
+            config.texture_paths.clone()
+        } else {
+            ["third_party/reshade-shaders-legacy/Textures", "third_party/reshade-shaders-slim/Textures"]
+                .iter()
+                .filter_map(|p| in_repo(p))
+                .map(SearchPath::flat)
+                .collect()
+        };
+        Ok(Self { fx2spv, effects, includes, textures, cache: config.cache_dir.clone() })
     }
 
     /// As pastas de efeitos de verdade (com as subpastas das entradas `**`), na ordem de busca.
@@ -253,8 +298,9 @@ impl Compiler {
     /// O bundle de `name` nesta resolução já existe e não está desatualizado em relação ao `.fx`?
     pub fn is_current(&self, name: &str, width: u32, height: u32) -> bool {
         let Ok(source) = self.source(name) else { return false };
-        match (modified(&self.bundle_dir(name, width, height).join("manifest.json")), modified(&source)) {
-            (Some(compiled), Some(edited)) => compiled >= edited,
+        let dir = self.bundle_dir(name, width, height);
+        match (modified(&dir.join("manifest.json")), modified(&source)) {
+            (Some(compiled), Some(edited)) => compiled >= edited && images_up_to_date(&dir, compiled),
             _ => false,
         }
     }
@@ -315,7 +361,37 @@ impl Compiler {
                 output: String::from_utf8_lossy(&output.stderr).into_owned(),
             });
         }
+        if let Err(e) = self.write_images(&dir) {
+            // Um bundle sem as imagens não serve e não pode passar por "atual" na próxima olhada.
+            let _ = std::fs::remove_dir_all(&dir);
+            return Err(e);
+        }
         Ok(Ensured::Compiled(dir))
+    }
+
+    /// Decodifica as imagens das texturas de arquivo do bundle recém-compilado e as grava nele.
+    fn write_images(&self, dir: &Path) -> Result<(), CompileError> {
+        let _ = std::fs::remove_dir_all(dir.join("images")); // de uma compilação anterior
+        let Ok(text) = std::fs::read_to_string(dir.join("manifest.json")) else { return Ok(()) };
+        let Ok(manifest) = fx_bundle::Manifest::parse(&text) else { return Ok(()) }; // quem carrega o bundle reclama
+        let dirs = config::expand(&self.textures);
+        let mut sources = Vec::new();
+        for (index, texture) in manifest.textures.iter().enumerate() {
+            let Some(source) = fx_bundle::images::source_of(texture) else { continue };
+            let path = find_texture(&dirs, source).ok_or_else(|| {
+                let searched: Vec<_> = dirs.iter().map(|d| d.display().to_string()).collect();
+                CompileError::Texture(format!("não achei a imagem {source:?} da textura {:?} (procurei em: {})", texture.name, searched.join(", ")))
+            })?;
+            let bytes = std::fs::read(&path).map_err(|e| CompileError::Texture(format!("{}: {e}", path.display())))?;
+            let decoded = image_file::decode(source, &bytes).map_err(|e| CompileError::Texture(format!("{}: {e}", path.display())))?;
+            let image = fx_bundle::images::TextureImage { width: decoded.width, height: decoded.height, rgba: decoded.pixels };
+            fx_bundle::images::write(dir, index, &image).map_err(|e| CompileError::Io(format!("{}: {e}", dir.display())))?;
+            sources.push(path.display().to_string());
+        }
+        if !sources.is_empty() {
+            std::fs::write(dir.join(IMAGE_SOURCES), sources.join("\n")).map_err(|e| CompileError::Io(format!("{}: {e}", dir.display())))?;
+        }
+        Ok(())
     }
 }
 
@@ -377,6 +453,7 @@ mkdir -p "$out" && echo '{}' > "$out/manifest.json"
             fx2spv: tool,
             effects: vec![SearchPath::flat(root.join("effects"))],
             includes: vec![SearchPath::flat(root.join("inc"))],
+            textures: vec![SearchPath::flat(root.join("textures"))],
             cache: root.join("cache"),
         };
         Fake { root, compiler }
@@ -389,6 +466,53 @@ mod tests {
     use super::*;
     use std::fs;
     use std::time::Duration;
+
+    /// 1x1 RGBA transparente.
+    const PNG_1X1: &[u8] = &[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08,
+        0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x60, 0x60, 0x60, 0x60, 0x00, 0x00,
+        0x00, 0x05, 0x00, 0x01, 0xA5, 0xF6, 0x45, 0x40, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82
+    ];
+
+    #[test]
+    fn the_image_of_a_file_texture_is_decoded_into_the_bundle() {
+        let f = fake_with_bundles("texture-file");
+        fs::write(f.root.join("effects/Tex.fx"), "// de mentira").unwrap();
+        // O nome pedido pelo efeito (img.png) acha o arquivo mesmo com outras maiúsculas.
+        fs::create_dir_all(f.root.join("textures")).unwrap();
+        fs::write(f.root.join("textures/IMG.PNG"), PNG_1X1).unwrap();
+        let ensured = f.compiler.ensure("Tex", 8, 4).unwrap();
+        let image = fs::read(fx_bundle::images::path(ensured.dir(), 0)).unwrap();
+        let image = fx_bundle::images::decode(&image).unwrap();
+        assert_eq!((image.width, image.height, image.rgba.len()), (1, 1, 4));
+        assert!(f.compiler.is_current("Tex", 8, 4));
+
+        // O PNG foi editado depois: o bundle deixa de estar atual e é refeito.
+        let later = SystemTime::now() + Duration::from_secs(120);
+        fs::File::options().write(true).open(f.root.join("textures/IMG.PNG")).unwrap().set_modified(later).unwrap();
+        assert!(!f.compiler.is_current("Tex", 8, 4));
+    }
+
+    #[test]
+    fn a_missing_texture_image_fails_the_compile_and_leaves_no_bundle() {
+        let f = fake_with_bundles("texture-missing");
+        fs::write(f.root.join("effects/Tex.fx"), "// de mentira").unwrap();
+        let err = f.compiler.ensure("Tex", 8, 4).unwrap_err();
+        assert!(matches!(err, CompileError::Texture(_)), "{err}");
+        assert!(err.to_string().contains("img.png"), "{err}");
+        assert!(!f.compiler.bundle_dir("Tex", 8, 4).exists(), "não fica um bundle sem a imagem");
+        assert!(!f.compiler.is_current("Tex", 8, 4));
+    }
+
+    #[test]
+    fn a_texture_that_is_not_an_image_fails_the_compile() {
+        let f = fake_with_bundles("texture-bad");
+        fs::write(f.root.join("effects/Tex.fx"), "// de mentira").unwrap();
+        fs::create_dir_all(f.root.join("textures")).unwrap();
+        fs::write(f.root.join("textures/img.png"), b"nao sou um png").unwrap();
+        let err = f.compiler.ensure("Tex", 8, 4).unwrap_err();
+        assert!(matches!(err, CompileError::Texture(_)), "{err}");
+    }
 
     #[test]
     fn names_cannot_escape_the_cache() {
@@ -618,7 +742,7 @@ mod tests {
         }
         let cache = std::env::temp_dir().join(format!("lr-compiler-{}-real", std::process::id()));
         let _ = fs::remove_dir_all(&cache);
-        let compiler = Compiler { fx2spv: tool, effects: vec![SearchPath::flat(repo.join("effects"))], includes: vec![], cache };
+        let compiler = Compiler { fx2spv: tool, effects: vec![SearchPath::flat(repo.join("effects"))], includes: vec![], textures: vec![], cache };
         let ensured = compiler.ensure("Sepia", 64, 48).expect("compilar o Sépia de verdade");
         let bundle = fx_bundle::Bundle::load(ensured.dir()).expect("o bundle compilado carrega");
         assert_eq!((bundle.manifest.target.width, bundle.manifest.target.height), (64, 48));
