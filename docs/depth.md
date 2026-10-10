@@ -75,6 +75,23 @@ Custo estimado de uma cópia (não medido): profundidade D32 a 1920x1080 são ~8
 200 fps (5 ms por quadro), do que se espera algo em torno de 1 a 4 por cento no pior caso. Amostrar a original custa zero
 de banda extra. A medição de verdade fica para a medição de custo por técnica (timestamp queries; ver interface.md).
 
+## Haste (Unity, Vulkan nativo): o que se mediu (2026-10-10)
+
+Teste ao vivo com `lrctl depth pick pass N` (foto da profundidade depois do N-ésimo passe) e uma captura de tela de cada uma.
+
+- A imagem original lida no fim do quadro (e as candidatas 1 e o "passe 1") saía **estragada**: um desenho torto e grande
+  cobria a cena (o "quadrado" que acompanha a câmera). Os passes 2 a 48 eram idênticos e corretos; o 49 e o 50 estragavam.
+- O número de passes varia entre quadros (11 numa sessão, 50 em outra): **escolher por número de passe não é estável**.
+- Regra automática adotada (sem pedido): a profundidade é a foto do passe anterior ao **primeiro passe, depois do primeiro,
+  que começa com `DontCare`** (o jogo descarta o conteúdo e recomeça a imagem: outra câmera ou camada no mesmo alvo).
+  Exige o modo armado (`LINUX_RESHADE_DEPTH=1`); sem ele vale a imagem original. Regra empírica, validada em um jogo só.
+  A causa exata do passe 49 não foi achada (os contadores de comparação por passe vieram zerados).
+- Orientação: o buffer do Unity é invertido (Reversed) **e** de cabeça para baixo. A layer detecta o Reversed
+  (macro automática); o `RESHADE_DEPTH_INPUT_IS_UPSIDE_DOWN=1` precisa ser posto à mão (campo Macros do painel).
+  Não há como detectar de forma confiável: vira escolha por jogo (D3). Com o "Show live preview" ligado os controles
+  `iUIReversed`/`iUIUpsideDown` valem; com ele desligado valem só as macros.
+- Falha achada no teste: uma cadeia que falhava por falta de profundidade nunca era tentada de novo (corrigido).
+
 ## Passos (cada um verificável e commitado)
 - **D1, só observar:** ganchos de `vkCreateImage`, `vkCreateImageView`, `vkCreateFramebuffer`, `vkCreateRenderPass`(2),
   início/fim de passe (os dois tipos), `vkCmdExecuteCommands` e desenhos; contadores baratos e ligados só quando pedido
