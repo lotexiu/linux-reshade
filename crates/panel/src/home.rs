@@ -8,6 +8,7 @@
 
 use crate::control::{Control, controls_of};
 use control_core::compiler::{Compiler, DEFAULT_SIZE, valid_name};
+use control_core::analysis::{self, EffectInfo};
 use control_core::{game_plan, presets};
 use fx_bundle::Bundle;
 use fx_bundle::manifest::{Scalar, Value};
@@ -67,6 +68,10 @@ pub struct HomeSnapshot {
     pub techniques: Vec<TechniqueView>,
     /// Efeitos que podem ser adicionados (nomes de arquivo sem `.fx`).
     pub effects: Vec<String>,
+    /// O que se sabe de cada efeito (compatibilidade e características), conforme a análise em segundo plano avança.
+    pub infos: HashMap<String, EffectInfo>,
+    /// Andamento da análise: efeitos analisados e total.
+    pub analysis: (usize, usize),
     pub layers: Vec<LiveLayer>,
     /// A última mensagem para o usuário; some na próxima ação.
     pub notice: Option<String>,
@@ -89,6 +94,8 @@ pub struct Home {
     loaded: Option<Loaded>,
     /// O bundle de referência de cada efeito (nome sem `.fx`): dele saem rótulos e controles.
     schemas: HashMap<String, Bundle>,
+    /// Quantas análises havia da última vez que se leram todas (para só reler quando mudam).
+    analysis_seen: Option<usize>,
     snapshot: HomeSnapshot,
 }
 
@@ -118,7 +125,7 @@ impl Home {
     }
 
     pub fn with_layers(compiler: Result<Compiler, String>, presets_dir: Option<PathBuf>, state: ipc::Writer, layers: LayersSource) -> Self {
-        let mut home = Self { compiler, presets_dir, state, layers, game: None, loaded: None, schemas: HashMap::new(), snapshot: HomeSnapshot::default() };
+        let mut home = Self { compiler, presets_dir, state, layers, game: None, loaded: None, schemas: HashMap::new(), analysis_seen: None, snapshot: HomeSnapshot::default() };
         if let Err(why) = &home.compiler {
             home.snapshot.notice = Some(format!("sem compilador de efeitos: {why}"));
         } else if home.presets_dir.is_none() {
@@ -161,6 +168,8 @@ impl Home {
             .map(|c| c.available().into_iter().map(|(n, _)| n).collect())
             .unwrap_or_default();
 
+        self.refresh_analysis();
+
         // Jogos: as pastas de presets e os abertos.
         let mut games: Vec<GameEntry> = Vec::new();
         if let Some(dir) = &self.presets_dir
@@ -194,6 +203,17 @@ impl Home {
 
         self.load_preset();
         self.build_view();
+    }
+
+    /// Relê as análises dos efeitos quando o worker salvou mais alguma.
+    fn refresh_analysis(&mut self) {
+        let Ok(compiler) = &self.compiler else { return };
+        let saved = analysis::count_saved(compiler);
+        if self.analysis_seen != Some(saved) || self.snapshot.infos.len() != saved.min(self.snapshot.effects.len()) {
+            self.snapshot.infos = self.snapshot.effects.iter().filter_map(|n| analysis::load(compiler, n).map(|i| (n.clone(), i))).collect();
+            self.analysis_seen = Some(saved);
+        }
+        self.snapshot.analysis = (self.snapshot.infos.len(), self.snapshot.effects.len());
     }
 
     /// Carrega o arquivo do preset que vale agora, se mudou (ou se é outro).
@@ -612,6 +632,23 @@ mod tests {
     }
 
     #[test]
+    fn the_effect_analysis_shows_up_in_the_snapshot_as_the_worker_saves_it() {
+        let e = env("analysis");
+        let compiler_root = e.root.clone();
+        let (mut h, _) = home(e, vec![]);
+        assert_eq!(h.snapshot().analysis, (0, 1));
+        assert!(h.snapshot().infos.is_empty());
+        // O worker (aqui, à mão) analisa o efeito e salva.
+        let c = Compiler { fx2spv: compiler_root.join("fake-fx2spv"), effects: vec![config::SearchPath::flat(compiler_root.join("effects"))], includes: vec![], textures: vec![], cache: compiler_root.join("cache") };
+        analysis::ensure(&c, "Sepia");
+        h.refresh();
+        assert_eq!(h.snapshot().analysis, (1, 1));
+        let info = &h.snapshot().infos["Sepia"];
+        assert!(info.compatible());
+        assert_eq!(info.techniques, ["Sepia"]);
+    }
+
+    #[test]
     fn removing_the_last_technique_of_an_effect_deletes_its_settings() {
         let (mut h, presets) = home(env("forget"), open_game("vkcube"));
         h.add_effect("Sepia");
@@ -711,4 +748,22 @@ mod tests {
         h.set_enabled(true);
         assert!(h.snapshot().enabled);
     }
+}
+
+/// Analisa em segundo plano, um por vez, os efeitos que ainda não têm análise (compila cada um uma vez e guarda o
+/// resultado no cache). Usa o próprio compilador do processo e termina com ele. Devolve `None` sem compilador.
+pub fn start_analysis() -> Option<std::thread::JoinHandle<()>> {
+    let compiler = Compiler::from_env().ok()?;
+    std::thread::Builder::new()
+        .name("analise-de-efeitos".into())
+        .spawn(move || {
+            loop {
+                for name in analysis::pending(&compiler) {
+                    analysis::ensure(&compiler, &name);
+                }
+                // Efeitos novos nas pastas aparecem depois: olha de novo de vez em quando.
+                std::thread::sleep(std::time::Duration::from_secs(10));
+            }
+        })
+        .ok()
 }

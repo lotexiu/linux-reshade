@@ -91,6 +91,8 @@ fn main() -> glib::ExitCode {
         let options = Rc::new(options);
         move |app| {
             let Some(state) = state.borrow_mut().take() else { return };
+            // Analisa os efeitos em segundo plano (compila cada um uma vez): a lista de adicionar mostra os incompatíveis.
+            let _ = panel::start_analysis();
             let home = panel::Home::new(Compiler::from_env(), config::Config::load().presets_dir, state);
             let ui = window::Ui::new(app, home);
             ui.window.present();

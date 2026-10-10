@@ -7,10 +7,11 @@ use crate::games::GamesView;
 use gtk4 as gtk;
 use gtk::glib;
 use gtk::prelude::*;
+use control_core::analysis::{EffectInfo, Feature};
 use panel::{Home, TechniqueView};
 use preset::TechId;
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::{Rc, Weak};
 use std::time::Duration;
 
@@ -43,6 +44,11 @@ pub struct Ui {
     /// Efeitos (arquivos) com os parâmetros abertos: sobrevive às refeituras da lista.
     expanded: RefCell<HashSet<String>>,
     add_list: gtk::ListBox,
+    add_rows: RefCell<Vec<AddRow>>,
+    add_filter: Rc<RefCell<AddFilter>>,
+    add_progress: gtk::Label,
+    /// Quantas análises de efeitos a lista já mostra (para só reescrevê-la quando mudam).
+    add_infos_shown: Cell<usize>,
     add_effects: RefCell<Vec<String>>,
     add_popover: gtk::Popover,
     games_view: RefCell<GamesView>,
@@ -59,6 +65,37 @@ struct TechRow {
     check: gtk::CheckButton,
     controls: Option<RefCell<ControlsView>>,
     row: gtk::ListBoxRow,
+}
+
+/// O que a lista "Adicionar efeito" mostra: a busca, as características marcadas e o que se sabe de cada efeito.
+#[derive(Default)]
+struct AddFilter {
+    query: String,
+    /// O efeito precisa ter TODAS as características marcadas.
+    features: HashSet<Feature>,
+    only_compatible: bool,
+    infos: HashMap<String, EffectInfo>,
+}
+
+impl AddFilter {
+    fn accepts(&self, name: &str) -> bool {
+        if !self.query.is_empty() && !name.to_lowercase().contains(&self.query) {
+            return false;
+        }
+        let info = self.infos.get(name);
+        if self.only_compatible && !info.is_some_and(EffectInfo::compatible) {
+            return false;
+        }
+        // Sem análise ainda, um efeito só aparece enquanto nenhuma característica está marcada.
+        self.features.iter().all(|f| info.is_some_and(|i| i.has(*f)))
+    }
+}
+
+/// Uma linha da lista "Adicionar efeito".
+struct AddRow {
+    name: String,
+    title: gtk::Label,
+    detail: gtk::Label,
 }
 
 /// Quem refaz a tela depois de uma ação; preenchido quando a `Ui` existe (as ações nascem antes dela).
@@ -133,28 +170,67 @@ impl Ui {
         // "Adicionar efeito": busca e lista de todos os efeitos que as pastas de shaders têm.
         let add_search = gtk::SearchEntry::new();
         add_search.set_placeholder_text(Some("Procurar efeito"));
+        let add_filter = Rc::new(RefCell::new(AddFilter::default()));
+        let add_progress = gtk::Label::new(None);
+        add_progress.set_halign(gtk::Align::Start);
+        add_progress.add_css_class("dim-label");
+        add_progress.add_css_class("caption");
         let add_list = gtk::ListBox::new();
         add_list.set_selection_mode(gtk::SelectionMode::None);
         let add_scroller = gtk::ScrolledWindow::new();
         add_scroller.set_child(Some(&add_list));
-        add_scroller.set_min_content_height(320);
-        add_scroller.set_min_content_width(300);
+        add_scroller.set_min_content_height(380);
+        add_scroller.set_min_content_width(420);
         let add_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
         margins(&add_box, 8);
         add_box.append(&add_search);
+        // Filtro por característica (várias ao mesmo tempo) e só os compatíveis.
+        let chips = gtk::FlowBox::new();
+        chips.set_selection_mode(gtk::SelectionMode::None);
+        chips.set_max_children_per_line(3);
+        chips.set_row_spacing(4);
+        chips.set_column_spacing(4);
+        let only_ok = gtk::ToggleButton::with_label("Só compatíveis");
+        chips.append(&only_ok);
+        let chip_buttons: Vec<(Feature, gtk::ToggleButton)> = [Feature::Depth, Feature::Color, Feature::Textures, Feature::Mipmaps, Feature::Srgb, Feature::Compute]
+            .into_iter()
+            .map(|f| (f, gtk::ToggleButton::with_label(f.label())))
+            .collect();
+        for (_, b) in &chip_buttons {
+            chips.append(b);
+        }
+        add_box.append(&chips);
+        add_box.append(&add_progress);
         add_box.append(&add_scroller);
         let add_popover = gtk::Popover::new();
         add_popover.set_child(Some(&add_box));
         add_button.set_popover(Some(&add_popover));
         {
-            let list = add_list.clone();
-            let search = add_search.clone();
-            list.set_filter_func(move |row| {
-                let q = search.text().to_lowercase();
-                q.is_empty() || row.widget_name().to_lowercase().contains(&q)
+            let filter = add_filter.clone();
+            add_list.set_filter_func(move |row| filter.borrow().accepts(&row.widget_name()));
+            let (list, filter) = (add_list.clone(), add_filter.clone());
+            add_search.connect_search_changed(move |e| {
+                filter.borrow_mut().query = e.text().to_lowercase();
+                list.invalidate_filter();
             });
-            let list = add_list.clone();
-            add_search.connect_search_changed(move |_| list.invalidate_filter());
+            let (list, filter) = (add_list.clone(), add_filter.clone());
+            only_ok.connect_toggled(move |b| {
+                filter.borrow_mut().only_compatible = b.is_active();
+                list.invalidate_filter();
+            });
+            for (feature, button) in chip_buttons {
+                let (list, filter) = (add_list.clone(), add_filter.clone());
+                button.connect_toggled(move |b| {
+                    let mut f = filter.borrow_mut();
+                    if b.is_active() {
+                        f.features.insert(feature);
+                    } else {
+                        f.features.remove(&feature);
+                    }
+                    drop(f);
+                    list.invalidate_filter();
+                });
+            }
         }
 
         // "Novo preset": um nome e criar.
@@ -237,6 +313,10 @@ impl Ui {
             signature: RefCell::new(String::new()),
             expanded: RefCell::new(HashSet::new()),
             add_list,
+            add_rows: RefCell::new(Vec::new()),
+            add_filter,
+            add_progress,
+            add_infos_shown: Cell::new(usize::MAX),
             add_effects: RefCell::new(Vec::new()),
             add_popover,
             games_view: RefCell::new(games_view),
@@ -471,17 +551,63 @@ impl Ui {
                 while let Some(child) = self.add_list.first_child() {
                     self.add_list.remove(&child);
                 }
+                let mut rows = Vec::new();
                 for name in &s.effects {
                     let row = gtk::ListBoxRow::new();
                     row.set_widget_name(name);
-                    let label = gtk::Label::new(Some(name));
-                    label.set_halign(gtk::Align::Start);
-                    margins(&label, 4);
-                    row.set_child(Some(&label));
+                    let title = gtk::Label::new(Some(name));
+                    title.set_halign(gtk::Align::Start);
+                    title.set_xalign(0.0);
+                    let detail = gtk::Label::new(None);
+                    detail.set_halign(gtk::Align::Start);
+                    detail.set_xalign(0.0);
+                    detail.set_wrap(true);
+                    detail.add_css_class("caption");
+                    let b = gtk::Box::new(gtk::Orientation::Vertical, 0);
+                    margins(&b, 4);
+                    b.append(&title);
+                    b.append(&detail);
+                    row.set_child(Some(&b));
                     self.add_list.append(&row);
+                    rows.push(AddRow { name: name.clone(), title, detail });
                 }
+                *self.add_rows.borrow_mut() = rows;
                 *self.add_effects.borrow_mut() = s.effects.clone();
+                self.add_infos_shown.set(usize::MAX);
             }
+            // O que a análise já sabe: vermelho para os incompatíveis, e as características embaixo.
+            if self.add_infos_shown.get() != s.infos.len() {
+                for row in self.add_rows.borrow().iter() {
+                    match s.infos.get(&row.name) {
+                        Some(info) => {
+                            let tags: Vec<&str> = info.features.iter().map(|f| f.label().trim_start_matches("Usa ")).collect();
+                            row.detail.set_text(&match info.reason() {
+                                Some(why) => format!("Incompatível: {why}"),
+                                None => tags.join(" · "),
+                            });
+                            if info.compatible() {
+                                row.title.remove_css_class("error");
+                                row.detail.remove_css_class("error");
+                                row.detail.add_css_class("dim-label");
+                            } else {
+                                row.title.add_css_class("error");
+                                row.detail.add_css_class("error");
+                                row.detail.remove_css_class("dim-label");
+                            }
+                        }
+                        None => {
+                            row.detail.set_text("");
+                            row.title.remove_css_class("error");
+                        }
+                    }
+                }
+                self.add_filter.borrow_mut().infos = s.infos.clone();
+                self.add_list.invalidate_filter();
+                self.add_infos_shown.set(s.infos.len());
+            }
+            let (done, total) = s.analysis;
+            self.add_progress.set_visible(done < total);
+            self.add_progress.set_text(&format!("Analisando os efeitos para saber quais servem… {done}/{total}"));
 
             self.show_techniques(&s.techniques);
 

@@ -7,6 +7,6 @@ pub mod control;
 pub mod home;
 pub mod model;
 
-pub use home::{GameEntry, Home, HomeSnapshot, PresetInfo, TechniqueView};
+pub use home::{GameEntry, Home, HomeSnapshot, PresetInfo, TechniqueView, start_analysis};
 pub use control::{Control, Kind, controls_of};
 pub use model::{Model, Selection, Snapshot};
