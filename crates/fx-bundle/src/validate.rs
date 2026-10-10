@@ -152,9 +152,7 @@ impl Manifest {
         if pass.blend.len() < pass.render_targets.len().max(1) {
             return Err(invalid(format!("{at}: faltam estados de blend")));
         }
-        if pass.num_vertices == 0 {
-            return Err(invalid(format!("{at}: 0 vértices")));
-        }
+        // `VertexCount = 0` é válido (o ReShade o usa em técnicas utilitárias que não desenham): o desenho é vazio.
         let mut bindings = HashSet::new();
         for b in &pass.samplers {
             let sampler = self

@@ -142,7 +142,6 @@ fn rejects_inconsistent_references() {
         ("anexo que não é alvo", Box::new(|v| v["techniques"][0]["passes"][0]["render_targets"] = json!([v["textures"][0]["unique_name"].clone()]))),
         ("sem técnicas", Box::new(|v| v["techniques"] = json!([]))),
         ("resolução zero", Box::new(|v| v["target"]["width"] = json!(0))),
-        ("0 vértices", Box::new(|v| v["techniques"][0]["passes"][0]["num_vertices"] = json!(0))),
     ];
     for (what, edit) in cases {
         let r = mutated(edit);
@@ -219,4 +218,10 @@ fn reads_every_bundle_the_compiler_produced() {
     for u in &unsupported {
         eprintln!("  {u}");
     }
+}
+
+#[test]
+fn a_pass_with_zero_vertices_is_valid_and_draws_nothing() {
+    // CShade e outros usam `VertexCount = 0` em técnicas que só existem para outras lerem seus uniforms.
+    assert!(mutated(|v| v["techniques"][0]["passes"][0]["num_vertices"] = json!(0)).is_ok());
 }
