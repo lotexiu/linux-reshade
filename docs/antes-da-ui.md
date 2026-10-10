@@ -27,3 +27,19 @@ depois não têm um "antes da UI" na imagem do swapchain (nesse caso o modo não
 2. Escolher o ponto (primeiro passe no swapchain; os seguintes com `Load` são UI) e gravar a cópia `S` ali.
 3. A cadeia sobre `S` e a composição por máscara (passe novo no `postfx`).
 4. Opção por jogo no painel ("aplicar antes da UI") e por efeito, se fizer sentido.
+
+## Medido no Haste (2026-10-10): a ideia da máscara não serve nele
+
+`lrctl layers` mostrou, para a imagem do swapchain num quadro da tela inicial (cena 3D + texto):
+`barreira->COLOR_ATTACHMENT, barreira->COLOR_ATTACHMENT, passe de 1 desenho com Load, barreira->PRESENT`. Nenhum blit,
+cópia ou resolução, e um único passe na tela, com um desenho só (um quadrado cheio): é o passe final do jogo (o
+FSR/escala amostrando uma imagem em resolução de render). **A UI já está dentro dessa imagem de render**, desenhada pelos
+passes anteriores; no swapchain não há "antes da UI" para fotografar: `O == S` sempre.
+
+Para esse tipo de jogo (Unity URP com UI em overlay na imagem da câmera) só funciona injetar o efeito **dentro do
+fluxo do jogo**, na imagem de render, depois do último passe que usa a profundidade e antes dos passes de UI (que
+carregam essa imagem com `Load`). Isso pede: gravar comandos no command buffer do jogo (a cadeia hoje tem command
+buffers prontos por imagem do swapchain), sincronizar os uniforms por quadro em voo, acrescentar usos (`SAMPLED`/
+`STORAGE`) à imagem de render na criação (modo armado), e lidar com formato HDR (efeitos do ReShade supõem LDR) e com a
+resolução de render menor que a tela. É um passo grande e específico por jogo; fica **adiado** até a profundidade por
+jogo (D3) e a base de efeitos estarem firmes. O observador da tela (`depth/screen.rs`) continua útil para diagnosticar.
