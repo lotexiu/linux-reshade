@@ -179,6 +179,11 @@ pub fn set(bundle: &Bundle, state: &dyn ipc::ParamStore, name: &str, values: &[f
     block.get_mut(at..at + bytes.len()).ok_or_else(|| Error::BadValue("o uniform não cabe no buffer".into()))?.copy_from_slice(&bytes);
     state.publish_params(bundle.params_id(), &block).map_err(Error::Publish)?;
 
+    Ok(Change { old, new: uniforms::decode(u, &block).unwrap_or_default(), warnings: range_warnings(u, values) })
+}
+
+/// Avisos de valores fora da faixa que o efeito sugere (`ui_min`/`ui_max`); não impedem nada.
+pub fn range_warnings(u: &Uniform, values: &[f64]) -> Vec<String> {
     let mut warnings = Vec::new();
     if let Some((min, max)) = first_number(u, "ui_min").zip(first_number(u, "ui_max")) {
         for v in values {
@@ -187,7 +192,7 @@ pub fn set(bundle: &Bundle, state: &dyn ipc::ParamStore, name: &str, values: &[f
             }
         }
     }
-    Ok(Change { old, new: uniforms::decode(u, &block).unwrap_or_default(), warnings })
+    warnings
 }
 
 /// Volta todos os parâmetros aos padrões do manifesto.

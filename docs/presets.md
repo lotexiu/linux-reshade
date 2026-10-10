@@ -93,6 +93,20 @@ que vai para a tela, com *ping-pong* entre duas imagens. É o que o ReShade faz 
 um passe que o lê). Texturas de mesmo nome em efeitos diferentes são compartilhadas no ReShade: ficam para
 depois. Compute shaders e mipmaps também não existem no nosso `postfx` e ficam fora deste plano.
 
+## Linha de comando
+
+```sh
+lrctl preset new Noturno --game vkcube      # cria <Presets>/vkcube/Noturno.ini copiando o que vale agora, e o escolhe
+lrctl preset enable Sepia --game vkcube     # liga uma técnica (Nome@Arquivo.fx, ou só Nome)
+lrctl preset move Colourfulness 1 --game vkcube
+lrctl preset set Sepia.fx Strength 0.4 --game vkcube
+lrctl preset show --game vkcube             # técnicas em ordem, [x] ligada
+lrctl preset use none --game vkcube         # volta ao preset global
+```
+
+`--file <arquivo.ini>` edita um arquivo qualquer. Com o `lrctl daemon` rodando, o jogo aberto passa a usar a
+mudança assim que o arquivo é gravado. Sem `--game`/`--file` o comando diz o que falta.
+
 ## Fases (commits pequenos, cada fase com testes próprios)
 
 - **F0 — configuração e caminhos.** *(feita em 2026-10-09: crates `ini` e `config`; `lrctl config` e

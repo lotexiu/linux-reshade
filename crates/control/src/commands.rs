@@ -158,6 +158,7 @@ pub fn run(command: Command, state: &ipc::Writer) -> ExitCode {
             ExitCode::SUCCESS
         }
         Command::Config { init, dir } => config_command(init, dir),
+        Command::Preset { action, game, file } => crate::preset_cmd::run(action, game, file),
         Command::Effects => match Compiler::from_env() {
             Ok(compiler) => {
                 let available = compiler.available();

@@ -760,6 +760,7 @@ dependencies = [
  "control-core",
  "fx-bundle",
  "ipc",
+ "preset",
  "shortcuts",
  "shortcuts-portal",
 ]

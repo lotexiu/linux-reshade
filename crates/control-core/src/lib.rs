@@ -8,6 +8,7 @@
 //! - [`layers`]: a lista de jogos com a layer ativa
 //! - [`location`]: onde estão os dados do usuário (pastas de shaders, presets, cache)
 //! - [`params`]: listar e alterar os parâmetros de um efeito
+//! - [`presets`]: editar presets (técnicas, ordem, valores; preset de cada jogo)
 //! - [`select`]: escolher o efeito que a layer executa
 //! - [`watch`]: o vigia, que mantém compilado o que os jogos abertos precisam
 
@@ -18,5 +19,6 @@ pub mod games;
 pub mod layers;
 pub mod location;
 pub mod params;
+pub mod presets;
 pub mod select;
 pub mod watch;

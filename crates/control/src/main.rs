@@ -10,6 +10,7 @@ mod bindings;
 mod cli;
 mod commands;
 mod daemon;
+mod preset_cmd;
 
 use std::process::ExitCode;
 

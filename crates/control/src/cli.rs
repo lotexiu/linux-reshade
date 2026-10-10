@@ -28,7 +28,19 @@ uso: lrctl <comando> [opções]
   set <nome> <valor...>           altera um parâmetro (vetores: 0.1 0.2 0.3 ou 0.1,0.2,0.3)
   reset                           volta todos os parâmetros aos valores padrão
 
+  preset show                     as técnicas do preset (ordem de execução; [x] ligada, [ ] desligada)
+  preset enable|disable <técnica> liga ou desliga (Nome@Arquivo.fx, ou só Nome)
+  preset move <técnica> <posição> muda a posição na ordem de execução (começa em 1)
+  preset set <Arquivo.fx> <parâmetro> <valor...>
+                                  grava o valor de um parâmetro no preset
+  preset new <nome> --game <id>   cria um preset do jogo, copiando o que vale agora, e o escolhe
+  preset use <nome|none> --game <id>
+                                  escolhe o preset do jogo; none volta ao preset global
+                                  (o daemon aplica o preset aos jogos abertos assim que o arquivo muda)
+
 opções:
+  --game <id>                     o jogo dos comandos 'preset': edita o preset que vale para ele
+  --file <arquivo.ini>            ou um arquivo de preset qualquer
   --layer <jogo>                  vale só para um jogo aberto, dado por número do processo (coluna PID
                                   de 'lrctl layers') ou nome; vale em use, current, uniforms, get, set
                                   e reset. Sem isso o comando vale para todos os jogos. A escolha e os
@@ -58,6 +70,21 @@ pub enum Command {
     Get { bundle: Option<PathBuf>, layer: Option<String>, name: String },
     Set { bundle: Option<PathBuf>, layer: Option<String>, name: String, values: Vec<String> },
     Reset { bundle: Option<PathBuf>, layer: Option<String> },
+    /// Edita um preset: o que vale para `game`, ou o arquivo `file`.
+    Preset { action: PresetAction, game: Option<String>, file: Option<PathBuf> },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum PresetAction {
+    Show,
+    Enable(String),
+    Disable(String),
+    /// Posição de 1 em diante.
+    Move(String, usize),
+    Set { file: String, parameter: String, values: Vec<String> },
+    New(String),
+    /// `None`: volta ao preset global.
+    Use(Option<String>),
 }
 
 /// `lrctl use X` escolhe por *nome* ou por *diretório*? Um diretório que existe, ou qualquer coisa com
@@ -83,6 +110,8 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
     // Separa `--bundle X` e `--layer X` (em qualquer posição) do resto.
     let mut bundle: Option<PathBuf> = None;
     let mut layer: Option<String> = None;
+    let mut game: Option<String> = None;
+    let mut file: Option<PathBuf> = None;
     let mut rest = Vec::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -92,8 +121,16 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
             bundle = Some(PathBuf::from(dir));
         } else if a == "--layer" {
             layer = Some(it.next().ok_or("--layer precisa do número do processo ou do nome do jogo (veja 'lrctl layers')")?.clone());
-        } else if let Some(game) = a.strip_prefix("--layer=") {
-            layer = Some(game.to_string());
+        } else if let Some(name) = a.strip_prefix("--layer=") {
+            layer = Some(name.to_string());
+        } else if a == "--game" {
+            game = Some(it.next().ok_or("--game precisa do id do jogo")?.clone());
+        } else if let Some(id) = a.strip_prefix("--game=") {
+            game = Some(id.to_string());
+        } else if a == "--file" {
+            file = Some(PathBuf::from(it.next().ok_or("--file precisa de um arquivo .ini")?));
+        } else if let Some(path) = a.strip_prefix("--file=") {
+            file = Some(PathBuf::from(path));
         } else {
             rest.push(a.clone());
         }
@@ -103,7 +140,32 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
     if layer.is_some() && !matches!(command.as_str(), "use" | "current" | "uniforms" | "get" | "set" | "reset") {
         return Err(format!("--layer não vale em '{command}'"));
     }
+    if (game.is_some() || file.is_some()) && command != "preset" {
+        return Err(format!("--game e --file só valem em 'preset', não em '{command}'"));
+    }
+    if game.is_some() && file.is_some() {
+        return Err("use --game ou --file, não os dois".into());
+    }
     match command.as_str() {
+        "preset" => {
+            let action = match tail.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+                [] | ["show"] => PresetAction::Show,
+                ["enable", t] => PresetAction::Enable((*t).into()),
+                ["disable", t] => PresetAction::Disable((*t).into()),
+                ["move", t, pos] => match pos.parse::<usize>() {
+                    Ok(n) if n >= 1 => PresetAction::Move((*t).into(), n),
+                    _ => return Err(format!("posição inválida: {pos:?} (começa em 1)")),
+                },
+                ["set", f, parameter, values @ ..] if !values.is_empty() => {
+                    PresetAction::Set { file: (*f).into(), parameter: (*parameter).into(), values: values.iter().map(|v| (*v).into()).collect() }
+                }
+                ["new", name] if !name.starts_with('-') => PresetAction::New((*name).into()),
+                ["use", "none"] => PresetAction::Use(None),
+                ["use", name] if !name.starts_with('-') => PresetAction::Use(Some((*name).into())),
+                _ => return Err("uso: lrctl preset show | enable|disable <técnica> | move <técnica> <posição> | set <Arquivo.fx> <parâmetro> <valor...> | new <nome> | use <nome|none>  (com --game <id> ou --file <arquivo>)".into()),
+            };
+            Ok(Command::Preset { action, game, file })
+        }
         "status" => no_args(Command::Status),
         "on" => no_args(Command::On),
         "off" => no_args(Command::Off),
@@ -155,6 +217,25 @@ mod tests {
 
     fn p(path: &str) -> Option<PathBuf> {
         Some(PathBuf::from(path))
+    }
+
+    #[test]
+    fn preset_commands_and_their_targets() {
+        let c = parse(&args(&["preset", "enable", "Sepia", "--game", "vkcube"]));
+        assert_eq!(c, Ok(Command::Preset { action: PresetAction::Enable("Sepia".into()), game: Some("vkcube".into()), file: None }));
+        let c = parse(&args(&["preset", "--file=/x/p.ini", "move", "Sepia", "2"]));
+        assert_eq!(c, Ok(Command::Preset { action: PresetAction::Move("Sepia".into(), 2), game: None, file: p("/x/p.ini") }));
+        assert!(matches!(parse(&args(&["preset"])), Ok(Command::Preset { action: PresetAction::Show, .. })));
+        let c = parse(&args(&["preset", "set", "Sepia.fx", "Strength", "0.5"]));
+        assert!(matches!(c, Ok(Command::Preset { action: PresetAction::Set { .. }, .. })));
+        assert!(matches!(parse(&args(&["preset", "use", "none", "--game", "g"])), Ok(Command::Preset { action: PresetAction::Use(None), .. })));
+        assert!(matches!(parse(&args(&["preset", "use", "Noturno", "--game", "g"])), Ok(Command::Preset { action: PresetAction::Use(Some(_)), .. })));
+        // Posição começa em 1; nome de preset não é uma opção; as opções só valem em 'preset'.
+        assert!(parse(&args(&["preset", "move", "Sepia", "0"])).is_err());
+        assert!(parse(&args(&["preset", "new", "--help"])).is_err());
+        assert!(parse(&args(&["preset", "set", "Sepia.fx", "Strength"])).is_err());
+        assert!(parse(&args(&["use", "Sepia", "--game", "g"])).is_err());
+        assert!(parse(&args(&["preset", "show", "--game", "g", "--file", "x.ini"])).is_err());
     }
 
     #[test]
