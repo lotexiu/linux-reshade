@@ -31,9 +31,19 @@ pub fn technique_index(bundle: &Bundle, name: &str) -> Option<usize> {
     bundle.manifest.techniques.iter().position(|t| t.name == name)
 }
 
+/// Uma etapa que a cadeia pulou por usar algo que o runtime ainda não faz.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Skipped {
+    /// Posição da etapa na lista dada a [`Chain::new_lenient`].
+    pub step: usize,
+    pub why: String,
+}
+
 #[derive(Default)]
 pub struct Chain {
     effects: Vec<Effect>,
+    /// De que etapa da lista original vem cada efeito (difere da posição se alguma foi pulada).
+    origin: Vec<usize>,
 }
 
 impl Chain {
@@ -52,7 +62,10 @@ impl Chain {
         let mut chain = Self::default();
         for (n, step) in steps.iter().enumerate() {
             match unsafe { Effect::new(device, memory, step.bundle, step.technique, target, queue) } {
-                Ok(effect) => chain.effects.push(effect),
+                Ok(effect) => {
+                    chain.effects.push(effect);
+                    chain.origin.push(n);
+                }
                 Err(e) => {
                     unsafe { chain.destroy(device) };
                     return Err(match e {
@@ -64,6 +77,42 @@ impl Chain {
             }
         }
         Ok(chain)
+    }
+
+    /// Como [`Chain::new`], mas uma etapa que o runtime ainda não suporta (`Error::Unsupported`) é pulada e
+    /// contada em vez de derrubar a cadeia inteira: o resto do preset continua valendo. Qualquer outro erro
+    /// (falha do Vulkan, bundle inválido) segue sendo erro.
+    ///
+    /// # Safety
+    /// As mesmas de [`Effect::new`].
+    pub unsafe fn new_lenient(
+        device: &ash::Device,
+        memory: &vk::PhysicalDeviceMemoryProperties,
+        steps: &[Step<'_>],
+        target: &Target<'_>,
+        queue: vk::Queue,
+    ) -> Result<(Self, Vec<Skipped>), Error> {
+        let mut chain = Self::default();
+        let mut skipped = Vec::new();
+        for (n, step) in steps.iter().enumerate() {
+            match unsafe { Effect::new(device, memory, step.bundle, step.technique, target, queue) } {
+                Ok(effect) => {
+                    chain.effects.push(effect);
+                    chain.origin.push(n);
+                }
+                Err(Error::Unsupported(why)) => skipped.push(Skipped { step: n, why }),
+                Err(e) => {
+                    unsafe { chain.destroy(device) };
+                    return Err(e);
+                }
+            }
+        }
+        Ok((chain, skipped))
+    }
+
+    /// De qual etapa da lista original vem o efeito `position` da cadeia.
+    pub fn origin(&self, position: usize) -> Option<usize> {
+        self.origin.get(position).copied()
     }
 
     pub fn len(&self) -> usize {
@@ -112,5 +161,6 @@ impl Chain {
             unsafe { effect.destroy(device) };
         }
         self.effects.clear();
+        self.origin.clear();
     }
 }

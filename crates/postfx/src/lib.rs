@@ -16,6 +16,6 @@ mod image;
 mod memory;
 
 pub use backbuffer::BackbufferCopies;
-pub use chain::{Chain, Step};
+pub use chain::{Chain, Skipped, Step};
 pub use effect::{Effect, Target};
 pub use error::Error;

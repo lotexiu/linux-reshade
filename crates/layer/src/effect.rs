@@ -32,7 +32,9 @@ struct Built {
     /// Identifica o que foi construído (bundle e técnica de cada etapa); serve para saber se a cadeia
     /// construída ainda vale quando a escolha muda.
     signature: Vec<(u64, usize)>,
-    /// Um por etapa, na mesma ordem.
+    /// De qual etapa da escolha vem cada efeito da cadeia (as puladas por falta de suporte não aparecem).
+    origin: Vec<usize>,
+    /// Um por efeito da cadeia, na mesma ordem.
     params: Vec<StepRuntime>,
     /// Um semáforo por imagem do swapchain: o da imagem sinaliza que o efeito terminou nela.
     semaphores: Vec<vk::Semaphore>,
@@ -149,8 +151,8 @@ impl SwapchainFx {
                 self.fx = Fx::Unbuilt;
             } else if let Some(built) = match &mut self.fx { Fx::Ready(b) => Some(b), _ => None } {
                 // A mesma cadeia: só os uniforms do plano podem ter mudado.
-                for (runtime, step) in built.params.iter_mut().zip(&steps) {
-                    if let (StepSource::Plan(bytes), StepParams::Plan(new)) = (&mut runtime.source, &step.params) {
+                for (runtime, &from) in built.params.iter_mut().zip(&built.origin) {
+                    if let (StepSource::Plan(bytes), Some(StepParams::Plan(new))) = (&mut runtime.source, steps.get(from).map(|s| &s.params)) {
                         *bytes = new.clone();
                     }
                 }
@@ -216,9 +218,18 @@ impl SwapchainFx {
         };
         let chain_steps: Vec<Step<'_>> = steps.iter().map(|s| Step { bundle: &s.bundle, technique: s.technique }).collect();
         unsafe {
-            let chain = Chain::new(&data.device, &data.memory, &chain_steps, &target, queue).map_err(|e| e.to_string())?;
-            let params = steps
+            let (chain, skipped) = Chain::new_lenient(&data.device, &data.memory, &chain_steps, &target, queue).map_err(|e| e.to_string())?;
+            for s in &skipped {
+                log!("etapa {} pulada: {}", s.step, s.why);
+            }
+            if chain.is_empty() && !steps.is_empty() {
+                return Err(format!("nenhuma etapa é suportada ({})", skipped.iter().map(|s| format!("etapa {}: {}", s.step, s.why)).collect::<Vec<_>>().join("; ")));
+            }
+            // Os parâmetros seguem as etapas que ficaram na cadeia (as puladas não têm efeito a alimentar).
+            let origin: Vec<usize> = (0..chain.len()).filter_map(|i| chain.origin(i)).collect();
+            let params = origin
                 .iter()
+                .map(|&i| &steps[i])
                 .map(|s| StepRuntime {
                     params_id: s.bundle.params_id(),
                     source: match &s.params {
@@ -227,7 +238,7 @@ impl SwapchainFx {
                     },
                 })
                 .collect();
-            let mut built = Built { chain, signature: signature(steps), params, semaphores: Vec::new(), fences: Vec::new() };
+            let mut built = Built { chain, signature: signature(steps), origin, params, semaphores: Vec::new(), fences: Vec::new() };
             for _ in &self.images {
                 let semaphore = data.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None);
                 // Nasce sinalizada: a primeira espera por ela não bloqueia.

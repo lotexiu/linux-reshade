@@ -119,3 +119,48 @@ fn techniques_are_found_by_name() {
     assert_eq!(postfx::chain::technique_index(&invert_fx, "Invert"), Some(0));
     assert!(Step::named(&invert_fx, "Nao existe").is_none());
 }
+
+/// Um bundle de teste cujo passe pede escrita sRGB, o que o runtime ainda não faz.
+fn srgb_write_bundle() -> Bundle {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/Invert");
+    let dst = std::env::temp_dir().join(format!("chain-srgb-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dst);
+    std::fs::create_dir_all(&dst).unwrap();
+    for entry in std::fs::read_dir(&src).unwrap().flatten() {
+        std::fs::copy(entry.path(), dst.join(entry.file_name())).unwrap();
+    }
+    let manifest = std::fs::read_to_string(dst.join("manifest.json")).unwrap().replace("\"srgb_write\":false", "\"srgb_write\":true");
+    std::fs::write(dst.join("manifest.json"), manifest).unwrap();
+    let bundle = Bundle::load(&dst).unwrap();
+    let _ = std::fs::remove_dir_all(&dst);
+    bundle
+}
+
+#[test]
+fn a_lenient_chain_skips_what_the_runtime_cannot_do_and_keeps_the_rest() {
+    let gpu = gpu_or_skip!();
+    let (sepia_fx, invert_fx, srgb_fx) = (bundle("Sepia"), bundle("Invert"), srgb_write_bundle());
+    unsafe {
+        let targets = gpu.targets(1, input);
+        let steps = [
+            Step::named(&invert_fx, "Invert").unwrap(),
+            Step { bundle: &srgb_fx, technique: 0 },
+            Step::named(&sepia_fx, "Sepia").unwrap(),
+        ];
+        // A cadeia estrita recusa o conjunto; a leniente pula só a etapa 1.
+        assert!(matches!(Chain::new(&gpu.device, &gpu.memory, &steps, &target(&targets.images, &gpu), gpu.queue), Err(Error::Unsupported(_))));
+        let (mut chain, skipped) = Chain::new_lenient(&gpu.device, &gpu.memory, &steps, &target(&targets.images, &gpu), gpu.queue).unwrap();
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].step, 1);
+        assert!(skipped[0].why.contains("sRGB"), "{}", skipped[0].why);
+        assert_eq!((chain.len(), chain.origin(0), chain.origin(1)), (2, Some(0), Some(2)));
+
+        gpu.submit_all(&chain.command_buffers(0));
+        for (n, got) in gpu.read(targets.images[0]).into_iter().enumerate() {
+            let s = input(n as u32 % W, n as u32 / W);
+            assert_pixel(got, sepia(invert(s)), 3, &format!("inverter e depois sépia, pixel {n}"));
+        }
+        chain.destroy(&gpu.device);
+        gpu.destroy_targets(targets);
+    }
+}
