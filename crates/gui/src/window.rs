@@ -30,6 +30,8 @@ pub struct Ui {
     preset_names: RefCell<Vec<String>>,
     preset_note: gtk::Label,
     new_preset: gtk::MenuButton,
+    new_name: gtk::Entry,
+    new_create: gtk::Button,
     search: gtk::SearchEntry,
     list: gtk::ListBox,
     empty: gtk::Label,
@@ -220,6 +222,8 @@ impl Ui {
             preset_names: RefCell::new(Vec::new()),
             preset_note,
             new_preset: new_preset.clone(),
+            new_name: name_entry.clone(),
+            new_create: create.clone(),
             search,
             list,
             empty,
@@ -703,6 +707,15 @@ impl Ui {
             check(find(self).is_some_and(|t| t.controls.iter().all(|c| c.is_default())), "restaurar não voltou aos padrões");
         } else {
             check(false, "o efeito não gerou nenhum controle");
+        }
+
+        // 3b. criar um preset pelo botão "Criar" do popover (precisa de um jogo escolhido)
+        if self.home.borrow().snapshot().game.is_some() {
+            self.new_name.set_text("smoke-novo");
+            self.new_create.emit_clicked();
+            let active = self.home.borrow().snapshot().active_preset.clone();
+            check(active.as_deref() == Some("smoke-novo"), &format!("o botão Criar não criou o preset (ativo: {active:?}, aviso: {:?})", self.home.borrow().snapshot().notice));
+            check(self.new_name.text().is_empty(), "o campo do nome não foi limpo");
         }
 
         // 4. o interruptor de efeitos ligados

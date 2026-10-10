@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Utilitário de desenvolvimento. Idempotente; serve para trocar de máquina sem esforço.
-# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|smoke-preset|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-golden|placement|logs> [args]
+# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|smoke-preset|daemon|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-golden|placement|logs> [args]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -393,6 +393,12 @@ cmd_smoke_preset() {
   [ "$ok" = 1 ] && say "smoke (preset): passou" || { warn "smoke (preset): falhou (logs: $LOG_FILE e $tmp/watch.log)"; "$lrctl" layers; exit 1; }
 }
 
+# O app de controle residente: atalho global e vigia (compila os efeitos e aplica o preset dos jogos abertos).
+cmd_daemon() {
+  cmd_build -p linux-reshade-control >/dev/null
+  exec "$ROOT/target/release/lrctl" daemon
+}
+
 # Abre a interface gráfica (compila se preciso).
 cmd_panel() {
   cmd_build -p linux-reshade-gui -p linux-reshade-control >/dev/null
@@ -535,6 +541,7 @@ case "${1:-}" in
   smoke-auto) cmd_smoke_auto ;;
   smoke-layer) cmd_smoke_layer ;;
   smoke-preset) cmd_smoke_preset ;;
+  daemon)    cmd_daemon ;;
   panel)     shift; cmd_panel "$@" ;;
   panel-smoke) cmd_panel_smoke ;;
   hotkey)    cmd_hotkey ;;
@@ -545,5 +552,5 @@ case "${1:-}" in
   fx-golden) cmd_fx_golden ;;
   placement) shift; cmd_placement "$@" ;;
   logs)      shift; cmd_logs "$@" ;;
-  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|smoke-preset|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-golden|placement|logs>" >&2; exit 2 ;;
+  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|smoke-preset|daemon|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-golden|placement|logs>" >&2; exit 2 ;;
 esac
