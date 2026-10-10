@@ -19,10 +19,10 @@ pub use sources::{FrameInfo, utc_date};
 
 use crate::backbuffer::BackbufferCopies;
 use crate::error::{Error, unsupported};
-use crate::image::{COLOR_RANGE, GpuImage};
+use crate::image::{ALL_LEVELS, COLOR_RANGE, GpuImage};
 use ash::vk;
 use fx_bundle::Bundle;
-use fx_bundle::manifest::Texture;
+use fx_bundle::manifest::{Texture, TextureFormat};
 use pipeline::Output;
 use resources::UniformBuffer;
 use sources::Sources;
@@ -63,6 +63,18 @@ pub(crate) struct PassRes {
     pub srgb_shadow: bool,
     /// O passe precisa do conteúdo atual do frame (blend, viewport menor): o espelho começa como cópia dele.
     pub preserves_frame: bool,
+    /// Texturas com mipmaps que este passe escreve: os níveis seguintes são gerados depois dele.
+    pub mips: Vec<MipChain>,
+}
+
+/// O que gerar os níveis de mipmap de uma textura precisa saber.
+#[derive(Clone, Copy)]
+pub(crate) struct MipChain {
+    pub image: vk::Image,
+    pub extent: vk::Extent2D,
+    pub levels: u32,
+    /// Formatos de 32 bits float não filtram linearmente em toda GPU: o blit usa o vizinho mais próximo.
+    pub linear: bool,
 }
 
 #[derive(Default)]
@@ -206,7 +218,8 @@ impl Effect {
                     None => return Err(unsupported(format!("textura {:?} vem de arquivo (ainda sem carregador de imagens)", tex.name))),
                     Some(other) => return Err(unsupported(format!("textura {:?} com semântica {other}", tex.name))),
                 }
-                if tex.levels > 1 {
+                // Mipmaps só em texturas de render target (geradas depois de cada passe que as escreve).
+                if tex.levels > 1 && tex.semantic.is_some() {
                     return Err(unsupported(format!("textura {:?} com mipmaps", tex.name)));
                 }
             }
@@ -236,12 +249,12 @@ impl Effect {
         self.textures = m.textures.iter().map(|_| GpuImage::default()).collect();
         for (i, t) in m.textures.iter().enumerate() {
             if t.semantic.is_none() && t.render_target {
-                if t.levels > 1 {
-                    return Err(unsupported(format!("textura {:?} com mipmaps", t.name)));
-                }
                 let extent = vk::Extent2D { width: t.width, height: t.height };
-                let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST;
-                self.textures[i] = unsafe { GpuImage::new(device, memory, convert::texture_format(t.format), extent, usage)? };
+                let mut usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST;
+                if t.levels > 1 {
+                    usage |= vk::ImageUsageFlags::TRANSFER_SRC; // os níveis seguintes saem de blits do anterior
+                }
+                self.textures[i] = unsafe { GpuImage::with_levels(device, memory, convert::texture_format(t.format), extent, usage, t.levels)? };
             }
         }
 
@@ -337,6 +350,15 @@ impl Effect {
                 return Err(unsupported(format!("passe {k}: mistura o frame com texturas nos anexos")));
             };
             res.output = output;
+            if output == Output::Textures {
+                for name in &some {
+                    let (t, image) = (&m.textures[tex_index[*name]], &self.textures[tex_index[*name]]);
+                    if image.levels > 1 {
+                        let linear = !matches!(t.format, TextureFormat::R32f | TextureFormat::Rg32f | TextureFormat::Rgba32f);
+                        res.mips.push(MipChain { image: image.image, extent: vk::Extent2D { width: t.width, height: t.height }, levels: image.levels, linear });
+                    }
+                }
+            }
             res.extent = extent;
             res.attachment_count = formats.len();
             res.viewport = if pass.viewport == [0, 0] { [extent.width, extent.height] } else { pass.viewport };
@@ -419,7 +441,7 @@ impl Effect {
                     }
                 }
                 Output::Textures => {
-                    let views: Vec<vk::ImageView> = some.iter().map(|name| self.textures[tex_index[*name]].view).collect();
+                    let views: Vec<vk::ImageView> = some.iter().map(|name| self.textures[tex_index[*name]].attachment_view()).collect();
                     let info = vk::FramebufferCreateInfo::default()
                         .render_pass(res.render_pass)
                         .attachments(&views)
@@ -496,7 +518,7 @@ impl Effect {
                         .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
                         .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
                         .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                        .subresource_range(COLOR_RANGE)
+                        .subresource_range(ALL_LEVELS)
                 })
                 .collect();
             device.cmd_pipeline_barrier(
@@ -514,7 +536,7 @@ impl Effect {
                     image,
                     vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                     &vk::ClearColorValue { float32: [0.0; 4] },
-                    &[COLOR_RANGE],
+                    &[ALL_LEVELS],
                 );
             }
             let to_read: Vec<_> = images
@@ -528,7 +550,7 @@ impl Effect {
                         .dst_access_mask(vk::AccessFlags::SHADER_READ)
                         .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
                         .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                        .subresource_range(COLOR_RANGE)
+                        .subresource_range(ALL_LEVELS)
                 })
                 .collect();
             device.cmd_pipeline_barrier(

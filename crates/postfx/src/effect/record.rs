@@ -1,7 +1,7 @@
 //! Gravação do command buffer de uma imagem do alvo: a coreografia de layouts do frame, a cópia
 //! amostrável e a execução dos passes em ordem.
 
-use super::{PassRes, pipeline::Output};
+use super::{MipChain, PassRes, pipeline::Output};
 use crate::image::COLOR_RANGE;
 use ash::vk;
 
@@ -53,6 +53,55 @@ unsafe fn transition(device: &ash::Device, cb: vk::CommandBuffer, image: vk::Ima
     unsafe {
         device.cmd_pipeline_barrier(cb, src_stage, dst_stage, vk::DependencyFlags::empty(), &[], &[], &[barrier]);
     }
+}
+
+/// Gera os níveis de mipmap de uma textura que um passe acabou de escrever (o nível 0 chega em
+/// `SHADER_READ_ONLY_OPTIMAL`, como o render pass o deixa) e a devolve a esse layout, em todos os níveis.
+unsafe fn generate_mips(device: &ash::Device, cb: vk::CommandBuffer, chain: &MipChain) {
+    let range = |base: u32, count: u32| vk::ImageSubresourceRange { base_mip_level: base, level_count: count, ..COLOR_RANGE };
+    let barrier = |range: vk::ImageSubresourceRange, old: vk::ImageLayout, new: vk::ImageLayout| {
+        let b = vk::ImageMemoryBarrier::default()
+            .image(chain.image)
+            .old_layout(old)
+            .new_layout(new)
+            .src_access_mask(vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE)
+            .dst_access_mask(vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .subresource_range(range);
+        unsafe {
+            device.cmd_pipeline_barrier(cb, vk::PipelineStageFlags::ALL_COMMANDS, vk::PipelineStageFlags::ALL_COMMANDS, vk::DependencyFlags::empty(), &[], &[], &[b]);
+        }
+    };
+    use vk::ImageLayout as L;
+    let last = chain.levels - 1;
+    barrier(range(0, 1), L::SHADER_READ_ONLY_OPTIMAL, L::TRANSFER_SRC_OPTIMAL);
+    barrier(range(1, last), L::UNDEFINED, L::TRANSFER_DST_OPTIMAL);
+    let size = |level: u32| vk::Offset3D { x: (chain.extent.width >> level).max(1) as i32, y: (chain.extent.height >> level).max(1) as i32, z: 1 };
+    let layers = |level: u32| vk::ImageSubresourceLayers { aspect_mask: vk::ImageAspectFlags::COLOR, mip_level: level, base_array_layer: 0, layer_count: 1 };
+    for level in 1..=last {
+        if level > 1 {
+            barrier(range(level - 1, 1), L::TRANSFER_DST_OPTIMAL, L::TRANSFER_SRC_OPTIMAL);
+        }
+        let blit = vk::ImageBlit::default()
+            .src_subresource(layers(level - 1))
+            .src_offsets([vk::Offset3D::default(), size(level - 1)])
+            .dst_subresource(layers(level))
+            .dst_offsets([vk::Offset3D::default(), size(level)]);
+        unsafe {
+            device.cmd_blit_image(
+                cb,
+                chain.image,
+                L::TRANSFER_SRC_OPTIMAL,
+                chain.image,
+                L::TRANSFER_DST_OPTIMAL,
+                &[blit],
+                if chain.linear { vk::Filter::LINEAR } else { vk::Filter::NEAREST },
+            );
+        }
+    }
+    barrier(range(0, last), L::TRANSFER_SRC_OPTIMAL, L::SHADER_READ_ONLY_OPTIMAL);
+    barrier(range(last, 1), L::TRANSFER_DST_OPTIMAL, L::SHADER_READ_ONLY_OPTIMAL);
 }
 
 /// Grava os comandos de `rec` em `cb` para a imagem `index`.
@@ -157,6 +206,9 @@ pub unsafe fn record(rec: &Recording<'_>, cb: vk::CommandBuffer, index: usize) -
             }
             device.cmd_draw(cb, pass.num_vertices, 1, 0, 0);
             device.cmd_end_render_pass(cb);
+            for chain in &pass.mips {
+                generate_mips(device, cb, chain);
+            }
 
             if let Some(shadow) = shadow {
                 // Do espelho para o frame: cópia de bytes, sem conversão (já saíram codificados).

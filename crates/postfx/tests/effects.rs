@@ -164,3 +164,21 @@ fn runtime_sources_feed_the_uniforms_each_frame() {
         gpu.destroy_targets(targets);
     }
 }
+
+#[test]
+fn mipmaps_are_generated_after_the_pass_that_writes_the_texture() {
+    let gpu = gpu_or_skip!();
+    unsafe {
+        let targets = gpu.targets(2, input);
+        let mut effect = Effect::new(&gpu.device, &gpu.memory, &bundle("Mip"), 0, &target(&targets.images, &gpu), gpu.queue).expect("criar o efeito");
+        // O nível 3 tem 1x1: a média do frame (r = média de x*30 = 105, g = média de y*60 = 90, b = 100).
+        for (i, &image) in targets.images.iter().enumerate() {
+            gpu.submit(effect.command_buffer(i));
+            for (n, got) in gpu.read(image).into_iter().enumerate() {
+                assert_pixel(got, [105, 90, 100, 255], 3, &format!("imagem {i} pixel {n}"));
+            }
+        }
+        effect.destroy(&gpu.device);
+        gpu.destroy_targets(targets);
+    }
+}

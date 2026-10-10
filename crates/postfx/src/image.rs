@@ -7,8 +7,17 @@ use ash::vk;
 #[derive(Default)]
 pub struct GpuImage {
     pub image: vk::Image,
+    /// View de todos os níveis (para amostrar).
     pub view: vk::ImageView,
+    /// View só do nível 0, para usar como anexo de render pass; nula se a imagem tem um nível só (`view` serve).
+    view0: vk::ImageView,
+    pub levels: u32,
     memory: vk::DeviceMemory,
+}
+
+/// Quantos níveis de mipmap uma imagem desse tamanho comporta.
+pub fn max_levels(extent: vk::Extent2D) -> u32 {
+    32 - extent.width.max(extent.height).max(1).leading_zeros()
 }
 
 impl GpuImage {
@@ -24,7 +33,22 @@ impl GpuImage {
         extent: vk::Extent2D,
         usage: vk::ImageUsageFlags,
     ) -> Result<Self, vk::Result> {
-        let mut gpu = Self::default();
+        unsafe { Self::with_levels(device, memory, format, extent, usage, 1) }
+    }
+
+    /// Como [`new`](Self::new), com `levels` níveis de mipmap (limitado ao que o tamanho comporta).
+    ///
+    /// # Safety
+    /// As mesmas de [`new`](Self::new).
+    pub unsafe fn with_levels(
+        device: &ash::Device,
+        memory: &vk::PhysicalDeviceMemoryProperties,
+        format: vk::Format,
+        extent: vk::Extent2D,
+        usage: vk::ImageUsageFlags,
+        levels: u32,
+    ) -> Result<Self, vk::Result> {
+        let mut gpu = Self { levels: levels.clamp(1, max_levels(extent)), ..Self::default() };
         if let Err(e) = unsafe { gpu.build(device, memory, format, extent, usage) } {
             unsafe { gpu.destroy(device) };
             return Err(e);
@@ -45,7 +69,7 @@ impl GpuImage {
                 .image_type(vk::ImageType::TYPE_2D)
                 .format(format)
                 .extent(vk::Extent3D { width: extent.width, height: extent.height, depth: 1 })
-                .mip_levels(1)
+                .mip_levels(self.levels)
                 .array_layers(1)
                 .samples(vk::SampleCountFlags::TYPE_1)
                 .tiling(vk::ImageTiling::OPTIMAL)
@@ -65,10 +89,18 @@ impl GpuImage {
                 .image(self.image)
                 .view_type(vk::ImageViewType::TYPE_2D)
                 .format(format)
-                .subresource_range(COLOR_RANGE);
+                .subresource_range(vk::ImageSubresourceRange { level_count: self.levels, ..COLOR_RANGE });
             self.view = device.create_image_view(&view_info, None)?;
+            if self.levels > 1 {
+                self.view0 = device.create_image_view(&view_info.subresource_range(COLOR_RANGE), None)?;
+            }
         }
         Ok(())
+    }
+
+    /// A view para usar como anexo de render pass (só o nível 0).
+    pub fn attachment_view(&self) -> vk::ImageView {
+        if self.view0 == vk::ImageView::null() { self.view } else { self.view0 }
     }
 
     /// Libera tudo. Pode ser chamado mais de uma vez.
@@ -77,6 +109,9 @@ impl GpuImage {
     /// A GPU não pode estar usando a imagem.
     pub unsafe fn destroy(&mut self, device: &ash::Device) {
         unsafe {
+            if self.view0 != vk::ImageView::null() {
+                device.destroy_image_view(std::mem::take(&mut self.view0), None);
+            }
             if self.view != vk::ImageView::null() {
                 device.destroy_image_view(std::mem::take(&mut self.view), None);
             }
@@ -89,6 +124,9 @@ impl GpuImage {
         }
     }
 }
+
+/// Todos os níveis de mipmap, para barreiras e limpezas que valem para a imagem inteira.
+pub const ALL_LEVELS: vk::ImageSubresourceRange = vk::ImageSubresourceRange { level_count: vk::REMAINING_MIP_LEVELS, ..COLOR_RANGE };
 
 /// Subrecurso padrão: nível 0, camada 0, aspecto de cor.
 pub const COLOR_RANGE: vk::ImageSubresourceRange = vk::ImageSubresourceRange {
