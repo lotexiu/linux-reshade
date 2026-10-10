@@ -100,7 +100,17 @@ unsafe fn format_can_be_sampled(data: &DeviceData, format: vk::Format, tiling: v
 unsafe extern "system" fn destroy_image(device: vk::Device, image: vk::Image, p_allocator: *const vk::AllocationCallbacks<'_>) {
     unsafe {
         let Some(data) = data_of(device.as_raw()) else { return };
-        data.depth.images.lock().unwrap().remove(&image.as_raw());
+        let tracked = data.depth.images.lock().unwrap().remove(&image.as_raw()).is_some();
+        if tracked {
+            data.depth.image_layouts.lock().unwrap().remove(&image.as_raw());
+            let mut chosen = data.depth.chosen.lock().unwrap();
+            if chosen.is_some_and(|c| c.image == image.as_raw()) {
+                *chosen = None;
+            }
+            drop(chosen);
+            // Os efeitos construídos com esta imagem têm uma view dela: precisam sair antes de ela ser destruída.
+            crate::effect::on_depth_image_destroyed(&data, image.as_raw());
+        }
         (data.device.fp_v1_0().destroy_image)(device, image, p_allocator);
     }
 }
@@ -157,9 +167,20 @@ unsafe extern "system" fn create_render_pass(
 ) -> vk::Result {
     unsafe {
         let Some(data) = data_of(device.as_raw()) else { return vk::Result::ERROR_DEVICE_LOST };
-        let result = (data.device.fp_v1_0().create_render_pass)(device, p_create_info, p_allocator, p_render_pass);
+        // Teste: guardar a profundidade que o render pass descartaria (cópia dos anexos com o `storeOp` trocado).
+        let mut attachments_copy: Vec<vk::AttachmentDescription> = Vec::new();
+        let mut patched = *p_create_info;
+        if data.depth.force_store && !(*p_create_info).p_attachments.is_null() {
+            attachments_copy = std::slice::from_raw_parts((*p_create_info).p_attachments, (*p_create_info).attachment_count as usize).to_vec();
+            for a in attachments_copy.iter_mut().filter(|a| is_depth_format(a.format) && a.store_op == vk::AttachmentStoreOp::DONT_CARE) {
+                a.store_op = vk::AttachmentStoreOp::STORE;
+            }
+            patched.p_attachments = attachments_copy.as_ptr();
+        }
+        let forward: *const vk::RenderPassCreateInfo<'_> = if attachments_copy.is_empty() { p_create_info } else { &patched };
+        let result = (data.device.fp_v1_0().create_render_pass)(device, forward, p_allocator, p_render_pass);
         if result == vk::Result::SUCCESS {
-            let c = &*p_create_info;
+            let c = &*forward;
             if !c.p_subpasses.is_null() && !c.p_attachments.is_null() {
                 let subpasses = std::slice::from_raw_parts(c.p_subpasses, c.subpass_count as usize);
                 let attachments = std::slice::from_raw_parts(c.p_attachments, c.attachment_count as usize);
@@ -188,9 +209,19 @@ unsafe extern "system" fn create_render_pass2(
     unsafe {
         let Some(data) = data_of(device.as_raw()) else { return vk::Result::ERROR_DEVICE_LOST };
         let Some(next) = data.depth.next.create_render_pass2 else { return vk::Result::ERROR_EXTENSION_NOT_PRESENT };
-        let result = next(device, p_create_info, p_allocator, p_render_pass);
+        let mut attachments_copy: Vec<vk::AttachmentDescription2> = Vec::new();
+        let mut patched = *p_create_info;
+        if data.depth.force_store && !(*p_create_info).p_attachments.is_null() {
+            attachments_copy = std::slice::from_raw_parts((*p_create_info).p_attachments, (*p_create_info).attachment_count as usize).to_vec();
+            for a in attachments_copy.iter_mut().filter(|a| is_depth_format(a.format) && a.store_op == vk::AttachmentStoreOp::DONT_CARE) {
+                a.store_op = vk::AttachmentStoreOp::STORE;
+            }
+            patched.p_attachments = attachments_copy.as_ptr();
+        }
+        let forward: *const vk::RenderPassCreateInfo2<'_> = if attachments_copy.is_empty() { p_create_info } else { &patched };
+        let result = next(device, forward, p_allocator, p_render_pass);
         if result == vk::Result::SUCCESS {
-            let c = &*p_create_info;
+            let c = &*forward;
             if !c.p_subpasses.is_null() && !c.p_attachments.is_null() {
                 let subpasses = std::slice::from_raw_parts(c.p_subpasses, c.subpass_count as usize);
                 let attachments = std::slice::from_raw_parts(c.p_attachments, c.attachment_count as usize);
@@ -650,6 +681,9 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
     }
     let layouts = data.depth.image_layouts.lock().unwrap().clone();
     let candidates = stats.candidates(frame, &layouts);
+    // O que os efeitos podem usar: a escolhida, se a original é amostrável e o layout é conhecido.
+    *data.depth.chosen.lock().unwrap() =
+        candidates.iter().find(|c| c.chosen && c.sampled && c.layout != 0).map(|c| super::Chosen { image: c.image, format: c.format, layout: c.layout });
     let mut last = data.depth.last_published.lock().unwrap();
     if *last == candidates {
         return;

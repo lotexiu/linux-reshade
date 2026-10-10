@@ -7,7 +7,7 @@ use crate::params::ParamState;
 use crate::state::DeviceData;
 use ash::vk::{self, Handle};
 use ipc::{EffectState, SwapchainStatus, TechniqueState, TechniqueStatus};
-use postfx::effect::{FrameInfo, Target, utc_date};
+use postfx::effect::{DepthInput, FrameInfo, Target, utc_date};
 use postfx::{Chain, Step};
 use std::sync::LazyLock;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -34,6 +34,8 @@ struct Built {
     signature: Vec<(u64, usize)>,
     /// De qual etapa da escolha vem cada efeito da cadeia (as puladas por falta de suporte não aparecem).
     origin: Vec<usize>,
+    /// A profundidade com que foi construída (imagem e layout); mudou, reconstrói.
+    depth_key: Option<(u64, i32)>,
     /// As etapas puladas por falta de suporte e o motivo.
     skipped: Vec<(usize, String)>,
     /// Um por efeito da cadeia, na mesma ordem.
@@ -207,6 +209,8 @@ impl SwapchainFx {
                 ));
             }
         }
+        // A profundidade do jogo, só se alguma etapa a usa (e já foi achada).
+        let depth = if steps_need_depth(steps) { data.depth.chosen() } else { None };
         let target = Target {
             images: &self.images,
             format: self.format,
@@ -218,6 +222,7 @@ impl SwapchainFx {
                 let result = unsafe { (data.set_loader_data)(data.device.handle(), cb.as_raw() as *mut std::ffi::c_void) };
                 if result == vk::Result::SUCCESS { Ok(()) } else { Err(result) }
             }),
+            depth: depth.map(|d| DepthInput { image: vk::Image::from_raw(d.image), format: vk::Format::from_raw(d.format), layout: vk::ImageLayout::from_raw(d.layout) }),
         };
         let chain_steps: Vec<Step<'_>> = steps.iter().map(|s| Step { bundle: &s.bundle, technique: s.technique }).collect();
         unsafe {
@@ -242,7 +247,7 @@ impl SwapchainFx {
                 })
                 .collect();
             let skipped = skipped.iter().map(|s| (s.step, s.why.clone())).collect();
-            let mut built = Built { chain, signature: signature(steps), origin, skipped, params, semaphores: Vec::new(), fences: Vec::new() };
+            let mut built = Built { chain, signature: signature(steps), origin, skipped, depth_key: depth.map(|d| (d.image, d.layout)), params, semaphores: Vec::new(), fences: Vec::new() };
             for _ in &self.images {
                 let semaphore = data.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None);
                 // Nasce sinalizada: a primeira espera por ela não bloqueia.
@@ -298,6 +303,22 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
         }
         if !enabled || fx.unusable.is_some() || index >= fx.images.len() {
             return None;
+        }
+
+        // Uma etapa pede profundidade: liga a observação (custo zero enquanto nenhuma pede).
+        let needs_depth = steps_need_depth(&fx.steps);
+        if needs_depth {
+            data.depth.need();
+        }
+        // A profundidade escolhida mudou (outra imagem, outro layout, apareceu ou sumiu): reconstrói a cadeia.
+        if needs_depth && let Fx::Ready(built) = &fx.fx {
+            let now = data.depth.chosen().map(|d| (d.image, d.layout));
+            if built.depth_key != now {
+                let _ = data.device.device_wait_idle();
+                SwapchainFx::destroy_fx(&mut fx.fx, &data.device);
+                fx.fx = Fx::Unbuilt;
+                log!("profundidade para os efeitos mudou: cadeia será reconstruída");
+            }
         }
 
         if matches!(fx.fx, Fx::Unbuilt) {
@@ -382,6 +403,32 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
                 let _ = data.device.queue_submit(queue, &[vk::SubmitInfo::default()], fence);
                 None
             }
+        }
+    }
+}
+
+/// Alguma etapa amostra a profundidade do jogo (semântica `DEPTH` num sampler de um passe da técnica)?
+fn steps_need_depth(steps: &[ResolvedStep]) -> bool {
+    steps.iter().any(|s| {
+        let m = &s.bundle.manifest;
+        let Some(t) = m.techniques.get(s.technique) else { return false };
+        t.passes.iter().flat_map(|p| &p.samplers).any(|b| {
+            m.samplers.get(b.sampler as usize).is_some_and(|sampler| m.textures.iter().any(|tex| tex.unique_name == sampler.texture && tex.semantic.as_deref() == Some("DEPTH")))
+        })
+    })
+}
+
+/// O jogo vai destruir uma imagem de profundidade: os efeitos que a usam saem antes (têm uma view dela).
+pub fn on_depth_image_destroyed(data: &DeviceData, image: u64) {
+    let mut swapchains = data.swapchains.lock().unwrap();
+    for fx in swapchains.values_mut() {
+        if matches!(&fx.fx, Fx::Ready(b) if b.depth_key.is_some_and(|k| k.0 == image)) {
+            unsafe {
+                let _ = data.device.device_wait_idle();
+                SwapchainFx::destroy_fx(&mut fx.fx, &data.device);
+            }
+            fx.fx = Fx::Unbuilt;
+            log!("efeito descartado: o jogo destruiu a imagem de profundidade que ele usava");
         }
     }
 }

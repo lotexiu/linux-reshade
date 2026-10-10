@@ -59,6 +59,22 @@ profundidade (aspecto `DEPTH`, uso `TRANSFER_SRC`, `D16`/`D32` com amostragem ob
 profundidade ou do G-buffer ([doc da Unity](https://docs.unity3d.com/2018.3/Documentation/Manual/SL-CameraDepthTexture.html)),
 o que muda de jogo para jogo: motivo a mais para observar antes de copiar.
 
+## Pergunta do dono: a cópia é mesmo necessária? (2026-10-11)
+**Não sempre.** A cópia do ReShade (em Vulkan, sempre) existe por três motivos, e dá para tratar cada um sem copiar:
+1. *Uso:* a imagem precisa ter `SAMPLED` para um shader lê-la. A layer acrescenta o uso na criação (armado com
+   `LINUX_RESHADE_DEPTH=1`; sem MSAA e só se o formato aceita).
+2. *Layout:* para amostrar, a imagem tem de estar em layout de leitura, e o jogo a deixa onde quiser. A layer acompanha o
+   layout (fim dos passes e barreiras, na ordem dos envios à fila), então sabe o layout exato no present: leva a imagem
+   ao layout de leitura antes dos efeitos e a devolve depois, sem mudar nada para o jogo. **Foi implementado (D2a).**
+3. *Tempo de vida:* o conteúdo pode ser limpo ou descartado antes do fim do quadro. É o único caso em que copiar é
+   preciso: copiar no ponto certo (antes da limpeza), dentro do command buffer do jogo, onde o layout é conhecido
+   (D2b, ainda não feito). No Haste a profundidade da cena sobrevive até o fim do quadro (`store`), então a cópia nem seria usada.
+
+Custo estimado de uma cópia (não medido): profundidade D32 a 1920x1080 são ~8,3 MB lidos e ~8,3 MB escritos, uns
+0,05 ms numa GPU de ~360 GB/s, mais a espera entre passes; a 1280x720 (FSR do Haste), menos da metade. Para um jogo de
+200 fps (5 ms por quadro), do que se espera algo em torno de 1 a 4 por cento no pior caso. Amostrar a original custa zero
+de banda extra. A medição de verdade fica para a medição de custo por técnica (timestamp queries; ver interface.md).
+
 ## Passos (cada um verificável e commitado)
 - **D1, só observar:** ganchos de `vkCreateImage`, `vkCreateImageView`, `vkCreateFramebuffer`, `vkCreateRenderPass`(2),
   início/fim de passe (os dois tipos), `vkCmdExecuteCommands` e desenhos; contadores baratos e ligados só quando pedido
@@ -66,7 +82,10 @@ o que muda de jogo para jogo: motivo a mais para observar antes de copiar.
   (uma candidata, com desenhos) e, depois, o Haste. Nenhuma mudança no que o jogo desenha.
 - **F6, macros que recompilam:** `PreprocessorDefinitions` nos três níveis (global, preset, efeito) chegam ao
   `fx2spv -D` e invalidam o bundle.
-- **D2, copiar e entregar:** aprender num quadro, copiar uma vez no fim do passe no seguinte, corrigir `storeOp`, e a textura `DEPTH` no `postfx`. Teste: um efeito
+- **D2a (feito):** amostrar a original: uso `SAMPLED` (armado), layout acompanhado, `DepthInput` no `postfx`, a layer entrega a candidata escolhida, reconstrói a cadeia quando ela muda e libera a view se o jogo destruir a imagem. Teste: `smoke-depth-effect` (vkcube com `LINUX_RESHADE_DEPTH_FORCE_STORE=1`, que guarda a profundidade que o vkcube descartaria), com a validation layer sem mensagens.
+- **D2b (a fazer):** cópia antes da limpeza para jogos que limpam a profundidade no meio do quadro.
+- **D2c (a fazer):** macros de profundidade automáticas (invertida detectada) e o `DisplayDepth` do ReShade.
+- **D2, original:** copiar e entregar: aprender num quadro, copiar uma vez no fim do passe no seguinte, corrigir `storeOp`, e a textura `DEPTH` no `postfx`. Teste: um efeito
   simples que desenha a profundidade como cinza (o `DisplayDepth.fx` do próprio ReShade) no vkcube e no Haste.
 - **D3, escolha no painel:** lista das candidatas por jogo (tamanho, formato, desenhos), "automático" ou fixar uma, "de cabeça para baixo",
   logarítmico e distância do plano distante (a profundidade invertida é detectada sozinha, com opção de forçar); a escolha vai para o preset do jogo.

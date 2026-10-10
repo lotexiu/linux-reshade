@@ -77,6 +77,8 @@ struct Aggregate {
 /// Uma candidata a "profundidade da cena", como se publica para o app de controle.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Candidate {
+    /// A imagem (handle bruto do `VkImage`).
+    pub image: u64,
     pub width: u32,
     pub height: u32,
     pub format: i32,
@@ -163,6 +165,7 @@ impl FrameStats {
                 Some((
                     *image,
                     Candidate {
+                        image: *image,
                         width: info.width,
                         height: info.height,
                         format: info.format,

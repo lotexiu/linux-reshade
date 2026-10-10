@@ -65,11 +65,23 @@ pub(crate) struct NextFns {
     pub cmd_pipeline_barrier2: Option<vk::PFN_vkCmdPipelineBarrier2>,
 }
 
+/// A profundidade da cena que os efeitos podem usar agora.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Chosen {
+    pub image: u64,
+    pub format: i32,
+    /// Layout em que a imagem está depois do último envio à fila.
+    pub layout: i32,
+}
+
 pub struct Depth {
     pub enabled: AtomicBool,
     /// Armado (`LINUX_RESHADE_DEPTH=1` ao abrir o jogo): a layer acrescenta `SAMPLED` ao uso das imagens de profundidade
     /// na criação, para os efeitos poderem amostrar a original. Precisa estar armado antes de o jogo criar as imagens.
     pub armed: bool,
+    /// Teste (`LINUX_RESHADE_DEPTH_FORCE_STORE=1`): os render passes que descartam a profundidade ao fim passam a guardá-la,
+    /// para jogos como o vkcube poderem ser amostrados. Só vale para render passes criados depois de armado.
+    pub force_store: bool,
     pub(crate) formats: Mutex<HashMap<i32, bool>>,
     /// Layout atual de cada imagem de profundidade (depois do último envio à fila).
     pub(crate) image_layouts: Mutex<HashMap<u64, i32>>,
@@ -85,6 +97,8 @@ pub struct Depth {
     pub(crate) frame: Mutex<FrameStats>,
     /// A última lista publicada (para só avisar quando muda).
     pub(crate) last_published: Mutex<Vec<observe::Candidate>>,
+    /// A candidata escolhida que dá para amostrar (com `SAMPLED` e layout conhecido); `None` se não há.
+    pub(crate) chosen: Mutex<Option<Chosen>>,
     /// Quantos pipelines (maior, menor, outro) já foram registrados no log.
     pub(crate) pipelines_logged: Mutex<(usize, usize, usize)>,
 }
@@ -105,6 +119,7 @@ impl Depth {
     pub fn new(gdpa: vk::PFN_vkGetDeviceProcAddr, device: vk::Device) -> Self {
         let flag = |name: &str| std::env::var_os(name).is_some_and(|v| v != "0");
         let armed = flag("LINUX_RESHADE_DEPTH");
+        let force_store = armed && flag("LINUX_RESHADE_DEPTH_FORCE_STORE");
         let on = armed || flag("LINUX_RESHADE_DEPTH_OBSERVE");
         let next = unsafe {
             NextFns {
@@ -123,6 +138,7 @@ impl Depth {
         Self {
             enabled: AtomicBool::new(on),
             armed,
+            force_store,
             formats: Mutex::new(HashMap::new()),
             image_layouts: Mutex::new(HashMap::new()),
             next,
@@ -134,12 +150,23 @@ impl Depth {
             cmds: Mutex::new(HashMap::new()),
             frame: Mutex::new(FrameStats::default()),
             last_published: Mutex::new(Vec::new()),
+            chosen: Mutex::new(None),
             pipelines_logged: Mutex::new((usize::MAX, 0, 0)),
         }
     }
 
     pub fn is_on(&self) -> bool {
         self.enabled.load(Ordering::Relaxed)
+    }
+
+    /// Liga a observação (um efeito do plano precisa de profundidade). Barato e idempotente.
+    pub fn need(&self) {
+        self.enabled.store(true, Ordering::Relaxed);
+    }
+
+    /// A profundidade que os efeitos podem amostrar neste momento.
+    pub fn chosen(&self) -> Option<Chosen> {
+        *self.chosen.lock().unwrap()
     }
 }
 
