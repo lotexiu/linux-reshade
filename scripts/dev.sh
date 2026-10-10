@@ -421,16 +421,16 @@ cmd_panel_smoke() {
   wait_for() { for _ in $(seq 1 100); do eval "$1" && return 0; sleep 0.1; done; return 1; }
 
   wait_for '"$lrctl" layers | grep -q 500x500' || true
-  # 1. a interface, aberta por 7 s com o Sépia escolhido, e uma captura de tela
+  # 1. a interface, aberta por 7 s com o Sépia adicionado ao preset do jogo aberto (vkcube), e uma captura de tela
   "$panel" --effect Sepia --screenshot "$cache/painel.png" --hold 7000 >"$cache/panel.log" 2>&1 &
   local panel_pid=$!
-  check "a interface escolheu o efeito (visível ao lrctl)" 'wait_for '"'"'"$lrctl" current | grep -q Sepia'"'"
+  check "a interface adicionou o efeito ao preset do jogo (visível ao lrctl)" 'wait_for '"'"'"$lrctl" preset show --game vkcube | grep -q "\[x\] Sepia"'"'"
   check "o jogo ficou pronto para o efeito" 'wait_for '"'"'"$lrctl" layers | grep -q pronto'"'"
   "$lrctl" on >/dev/null; sleep 1.2; "$lrctl" off >/dev/null
   check "o efeito foi construído no jogo" 'grep -q "efeito criado" "$LOG_FILE"'
   wait "$panel_pid" || true
   check "a captura da janela foi gravada" '[ -s "$cache/painel.png" ]'
-  check "a interface deixou a escolha como estava" '"$lrctl" current | grep -q "nenhum efeito escolhido"'
+  check "a interface deixou o preset como estava" '! "$lrctl" preset show --game vkcube | grep -q "Sepia"'
 
   # 2. a interface acionada como um usuário (lista, slider, restaurar, interruptor)
   check "o teste de fumaça da interface" '"$panel" --smoke Sepia >"$cache/smoke.log" 2>&1'

@@ -21,7 +21,7 @@ cadeia. Commits de referência: `smoke-preset` (`f5eae79`), `lrctl preset` (`7ae
 | F2 crate `preset` e `game.ini` | **feita** |
 | F3 cadeia de vários efeitos (`postfx::Chain`) | **feita**; etapa não suportada é pulada com aviso |
 | F4 plano a partir do preset (`game_plan`, `games`) | **feita**; `lrctl preset ...` edita |
-| F5 interface por jogo (lista selecionável, técnicas, presets) | **próxima** (a lógica está em `control_core::presets`) |
+| F5 interface por jogo (no estilo da aba Home do ReShade) | **primeira versão feita** (`panel::Home`, `lrpanel`); ver pendências abaixo |
 | F6 macros por nível (recompilam), atalhos de preset, transição suave | a fazer |
 | F7 o resto do inventário (atalhos por técnica, capturas, OSD, mouse/teclado) | a fazer |
 | Marco 5: depth buffer | não iniciado; 40 dos 152 efeitos do dono pedem |
@@ -53,9 +53,10 @@ mensagens.
 
 ## Próximo passo
 
-1. **F5, a interface** (decisões de negócio para conversar com o dono: a lista de jogos, como se cria e se
-   escolhe um preset, onde fica o seletor de técnicas e como reordenar). A lógica pronta: `control_core::presets`
-   (`rows`, `set_enabled`/`move_technique` do `preset::Preset`, `set_uniform`, `new_for_game`, `use_preset`).
+1. **F5, refinar a interface** (o dono quer algo parecido com o ReShade e ajustar com o uso): arrastar para
+   reordenar (hoje são setas), compilar sem travar a janela (hoje `Home::prepare_effects` compila na thread da
+   interface ao abrir um preset), abas Configurações/Log/Sobre, "salvar como"/restaurar o preset, atalho por
+   técnica, e mostrar o estado de cada técnica no jogo aberto (aplicada, pulada, com problema).
 2. **F6, macros**: `PreprocessorDefinitions` em três níveis precisa recompilar o efeito (hoje `game_plan` as ignora
    e o `fx2spv` aceita `-D`?). Conferir.
 3. **Marco 5, depth buffer**: o maior ganho em efeitos (40 de 152) e o diferencial do projeto.
