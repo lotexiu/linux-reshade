@@ -36,6 +36,7 @@ pub(crate) struct Blob<const WORDS: usize> {
 
 pub(crate) type Params = Blob<{ MAX_PARAM_BYTES / 4 }>;
 pub(crate) type Selection = Blob<{ MAX_SELECTION_BYTES / 4 }>;
+pub(crate) type PlanBlob = Blob<{ crate::plan::MAX_PLAN_BYTES / 4 }>;
 
 /// Resultado de uma tentativa de leitura.
 #[derive(Debug, PartialEq, Eq)]

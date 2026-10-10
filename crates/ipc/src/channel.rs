@@ -7,7 +7,8 @@
 //! A layer consulta o canal **antes** do global: sem escolha própria ela segue a global (`Inherit`),
 //! e `NoEffect` desliga o efeito só neste jogo. O arquivo de um jogo morto é apagado por [`prune_in`].
 
-use crate::blob::{Params, PublishError, Selection};
+use crate::blob::{Params, PlanBlob, PublishError, Selection, Snapshot};
+use crate::plan::{MAX_PLAN_BYTES, Plan};
 use crate::{Mapping, ParamSource, ParamStore, SelectionRead, SelectionStore, ensure_private_dir, read_selection, state_dir};
 use std::fs::{self, File, OpenOptions};
 use std::io;
@@ -17,8 +18,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, SystemTime};
 
 const MAGIC: u32 = 0x4C52_4348; // "LRCH"
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 const SELECTION_TAG: u64 = 1;
+const PLAN_TAG: u64 = 2;
 const LAYER_PREFIX: &str = "layer-";
 const CHANNEL_PREFIX: &str = "ctl-";
 /// Um canal mais novo que isto não é apagado por órfão: o status da layer pode estar sendo recriado.
@@ -34,6 +36,7 @@ struct ChannelFile {
     version: AtomicU32,
     params: Params,
     selection: Selection,
+    plan: PlanBlob,
 }
 
 const SIZE: usize = size_of::<ChannelFile>();
@@ -57,6 +60,26 @@ fn decode(read: SelectionRead) -> ChannelSelection {
         SelectionRead::Path(p) if p == NO_EFFECT => ChannelSelection::NoEffect,
         SelectionRead::Path(p) => ChannelSelection::Path(p),
         SelectionRead::Unstable => ChannelSelection::Unstable,
+    }
+}
+
+/// O que o canal diz sobre o plano do jogo.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlanRead {
+    /// Nenhum plano publicado: vale a escolha única de efeito, como antes.
+    None,
+    /// O plano (pode ter zero etapas: o jogo roda sem efeitos).
+    Plan(Plan),
+    /// A leitura caiu no meio de uma escrita, ou o conteúdo não é um plano; tente no próximo frame.
+    Unstable,
+}
+
+fn read_plan(blob: &PlanBlob) -> PlanRead {
+    let mut buf = vec![0u8; MAX_PLAN_BYTES];
+    match blob.snapshot(PLAN_TAG, &mut buf) {
+        Snapshot::Torn => PlanRead::Unstable,
+        Snapshot::Mismatch | Snapshot::Consistent { len: 0 } => PlanRead::None,
+        Snapshot::Consistent { len } => Plan::decode(&buf[..len]).map_or(PlanRead::Unstable, PlanRead::Plan),
     }
 }
 
@@ -116,6 +139,25 @@ impl ChannelWriter {
     /// Volta a seguir a escolha global.
     pub fn inherit(&self) {
         let _ = self.map.get().selection.publish(SELECTION_TAG, &[]);
+    }
+
+    /// Publica o plano do jogo (a lista de etapas que a layer executa).
+    pub fn publish_plan(&self, plan: &Plan) -> Result<(), PublishError> {
+        let bytes = plan.encode().map_err(|_| PublishError::TooLarge { len: usize::MAX, max: MAX_PLAN_BYTES })?;
+        self.map.get().plan.publish(PLAN_TAG, &bytes)
+    }
+
+    /// Tira o plano: a layer volta à escolha única de efeito.
+    pub fn clear_plan(&self) {
+        let _ = self.map.get().plan.publish(PLAN_TAG, &[]);
+    }
+
+    pub fn plan(&self) -> PlanRead {
+        read_plan(&self.map.get().plan)
+    }
+
+    pub fn plan_generation(&self) -> u32 {
+        self.map.get().plan.generation()
     }
 }
 
@@ -183,6 +225,15 @@ impl ChannelReader {
 
     pub fn read_selection(&self) -> ChannelSelection {
         decode(read_selection(&self.map.get().selection))
+    }
+
+    /// Muda a cada publicação do plano.
+    pub fn plan_generation(&self) -> u32 {
+        self.map.get().plan.generation()
+    }
+
+    pub fn read_plan(&self) -> PlanRead {
+        read_plan(&self.map.get().plan)
     }
 }
 
@@ -256,6 +307,42 @@ mod tests {
         assert_eq!(reader.read_selection(), ChannelSelection::NoEffect);
         writer.inherit();
         assert_eq!(reader.read_selection(), ChannelSelection::Inherit);
+    }
+
+    fn plan() -> Plan {
+        Plan { steps: vec![crate::PlanStep { template: "/c/A-{W}x{H}".into(), technique: "A".into(), params_id: 5, uniforms: vec![1, 2, 3] }] }
+    }
+
+    #[test]
+    fn a_plan_is_published_read_and_cleared() {
+        let d = dir("plan");
+        let writer = ChannelWriter::create_in(&d, "layer-1-1").unwrap();
+        let reader = ChannelReader::open_in(&d, "layer-1-1").unwrap().unwrap();
+        assert_eq!(reader.read_plan(), PlanRead::None, "nunca publicado");
+
+        let g0 = reader.plan_generation();
+        writer.publish_plan(&plan()).unwrap();
+        assert_eq!(reader.read_plan(), PlanRead::Plan(plan()));
+        assert_eq!(writer.plan(), PlanRead::Plan(plan()));
+        assert_ne!(reader.plan_generation(), g0);
+
+        // Um plano vazio é diferente de nenhum plano: o jogo roda sem efeitos.
+        writer.publish_plan(&Plan::default()).unwrap();
+        assert_eq!(reader.read_plan(), PlanRead::Plan(Plan::default()));
+        writer.clear_plan();
+        assert_eq!(reader.read_plan(), PlanRead::None);
+        // E o plano não mexe na escolha única.
+        assert_eq!(reader.read_selection(), ChannelSelection::Inherit);
+    }
+
+    #[test]
+    fn a_plan_too_big_is_refused_and_keeps_the_old_one() {
+        let d = dir("plan-big");
+        let writer = ChannelWriter::create_in(&d, "layer-1-1").unwrap();
+        writer.publish_plan(&plan()).unwrap();
+        let big = Plan { steps: vec![crate::PlanStep { template: String::new(), technique: String::new(), params_id: 0, uniforms: vec![0; MAX_PLAN_BYTES] }] };
+        assert!(writer.publish_plan(&big).is_err());
+        assert_eq!(writer.plan(), PlanRead::Plan(plan()));
     }
 
     #[test]

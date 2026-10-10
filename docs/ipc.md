@@ -75,6 +75,23 @@ seqlock do canal global, a escolha de efeito e os parâmetros, e o próprio `mag
 A flag de efeitos ligados continua **global** (o atalho liga e desliga tudo). A escolha do jogo é só do
 efeito e dos parâmetros; a F3 troca "um efeito" por uma lista ordenada de técnicas dentro do mesmo canal.
 
+## Plano de um jogo (canal `ctl-<id>`, versão 2)
+
+Um terceiro blob do canal, de até 128 KiB, guarda o **plano**: a lista ordenada de etapas que a layer executa
+(a F3 trocou "um efeito" por isso). Quem monta é o controlador, a partir do preset do jogo; a layer só lê.
+
+```
+u32 etapas; por etapa: u16+texto modelo de caminho do bundle | u16+texto técnica | u64 params_id | u32+bytes uniforms
+```
+
+- **Vale antes da escolha única.** Com plano publicado (mesmo vazio = jogo sem efeitos) a layer o segue; sem
+  plano (`clear_plan`), cai na escolha e nos parâmetros de antes. Nada que existia deixa de funcionar.
+- Só as técnicas **ligadas** entram, na ordem de execução. Cada etapa traz a imagem pronta do buffer de
+  uniforms (padrões do manifesto com os valores do preset por cima) e o `params_id` do efeito: a layer só
+  aplica o bloco ao bundle que tem esse `params_id`, como nos parâmetros de sempre.
+- Mesmo seqlock, mesma geração: a layer olha `plan_generation` a cada present e relê só quando mudou.
+  Um conteúdo que não decodifica por inteiro é ignorado (vale o plano anterior que ela já tinha).
+
 ## Status das layers
 
 Cada processo com a layer cria o próprio arquivo `layer-<pid>-<instante>` no mesmo diretório e o atualiza
