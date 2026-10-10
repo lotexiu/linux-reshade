@@ -365,6 +365,11 @@ impl Preset {
     }
 
     /// Os efeitos (`[Arquivo.fx]`) que o preset tem seção.
+    /// Apaga a seção de um efeito (`[Arquivo.fx]`): os valores e as macros dele. `true` se havia.
+    pub fn remove_effect(&mut self, file: &str) -> bool {
+        self.ini.remove_section(file)
+    }
+
     pub fn effect_files(&self) -> Vec<&str> {
         self.ini.sections()
     }

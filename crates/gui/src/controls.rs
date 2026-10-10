@@ -23,9 +23,27 @@ struct Row {
     reset: gtk::Button,
 }
 
+/// A roda do mouse sobre um controle rola a tela, em vez de mexer no controle (um slider que pula quando se tenta
+/// rolar a lista é irritante). O evento é capturado antes do controle e repassado à lista que rola.
+pub fn forward_scroll(widget: &impl IsA<gtk::Widget>, scroller: &gtk::ScrolledWindow) {
+    let controller = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
+    controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let scroller = scroller.clone();
+    controller.connect_scroll(move |_, _dx, dy| {
+        let adj = scroller.vadjustment();
+        let step = adj.page_size().powf(2.0 / 3.0).max(24.0);
+        let top = (adj.upper() - adj.page_size()).max(adj.lower());
+        adj.set_value((adj.value() + dy * step).clamp(adj.lower(), top));
+        gtk::glib::Propagation::Stop
+    });
+    widget.add_controller(controller);
+}
+
 /// A coluna de controles do efeito escolhido.
 pub struct ControlsView {
     pub root: gtk::Box,
+    /// A lista que rola; a roda do mouse sobre um controle é repassada a ela.
+    scroller: gtk::ScrolledWindow,
     rows: Vec<Row>,
     /// Descreve os controles que a coluna mostra (nomes e tipos): se mudar, a coluna é refeita.
     signature: Vec<(String, Kind)>,
@@ -37,9 +55,9 @@ pub struct ControlsView {
 const EPSILON: f64 = 1e-5;
 
 impl ControlsView {
-    pub fn new(on_change: OnChange) -> Self {
+    pub fn new(on_change: OnChange, scroller: gtk::ScrolledWindow) -> Self {
         let root = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        Self { root, rows: Vec::new(), signature: Vec::new(), on_change, updating: Rc::new(Cell::new(false)) }
+        Self { root, scroller, rows: Vec::new(), signature: Vec::new(), on_change, updating: Rc::new(Cell::new(false)) }
     }
 
     /// Mostra `controls`: refaz a coluna se os controles mudaram, senão só atualiza os valores.
@@ -141,6 +159,7 @@ impl ControlsView {
                     })
                     .collect();
                 for scale in &scales {
+                    forward_scroll(scale, &self.scroller);
                     let all = scales.clone();
                     scale.connect_value_changed(self.notifier(control, Box::new(move || all.iter().map(|s| s.value()).collect())));
                 }
@@ -151,6 +170,7 @@ impl ControlsView {
                 let refs: Vec<&str> = items.iter().map(String::as_str).collect();
                 let dd = gtk::DropDown::from_strings(&refs);
                 dd.set_hexpand(true);
+                forward_scroll(&dd, &self.scroller);
                 let this = dd.clone();
                 dd.connect_selected_notify(self.notifier(control, Box::new(move || vec![f64::from(this.selected())])));
                 let widget = dd.clone().upcast();
@@ -183,6 +203,7 @@ impl ControlsView {
                     })
                     .collect();
                 for spin in &spins {
+                    forward_scroll(spin, &self.scroller);
                     let all = spins.clone();
                     spin.connect_value_changed(self.notifier(control, Box::new(move || all.iter().map(|s| s.value()).collect())));
                 }

@@ -34,6 +34,8 @@ pub struct Ui {
     new_create: gtk::Button,
     search: gtk::SearchEntry,
     list: gtk::ListBox,
+    scroller: gtk::ScrolledWindow,
+    delete_preset: gtk::Button,
     empty: gtk::Label,
     rows: RefCell<Vec<TechRow>>,
     /// Descreve o que a lista mostra (ordem, rótulos, estados): se mudar, a lista é refeita.
@@ -100,6 +102,8 @@ impl Ui {
         let new_preset = gtk::MenuButton::new();
         new_preset.set_label("Novo");
         new_preset.set_tooltip_text(Some("Novo preset para este jogo (cópia do atual)"));
+        let delete_preset = gtk::Button::from_icon_name("user-trash-symbolic");
+        delete_preset.set_tooltip_text(Some("Apagar este preset"));
         let preset_note = gtk::Label::new(None);
         preset_note.set_halign(gtk::Align::Start);
         preset_note.set_wrap(true);
@@ -185,7 +189,7 @@ impl Ui {
         let page = gtk::Box::new(gtk::Orientation::Vertical, 10);
         margins(&page, 14);
         page.append(&line("Jogo", &[game.upcast_ref()]));
-        page.append(&line("Preset", &[preset.upcast_ref(), new_preset.upcast_ref()]));
+        page.append(&line("Preset", &[preset.upcast_ref(), new_preset.upcast_ref(), delete_preset.upcast_ref()]));
         page.append(&preset_note);
         let tools = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         tools.append(&search);
@@ -226,6 +230,8 @@ impl Ui {
             new_create: create.clone(),
             search,
             list,
+            scroller: scroller.clone(),
+            delete_preset: delete_preset.clone(),
             empty,
             rows: RefCell::new(Vec::new()),
             signature: RefCell::new(String::new()),
@@ -322,6 +328,15 @@ impl Ui {
             }
         });
 
+        self.delete_preset.connect_clicked({
+            let weak = weak.clone();
+            move |_| {
+                if let Some(ui) = weak.upgrade() {
+                    ui.ask_delete_preset();
+                }
+            }
+        });
+
         self.search.connect_search_changed({
             let weak = weak.clone();
             move |_| {
@@ -340,6 +355,51 @@ impl Ui {
             }
             None => glib::ControlFlow::Break,
         });
+    }
+
+    /// Apaga o preset em uso, depois de perguntar (a menos que a pessoa tenha pedido para não perguntar mais).
+    fn ask_delete_preset(self: &Rc<Self>) {
+        let Some(name) = self.home.borrow().snapshot().active_preset.clone() else { return };
+        if !crate::settings::confirm_delete_preset() {
+            self.act(|h| h.delete_preset(&name));
+            return;
+        }
+        let dialog = gtk::Window::builder().transient_for(&self.window).modal(true).title("Apagar preset").default_width(380).resizable(false).build();
+        let body = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        margins(&body, 16);
+        let text = gtk::Label::new(Some(&format!("Apagar o preset \"{name}\"?\nO arquivo é removido e as configurações dele se perdem.")));
+        text.set_wrap(true);
+        text.set_halign(gtk::Align::Start);
+        text.set_xalign(0.0);
+        let never = gtk::CheckButton::with_label("Não perguntar novamente (dá para voltar a perguntar nas configurações)");
+        let cancel = gtk::Button::with_label("Cancelar");
+        let delete = gtk::Button::with_label("Apagar");
+        delete.add_css_class("destructive-action");
+        let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        buttons.set_halign(gtk::Align::End);
+        buttons.append(&cancel);
+        buttons.append(&delete);
+        body.append(&text);
+        body.append(&never);
+        body.append(&buttons);
+        dialog.set_child(Some(&body));
+        cancel.connect_clicked({
+            let dialog = dialog.clone();
+            move |_| dialog.close()
+        });
+        delete.connect_clicked({
+            let (weak, dialog, never) = (Rc::downgrade(self), dialog.clone(), never.clone());
+            move |_| {
+                if never.is_active() {
+                    crate::settings::set_confirm_delete_preset(false);
+                }
+                dialog.close();
+                if let Some(ui) = weak.upgrade() {
+                    ui.act(|h| h.delete_preset(&name));
+                }
+            }
+        });
+        dialog.present();
     }
 
     /// Uma ação do modelo seguida de refazer a tela (as linhas da lista usam isto).
@@ -386,6 +446,7 @@ impl Ui {
             let has_game = s.game.is_some();
             self.preset.set_sensitive(has_game);
             self.new_preset.set_sensitive(has_game);
+            self.delete_preset.set_sensitive(s.active_preset.is_some());
             self.new_preset.set_tooltip_text(Some(if has_game { "Novo preset para este jogo (cópia do atual)" } else { "Escolha um jogo para criar um preset dele" }));
             if *self.preset_names.borrow() != s.presets {
                 let mut items = vec![INHERIT_PRESET.to_string()];
@@ -556,14 +617,17 @@ impl Ui {
 
         // Os parâmetros do efeito, num painel que abre e fecha (só na primeira técnica de cada arquivo).
         let controls = (!t.controls.is_empty()).then(|| {
-            let view = ControlsView::new({
-                let (weak, file) = (weak.clone(), t.file.clone());
-                Rc::new(move |name: &str, values: &[f64]| {
-                    if let Some(ui) = weak.upgrade() {
-                        ui.act(|h| h.set_control(&file, name, values));
-                    }
-                })
-            });
+            let view = ControlsView::new(
+                {
+                    let (weak, file) = (weak.clone(), t.file.clone());
+                    Rc::new(move |name: &str, values: &[f64]| {
+                        if let Some(ui) = weak.upgrade() {
+                            ui.act(|h| h.set_control(&file, name, values));
+                        }
+                    })
+                },
+                self.scroller.clone(),
+            );
             RefCell::new(view)
         });
         let outer = gtk::Box::new(gtk::Orientation::Vertical, 4);
@@ -722,6 +786,9 @@ impl Ui {
             let active = self.home.borrow().snapshot().active_preset.clone();
             check(active.as_deref() == Some("smoke-novo"), &format!("o botão Criar não criou o preset (ativo: {active:?}, aviso: {:?})", self.home.borrow().snapshot().notice));
             check(self.new_name.text().is_empty(), "o campo do nome não foi limpo");
+            check(self.delete_preset.is_sensitive(), "a lixeira do preset não ficou ativa");
+            self.act(|h| h.delete_preset("smoke-novo"));
+            check(!self.home.borrow().snapshot().presets.iter().any(|p| p == "smoke-novo"), "o preset não foi apagado");
         }
 
         // 4. o interruptor de efeitos ligados

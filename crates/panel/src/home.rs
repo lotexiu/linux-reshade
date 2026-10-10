@@ -249,7 +249,7 @@ impl Home {
         for row in presets::rows(&preset) {
             let Some(file) = row.id.file.clone().or_else(|| Some(format!("{}.fx", row.id.name))) else { continue };
             let name = effect_name(&file).to_string();
-            self.ensure_schema(&name, false);
+            let _ = self.ensure_schema(&name, false);
             let bundle = self.schemas.get(&name);
             let (label, mut problem) = match bundle {
                 Some(b) => {
@@ -276,19 +276,22 @@ impl Home {
     }
 
     /// Guarda o bundle de referência do efeito. Com `compile`, compila se ainda não há nenhum no cache.
-    fn ensure_schema(&mut self, name: &str, compile: bool) {
-        if self.schemas.contains_key(name) || !valid_name(name) {
-            return;
+    fn ensure_schema(&mut self, name: &str, compile: bool) -> Result<(), String> {
+        if self.schemas.contains_key(name) {
+            return Ok(());
         }
-        let Ok(compiler) = &self.compiler else { return };
+        if !valid_name(name) {
+            return Err(format!("{name:?} não é um nome de efeito válido"));
+        }
+        let compiler = self.compiler.as_ref().map_err(|why| format!("sem compilador de efeitos: {why}"))?;
         let dir = match compiler.any_bundle(name) {
-            Some(dir) => Some(dir),
-            None if compile => compiler.ensure(name, DEFAULT_SIZE.0, DEFAULT_SIZE.1).ok().map(|e| e.dir_owned()),
-            None => None,
+            Some(dir) => dir,
+            None if compile => compiler.ensure(name, DEFAULT_SIZE.0, DEFAULT_SIZE.1).map_err(|e| e.to_string())?.dir_owned(),
+            None => return Err("efeito ainda não compilado".into()),
         };
-        if let Some(bundle) = dir.and_then(|d| Bundle::load(&d).ok()) {
-            self.schemas.insert(name.to_string(), bundle);
-        }
+        let bundle = Bundle::load(&dir).map_err(|e| e.to_string())?;
+        self.schemas.insert(name.to_string(), bundle);
+        Ok(())
     }
 
     fn done(&mut self, notice: Option<String>) {
@@ -316,7 +319,7 @@ impl Home {
         let Some(loaded) = &self.loaded else { return };
         let files: Vec<String> = presets::rows(&loaded.preset).into_iter().filter_map(|r| r.id.file).collect();
         for file in files {
-            self.ensure_schema(effect_name(&file), true);
+            let _ = self.ensure_schema(effect_name(&file), true);
         }
         let notice = self.snapshot.notice.clone();
         self.done(notice);
@@ -410,25 +413,38 @@ impl Home {
         });
     }
 
+    /// Tira a técnica do preset. Se era a última do arquivo, as configurações do efeito (valores e macros) vão junto:
+    /// desligar já basta para manter o efeito sem aparecer, então remover é para esquecê-lo.
     pub fn remove_technique(&mut self, id: &TechId) {
         let id = id.clone();
         self.edit(move |p, _| {
             p.remove_technique(&id);
+            if let Some(file) = &id.file
+                && !presets::rows(p).iter().any(|r| r.id.file.as_deref() == Some(file))
+            {
+                p.remove_effect(file);
+            }
             Ok(None)
         });
     }
 
+    /// Apaga um preset do jogo escolhido. Se era o que o jogo usava, ele volta a seguir o global.
+    pub fn delete_preset(&mut self, name: &str) {
+        let result = match (&self.game, self.presets_dir.clone()) {
+            (Some(game), Some(dir)) => presets::delete_for_game(&dir, game, name),
+            _ => Err("escolha um jogo primeiro".to_string()),
+        };
+        self.loaded = None;
+        self.done(result.err());
+    }
+
     /// Adiciona as técnicas de um efeito ao fim do preset, ligadas. Compila o efeito (para saber as técnicas).
     pub fn add_effect(&mut self, name: &str) {
-        self.ensure_schema(name, true);
-        let Some(bundle) = self.schemas.get(name) else {
-            let why = match &self.compiler {
-                Ok(c) => c.ensure(name, DEFAULT_SIZE.0, DEFAULT_SIZE.1).err().map(|e| e.to_string()).unwrap_or_else(|| "o efeito não carregou".into()),
-                Err(why) => why.clone(),
-            };
+        if let Err(why) = self.ensure_schema(name, true) {
             self.done(Some(format!("{name}: {why}")));
             return;
-        };
+        }
+        let Some(bundle) = self.schemas.get(name) else { return };
         let file = format!("{name}.fx");
         let ids: Vec<TechId> = bundle.manifest.techniques.iter().map(|t| TechId { name: t.name.clone(), file: Some(file.clone()) }).collect();
         if ids.is_empty() {
@@ -593,6 +609,44 @@ mod tests {
         h.remove_technique(&TechId::new("Outra", "Outra.fx"));
         assert_eq!(h.snapshot().techniques.len(), 1);
         assert_eq!(h.snapshot().techniques[0].id.name, "Sepia");
+    }
+
+    #[test]
+    fn removing_the_last_technique_of_an_effect_deletes_its_settings() {
+        let (mut h, presets) = home(env("forget"), open_game("vkcube"));
+        h.add_effect("Sepia");
+        h.set_control("Sepia.fx", "Strength", &[0.25]);
+        let file = presets.join("vkcube/Padrão.ini");
+        assert!(fs::read_to_string(&file).unwrap().contains("[Sepia.fx]"));
+        // Desligar não apaga nada: as configurações ficam.
+        h.set_technique_enabled(&sepia(), false);
+        assert!(fs::read_to_string(&file).unwrap().contains("Strength=0.25"));
+        // Remover esquece o efeito e as configurações; adicionar de novo começa dos padrões.
+        h.remove_technique(&sepia());
+        assert!(!fs::read_to_string(&file).unwrap().contains("Sepia"), "{}", fs::read_to_string(&file).unwrap());
+        h.add_effect("Sepia");
+        assert_eq!(h.snapshot().techniques[0].controls[0].value, vec![1.0]);
+    }
+
+    #[test]
+    fn deleting_a_preset_from_the_screen() {
+        let (mut h, presets) = home(env("delete"), open_game("vkcube"));
+        h.add_effect("Sepia");
+        h.new_preset("Noturno");
+        h.delete_preset("Noturno");
+        assert!(!presets.join("vkcube/Noturno.ini").exists());
+        assert_eq!(h.snapshot().presets, ["Padrão"]);
+        assert_eq!(h.snapshot().active_preset, None, "o jogo ficou sem o preset ativo: volta ao global (que não existe)");
+        h.delete_preset("Nada");
+        assert!(h.snapshot().notice.is_some());
+    }
+
+    #[test]
+    fn adding_an_effect_that_does_not_exist_says_why() {
+        let (mut h, _) = home(env("whynot"), open_game("vkcube"));
+        h.add_effect("Inexistente");
+        let notice = h.snapshot().notice.clone().unwrap();
+        assert!(notice.starts_with("Inexistente:") && notice.contains("não achei"), "{notice}");
     }
 
     #[test]

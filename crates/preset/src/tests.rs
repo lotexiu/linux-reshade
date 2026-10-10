@@ -315,3 +315,12 @@ fn removing_a_technique_drops_it_from_both_lists() {
     assert_eq!(p.techniques(), ids(&["Sepia@Sepia.fx"]));
     assert!(!p.remove_technique(&id("Nada@Nada.fx")));
 }
+
+#[test]
+fn removing_an_effect_deletes_its_section_only() {
+    let mut p = Preset::parse(PRESET);
+    assert!(p.remove_effect("Sepia.fx"));
+    assert_eq!(p.value("Sepia.fx", "Intensity"), None);
+    assert_eq!(p.value("Bloom.fx", "Force"), Some("0.3"), "o resto fica");
+    assert!(!p.remove_effect("Sepia.fx"));
+}

@@ -399,9 +399,15 @@ cmd_daemon() {
   exec "$ROOT/target/release/lrctl" daemon
 }
 
-# Abre a interface gráfica (compila se preciso).
+# Abre a interface gráfica (compila se preciso). Se o daemon não está rodando, sobe um em segundo plano: sem ele o
+# preset não é aplicado nos jogos (o painel só edita os arquivos).
 cmd_panel() {
   cmd_build -p linux-reshade-gui -p linux-reshade-control >/dev/null
+  if ! pgrep -f "release/lrctl daemon" >/dev/null; then
+    mkdir -p "$(dirname "$LOG_FILE")"
+    say "subindo o daemon em segundo plano (log: $(dirname "$LOG_FILE")/daemon.log)"
+    nohup "$ROOT/target/release/lrctl" daemon >"$(dirname "$LOG_FILE")/daemon.log" 2>&1 &
+  fi
   exec "$ROOT/target/release/lrpanel" "$@"
 }
 

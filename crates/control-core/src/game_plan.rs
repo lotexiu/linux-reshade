@@ -33,6 +33,8 @@ pub fn enabled_order(preset: &Preset) -> Vec<TechId> {
 
 /// O valor de um uniform como o ReShade o grava: números separados por vírgula (`true`/`false` valem para bool).
 fn parse_components(text: &str) -> Option<Vec<f64>> {
+    // Versões anteriores gravaram vetores como `(a, b, c)`: ainda se leem.
+    let text = text.trim().trim_start_matches('(').trim_end_matches(')');
     text.split(',')
         .map(|part| match part.trim() {
             "true" => Some(1.0),
@@ -184,5 +186,6 @@ mod tests {
         assert_eq!(parse_components("1.0, 0.5,0"), Some(vec![1.0, 0.5, 0.0]));
         assert_eq!(parse_components("true"), Some(vec![1.0]));
         assert_eq!(parse_components("x"), None);
+        assert_eq!(parse_components("(0.5, 0.25, 1)"), Some(vec![0.5, 0.25, 1.0]), "o formato antigo, com parênteses");
     }
 }

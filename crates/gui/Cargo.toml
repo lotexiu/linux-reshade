@@ -14,5 +14,6 @@ panel = { path = "../panel" }
 control-core = { path = "../control-core" }
 config = { path = "../config" }
 preset = { path = "../preset" }
+ini = { path = "../ini" }
 ipc = { path = "../ipc" }
 gtk4 = { version = "0.11", features = ["v4_10"] }

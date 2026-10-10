@@ -105,9 +105,34 @@ pub fn use_preset(presets_dir: &Path, game_id: &str, name: Option<&str>) -> Resu
     game::set_game_preset(presets_dir, game_id, file.as_deref()).map_err(|e| e.to_string())
 }
 
+/// Apaga `<Presets>/<jogo>/<nome>.ini`. Se o jogo o usava, ele volta a seguir o preset global.
+pub fn delete_for_game(presets_dir: &Path, game_id: &str, name: &str) -> Result<(), String> {
+    let file = if name.to_ascii_lowercase().ends_with(".ini") { name.to_string() } else { format!("{name}.ini") };
+    if !game::valid_preset_file(&file) {
+        return Err(format!("nome de preset inválido: {name:?}"));
+    }
+    let dir = game::game_dir(presets_dir, game_id).ok_or_else(|| format!("id de jogo inválido: {game_id:?}"))?;
+    let path = dir.join(&file);
+    if !path.is_file() {
+        return Err(format!("{} não existe", path.display()));
+    }
+    // Se era o escolhido em game.ini, o jogo deixa de apontar para um arquivo que não existe mais.
+    let was_active = game::find(presets_dir, game_id).is_some_and(|f| f.path == path);
+    std::fs::remove_file(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if was_active {
+        game::set_game_preset(presets_dir, game_id, None).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// De onde veio o preset de um jogo, para mostrar ao usuário.
 pub fn describe_source(presets_dir: &Path, game_id: &str) -> Option<(PathBuf, Source)> {
     game::find(presets_dir, game_id).map(|f| (f.path, f.source))
+}
+
+/// O valor como o preset do ReShade o guarda: números separados por vírgula, sem parênteses (`0.1,0.2,0.3`).
+pub fn preset_value(values: &[f64]) -> String {
+    values.iter().map(|v| params::fmt_number(*v)).collect::<Vec<_>>().join(",")
 }
 
 /// Grava o valor de um uniform no preset, conferindo nome, tipo e número de componentes contra o bundle do
@@ -129,7 +154,7 @@ pub fn set_uniform(preset: &mut Preset, compiler: &Compiler, file: &str, uniform
     })?;
     uniforms::encode(u, values).map_err(|e| e.to_string())?;
     warnings.extend(params::range_warnings(u, values));
-    preset.set_value(&format!("{name}.fx"), uniform, &params::fmt_values(values));
+    preset.set_value(&format!("{name}.fx"), uniform, &preset_value(values));
     Ok(warnings)
 }
 
@@ -189,6 +214,21 @@ mod tests {
     }
 
     #[test]
+    fn deleting_the_active_preset_sends_the_game_back_to_the_global_one() {
+        let d = dir("delete");
+        fs::write(d.join("preset.ini"), "").unwrap();
+        new_for_game(&d, "Jogo", "A").unwrap();
+        new_for_game(&d, "Jogo", "B").unwrap(); // B é o ativo
+        delete_for_game(&d, "Jogo", "A").unwrap();
+        assert!(!d.join("Jogo/A.ini").exists());
+        assert_eq!(game::find(&d, "Jogo").unwrap().path, d.join("Jogo/B.ini"), "apagar outro não troca o ativo");
+        delete_for_game(&d, "Jogo", "B").unwrap();
+        assert_eq!(game::find(&d, "Jogo").unwrap().source, Source::Global, "sem o ativo, volta ao global");
+        assert!(delete_for_game(&d, "Jogo", "B").is_err(), "já não existe");
+        assert!(delete_for_game(&d, "Jogo", "../x").is_err());
+    }
+
+    #[test]
     fn using_a_preset_needs_it_to_exist_and_none_goes_back_to_the_global() {
         let d = dir("use");
         fs::write(d.join("preset.ini"), "").unwrap();
@@ -207,6 +247,7 @@ mod tests {
         let mut p = Preset::parse("Techniques=Sepia@Sepia.fx\n"); // o Sépia ainda não está compilado: o set compila
         assert!(set_uniform(&mut p, &f.compiler, "Sepia.fx", "Strength", &[0.25]).unwrap().is_empty());
         assert_eq!(p.value("Sepia.fx", "Strength"), Some("0.25"));
+        assert_eq!(preset_value(&[f64::from(0.1f32), 2.0, 0.5]), "0.1,2,0.5", "vetores sem parênteses nem espaços");
         let warnings = set_uniform(&mut p, &f.compiler, "Sepia", "Strength", &[3.0]).unwrap();
         assert_eq!(warnings.len(), 1, "fora da faixa sugerida: avisa e grava");
         assert!(set_uniform(&mut p, &f.compiler, "Sepia.fx", "Nada", &[1.0]).unwrap_err().contains("Strength"));

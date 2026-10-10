@@ -6,6 +6,7 @@
 
 mod controls;
 mod games;
+mod settings;
 mod window;
 
 use control_core::compiler::Compiler;
