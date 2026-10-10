@@ -135,6 +135,7 @@ async fn test_run(app: gtk::Application, ui: Rc<window::Ui>, options: Rc<Options
         println!("lrpanel: janela aberta por {} ms", options.hold_ms);
         glib::timeout_future(Duration::from_millis(options.hold_ms)).await;
     }
+    println!("lrpanel: {}", ui.describe_games());
     if let Some(name) = &options.effect {
         ui.remove_effect(name); // deixa o preset como estava
     }

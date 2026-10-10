@@ -29,6 +29,7 @@ pub struct Ui {
     preset: gtk::DropDown,
     preset_names: RefCell<Vec<String>>,
     preset_note: gtk::Label,
+    new_preset: gtk::MenuButton,
     search: gtk::SearchEntry,
     list: gtk::ListBox,
     empty: gtk::Label,
@@ -121,6 +122,7 @@ impl Ui {
         notice.set_halign(gtk::Align::Start);
         notice.set_wrap(true);
         notice.add_css_class("warning");
+        notice.add_css_class("heading");
 
         // "Adicionar efeito": busca e lista de todos os efeitos que as pastas de shaders têm.
         let add_search = gtk::SearchEntry::new();
@@ -195,8 +197,8 @@ impl Ui {
         scroller.set_child(Some(&list_box));
         scroller.set_vexpand(true);
         scroller.set_hscrollbar_policy(gtk::PolicyType::Never);
-        page.append(&scroller);
         page.append(&notice);
+        page.append(&scroller);
         page.append(&games_expander);
 
         let header = gtk::HeaderBar::new();
@@ -217,6 +219,7 @@ impl Ui {
             preset,
             preset_names: RefCell::new(Vec::new()),
             preset_note,
+            new_preset: new_preset.clone(),
             search,
             list,
             empty,
@@ -303,6 +306,18 @@ impl Ui {
             move |_| create.emit_clicked()
         });
 
+        // Escolher um efeito na lista "Adicionar efeito".
+        self.add_list.connect_row_activated({
+            let weak = weak.clone();
+            move |_, row| {
+                if let Some(ui) = weak.upgrade() {
+                    let name = row.widget_name().to_string();
+                    ui.add_popover.popdown();
+                    ui.act(|h| h.add_effect(&name));
+                }
+            }
+        });
+
         self.search.connect_search_changed({
             let weak = weak.clone();
             move |_| {
@@ -366,6 +381,8 @@ impl Ui {
             // Presets do jogo.
             let has_game = s.game.is_some();
             self.preset.set_sensitive(has_game);
+            self.new_preset.set_sensitive(has_game);
+            self.new_preset.set_tooltip_text(Some(if has_game { "Novo preset para este jogo (cópia do atual)" } else { "Escolha um jogo para criar um preset dele" }));
             if *self.preset_names.borrow() != s.presets {
                 let mut items = vec![INHERIT_PRESET.to_string()];
                 items.extend(s.presets.iter().cloned());
@@ -414,29 +431,6 @@ impl Ui {
             self.notice.set_text(s.notice.as_deref().unwrap_or(""));
         }
         self.updating.set(false);
-        self.connect_add_rows();
-    }
-
-    /// Cada linha da lista "Adicionar efeito" adiciona o efeito ao clicar. Ligado uma vez por linha.
-    fn connect_add_rows(self: &Rc<Self>) {
-        let mut child = self.add_list.first_child();
-        while let Some(widget) = child {
-            child = widget.next_sibling();
-            if widget.has_css_class("lr-wired") {
-                continue;
-            }
-            widget.add_css_class("lr-wired");
-            let name = widget.widget_name().to_string();
-            let click = gtk::GestureClick::new();
-            let weak = Rc::downgrade(self);
-            click.connect_released(move |_, _, _, _| {
-                if let Some(ui) = weak.upgrade() {
-                    ui.add_popover.popdown();
-                    ui.act(|h| h.add_effect(&name));
-                }
-            });
-            widget.add_controller(click);
-        }
     }
 
     fn signature_of(techniques: &[TechniqueView]) -> String {
@@ -630,15 +624,30 @@ impl Ui {
         TechRow { id: t.id.clone(), file: t.file.clone(), label: t.label.clone(), check, controls, row }
     }
 
+    /// O que a tela sabe dos jogos, em texto (para os testes automáticos conferirem de fora).
+    pub fn describe_games(&self) -> String {
+        let home = self.home.borrow();
+        let s = home.snapshot();
+        let games: Vec<String> = s.games.iter().map(|g| format!("{}{}", g.id, if g.open { "*" } else { "" })).collect();
+        format!("jogos: [{}] camadas: {}", games.join(", "), s.layers.len())
+    }
+
     // ---- Apoio aos testes automáticos: aciona os widgets de verdade e confere o que o modelo viu. ----
 
     /// Adiciona um efeito ao preset do jogo escolhido, como pelo botão. `false` se o efeito não existe.
     pub fn choose_effect(self: &Rc<Self>, name: &str) -> bool {
-        if !self.add_effects.borrow().iter().any(|e| e == name) {
-            return false;
+        // Ativa a linha da lista, o mesmo caminho do clique do usuário.
+        let mut child = self.add_list.first_child();
+        while let Some(widget) = child {
+            child = widget.next_sibling();
+            if widget.widget_name() == name
+                && let Ok(row) = widget.downcast::<gtk::ListBoxRow>()
+            {
+                row.emit_by_name::<()>("activate", &[]);
+                return true;
+            }
         }
-        self.act(|h| h.add_effect(name));
-        true
+        false
     }
 
     /// Tira do preset as técnicas do efeito (desfaz `choose_effect`).
