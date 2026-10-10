@@ -88,6 +88,8 @@ pub struct SwapchainFx {
     fx: Fx,
     /// Época da escolha de efeito (ver `bundle::epoch`) que este swapchain já resolveu.
     seen_epoch: u64,
+    /// Profundidade escolhida quando a cadeia falhou: se mudar, vale tentar de novo.
+    failed_depth: Option<(u64, i32)>,
     /// A cadeia que a escolha dá para a resolução deste swapchain (vazia = nenhuma).
     steps: Vec<ResolvedStep>,
     /// O que foi publicado para o app de controle.
@@ -103,7 +105,7 @@ unsafe impl Send for SwapchainFx {}
 impl SwapchainFx {
     pub fn new(handle: u64, images: Vec<vk::Image>, format: vk::Format, extent: vk::Extent2D, unusable: Option<String>) -> Self {
         let state = unusable.clone().map_or(EffectState::Idle, EffectState::Unavailable);
-        let fx = Self { handle, images, format, extent, unusable, fx: Fx::Unbuilt, seen_epoch: u64::MAX, steps: Vec::new(), state, last_present: None };
+        let fx = Self { handle, images, format, extent, unusable, fx: Fx::Unbuilt, seen_epoch: u64::MAX, failed_depth: None, steps: Vec::new(), state, last_present: None };
         crate::status::update(handle, fx.status());
         fx
     }
@@ -327,6 +329,10 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
             }
         }
 
+        if needs_depth && matches!(fx.fx, Fx::Failed(_)) && fx.failed_depth != data.depth.chosen().map(|d| (d.image, d.layout)) {
+            fx.fx = Fx::Unbuilt;
+        }
+
         if matches!(fx.fx, Fx::Unbuilt) {
             if fx.steps.is_empty() {
                 return None; // sem bundle para esta resolução: nada a desenhar
@@ -357,6 +363,7 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
                 }
                 Err(why) => {
                     log!("efeito indisponível no swapchain {:#x}: {why}", swapchain.as_raw());
+                    fx.failed_depth = data.depth.chosen().map(|d| (d.image, d.layout));
                     fx.set_state(EffectState::Failed(why.clone()));
                     Fx::Failed(why)
                 }
