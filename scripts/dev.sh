@@ -438,6 +438,9 @@ cmd_panel_smoke() {
   check "a captura da janela foi gravada" '[ -s "$cache/painel.png" ]'
   check "a interface deixou o preset como estava" '! "$lrctl" preset show --game vkcube | grep -q "Sepia"'
 
+  # 1b. no uso normal ninguém segura a interface além do programa: ela precisa continuar viva (botões e atualização)
+  check "a interface continua viva sozinha (uso normal)" '"$panel" --keepalive-check >"$cache/keepalive.log" 2>&1'
+
   # 2. a interface acionada como um usuário (lista, slider, restaurar, interruptor)
   check "o teste de fumaça da interface" '"$panel" --smoke Sepia >"$cache/smoke.log" 2>&1'
   [ -s "$cache/smoke.log" ] && sed 's/^/        /' "$cache/smoke.log"

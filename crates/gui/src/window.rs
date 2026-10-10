@@ -633,7 +633,13 @@ impl Ui {
         let home = self.home.borrow();
         let s = home.snapshot();
         let games: Vec<String> = s.games.iter().map(|g| format!("{}{}", g.id, if g.open { "*" } else { "" })).collect();
-        format!("jogos: [{}] camadas: {}", games.join(", "), s.layers.len())
+        // O que o seletor de jogos mostra de verdade (o widget, não o modelo).
+        let shown: Vec<String> = self
+            .game
+            .model()
+            .map(|m| (0..m.n_items()).filter_map(|i| m.item(i).and_downcast::<gtk::StringObject>().map(|o| o.string().to_string())).collect())
+            .unwrap_or_default();
+        format!("jogos: [{}] camadas: {} seletor: {:?}", games.join(", "), s.layers.len(), shown)
     }
 
     // ---- Apoio aos testes automáticos: aciona os widgets de verdade e confere o que o modelo viu. ----

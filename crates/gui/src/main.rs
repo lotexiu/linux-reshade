@@ -26,11 +26,13 @@ struct Options {
     effect: Option<String>,
     /// Mantém a janela aberta por este tempo antes de sair, para outro processo conferir o estado.
     hold_ms: u64,
+    /// Confere que a janela continua viva sozinha, sem que o teste a segure (o que acontece no uso normal).
+    keepalive_check: bool,
 }
 
 impl Options {
     fn is_test_run(&self) -> bool {
-        self.smoke.is_some() || self.screenshot.is_some() || self.effect.is_some() || self.hold_ms > 0 || self.wait_ms > 0
+        self.smoke.is_some() || self.screenshot.is_some() || self.effect.is_some() || self.hold_ms > 0 || self.wait_ms > 0 || self.keepalive_check
     }
 }
 
@@ -43,6 +45,7 @@ fn parse_args() -> Result<Options, String> {
             "--effect" => options.effect = Some(args.next().ok_or("--effect precisa do nome de um efeito")?),
             "--wait" => options.wait_ms = args.next().and_then(|v| v.parse().ok()).ok_or("--wait precisa de um tempo em milissegundos")?,
             "--hold" => options.hold_ms = args.next().and_then(|v| v.parse().ok()).ok_or("--hold precisa de um tempo em milissegundos")?,
+            "--keepalive-check" => options.keepalive_check = true,
             "--screenshot" => options.screenshot = Some(args.next().ok_or("--screenshot precisa de um arquivo .png")?),
             other => return Err(format!("opção desconhecida: {other}\nuso: lrpanel [--smoke <Efeito>] [--effect <Efeito>] [--screenshot <arquivo.png>] [--wait <ms>] [--hold <ms>]")),
         }
@@ -90,7 +93,17 @@ fn main() -> glib::ExitCode {
             let home = panel::Home::new(Compiler::from_env(), config::Config::load().presets_dir, state);
             let ui = window::Ui::new(app, home);
             ui.window.present();
-            if options.is_test_run() {
+            // Os botões e o relógio da tela guardam só referências fracas da interface (para não formarem um ciclo):
+            // alguém precisa segurá-la viva enquanto o programa roda. Sem isto ela some ao fim desta função e
+            // nada responde. O teste `--keepalive-check` confere.
+            let keep = ui.clone();
+            app.connect_shutdown(move |_| {
+                let _ = &keep;
+            });
+            if options.keepalive_check {
+                glib::MainContext::default().spawn_local(keepalive_check(app.clone(), Rc::downgrade(&ui), exit.clone()));
+                drop(ui);
+            } else if options.is_test_run() {
                 glib::MainContext::default().spawn_local(test_run(app.clone(), ui, options.clone(), exit.clone()));
             }
         }
@@ -99,6 +112,19 @@ fn main() -> glib::ExitCode {
     app.run_with_args::<&str>(&[]);
     let code = *exit.borrow();
     code
+}
+
+/// Sem ninguém segurando a interface além do próprio programa, ela ainda existe e o relógio da tela segue rodando.
+async fn keepalive_check(app: gtk::Application, ui: std::rc::Weak<window::Ui>, exit: Rc<RefCell<glib::ExitCode>>) {
+    glib::timeout_future(Duration::from_millis(1500)).await;
+    match ui.upgrade() {
+        Some(_) => println!("lrpanel keepalive: ok"),
+        None => {
+            eprintln!("lrpanel: keepalive FALHOU: a interface foi destruída; os botões e a atualização não funcionariam");
+            *exit.borrow_mut() = glib::ExitCode::FAILURE;
+        }
+    }
+    app.quit();
 }
 
 /// O roteiro dos modos de teste: espera a janela ser desenhada, age como um usuário e sai deixando tudo como estava.
