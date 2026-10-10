@@ -162,10 +162,7 @@ impl Manifest {
             if !bindings.insert(b.binding) {
                 return Err(invalid(format!("{at}: binding {} usado duas vezes", b.binding)));
             }
-            let depth = self.textures.iter().any(|t| t.unique_name == sampler.texture && t.semantic.as_deref() == Some("DEPTH"));
-            if depth {
-                return Err(unsupported(format!("{at}: amostra a profundidade (DEPTH), prevista para o marco 5")));
-            }
+            // Amostrar `DEPTH` é válido no bundle; quem decide se dá é o runtime (precisa de uma imagem de profundidade).
             if targets.contains(sampler.texture.as_str()) {
                 return Err(invalid(format!("{at}: amostra a textura que é o próprio alvo ({:?})", sampler.texture)));
             }

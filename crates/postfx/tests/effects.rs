@@ -18,7 +18,7 @@ fn bundle(name: &str) -> Bundle {
 fn target(images: &[vk::Image], gpu: &Gpu) -> Target<'static> {
     // O `'static` é seguro porque os testes mantêm `images` vivo até o fim; evita emprestar `images` na struct.
     let images: &'static [vk::Image] = Box::leak(images.to_vec().into_boxed_slice());
-    Target { images, format: FORMAT, extent: vk::Extent2D { width: W, height: H }, rest_layout: REST, queue_family: gpu.family, init_command_buffer: None }
+    Target { images, format: FORMAT, extent: vk::Extent2D { width: W, height: H }, rest_layout: REST, queue_family: gpu.family, init_command_buffer: None, depth: None }
 }
 
 macro_rules! gpu_or_skip {

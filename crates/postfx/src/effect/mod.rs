@@ -28,6 +28,22 @@ use resources::UniformBuffer;
 use sources::Sources;
 use std::collections::HashMap;
 
+/// Uma imagem de profundidade do jogo que os efeitos podem amostrar (a original, sem cópia).
+#[derive(Clone, Copy)]
+pub struct DepthInput {
+    pub image: vk::Image,
+    /// Formato de profundidade (com ou sem estêncil). A imagem precisa ter o uso `SAMPLED`.
+    pub format: vk::Format,
+    /// O layout em que a imagem está quando os efeitos começam e para o qual volta quando terminam
+    /// (não pode ser `UNDEFINED`: o conteúdo seria descartado).
+    pub layout: vk::ImageLayout,
+}
+
+/// Formatos de profundidade que também têm estêncil (a barreira precisa nomear os dois aspectos).
+pub fn depth_has_stencil(format: vk::Format) -> bool {
+    matches!(format, vk::Format::D16_UNORM_S8_UINT | vk::Format::D24_UNORM_S8_UINT | vk::Format::D32_SFLOAT_S8_UINT)
+}
+
 /// O que o efeito processa.
 pub struct Target<'a> {
     /// Imagens do alvo; precisam ter `COLOR_ATTACHMENT | TRANSFER_SRC | TRANSFER_DST` no uso.
@@ -41,6 +57,8 @@ pub struct Target<'a> {
     /// Chamado em cada command buffer logo após a alocação. Uma layer Vulkan usa isto para
     /// `vkSetDeviceLoaderData`; sem isso, as layers abaixo não reconhecem o objeto. `None` fora de layers.
     pub init_command_buffer: Option<&'a dyn Fn(vk::CommandBuffer) -> Result<(), vk::Result>>,
+    /// A profundidade do jogo, se há uma que os efeitos possam usar. Sem ela, um efeito que amostra `DEPTH` é recusado.
+    pub depth: Option<DepthInput>,
 }
 
 /// Recursos de um passe.
@@ -59,6 +77,8 @@ pub(crate) struct PassRes {
     pub attachment_count: usize,
     pub num_vertices: u32,
     pub samples_color: bool,
+    /// O passe amostra a profundidade do jogo.
+    pub samples_depth: bool,
     /// Escreve no frame com `SRGBWriteEnable`: desenha numa imagem sRGB e copia os bytes para o frame.
     pub srgb_shadow: bool,
     /// O passe precisa do conteúdo atual do frame (blend, viewport menor): o espelho começa como cópia dele.
@@ -96,6 +116,9 @@ pub struct Effect {
     target_views: Vec<vk::ImageView>,
     /// Imagem UNORM em que os passes trabalham quando o alvo é sRGB; `image` nula nos demais casos.
     work: GpuImage,
+    depth_barrier: Option<record::DepthBarrier>,
+    /// View do aspecto de profundidade da imagem do jogo (nula se nenhum passe a amostra).
+    depth_view: vk::ImageView,
     command_pool: vk::CommandPool,
     command_buffers: Vec<vk::CommandBuffer>,
     /// Uniforms alimentados pelo runtime (`source = "timer"` etc.).
@@ -242,6 +265,7 @@ impl Effect {
 
         // ---- Verificações da v1 (antes de criar qualquer coisa) ----
         let mut samples_color = vec![false; tech.passes.len()];
+        let mut samples_depth = vec![false; tech.passes.len()];
         let file_srgb = file_texture_srgb(m)?;
         for (k, pass) in tech.passes.iter().enumerate() {
             let writes_frame = pass.render_targets.iter().flatten().next().is_none();
@@ -257,6 +281,15 @@ impl Effect {
                 }
                 match tex.semantic.as_deref() {
                     Some("COLOR") => samples_color[k] = true,
+                    Some("DEPTH") => {
+                        let Some(depth) = &target.depth else {
+                            return Err(unsupported(format!("passe {k}: amostra a profundidade e este jogo não a oferece (ou ainda não foi achada)")));
+                        };
+                        if depth.layout == vk::ImageLayout::UNDEFINED {
+                            return Err(unsupported(format!("passe {k}: amostra a profundidade, mas o layout da imagem é desconhecido")));
+                        }
+                        samples_depth[k] = true;
+                    }
                     None if tex.render_target => {}
                     None => file_texture_supported(bundle, tex, tex_position(m, tex))?,
                     Some(other) => return Err(unsupported(format!("textura {:?} com semântica {other}", tex.name))),
@@ -332,9 +365,22 @@ impl Effect {
         // Onde os passes que escrevem no frame desenham: a view de cada imagem do alvo, ou a imagem de trabalho.
         let frame_views: Vec<vk::ImageView> = if through_work { vec![self.work.view; count] } else { self.target_views.clone() };
 
+        // A profundidade do jogo: uma view só do aspecto de profundidade.
+        if let Some(depth) = target.depth.filter(|_| samples_depth.iter().any(|d| *d)) {
+            let info = vk::ImageViewCreateInfo::default()
+                .image(depth.image)
+                .view_type(vk::ImageViewType::TYPE_2D)
+                .format(depth.format)
+                .subresource_range(vk::ImageSubresourceRange { aspect_mask: vk::ImageAspectFlags::DEPTH, ..COLOR_RANGE });
+            self.depth_view = unsafe { device.create_image_view(&info, None)? };
+            self.depth_barrier = Some(record::DepthBarrier { image: depth.image, stencil: depth_has_stencil(depth.format), layout: depth.layout });
+        }
+
         // ---- Samplers e uniforms ----
         for s in &m.samplers {
-            self.samplers.push(unsafe { resources::create_sampler(device, s)? });
+            // Amostrar profundidade com filtro linear nem sempre é permitido: vizinho mais próximo (como os efeitos pedem).
+            let is_depth = m.textures.iter().any(|t| t.unique_name == s.texture && t.semantic.as_deref() == Some("DEPTH"));
+            self.samplers.push(unsafe { resources::create_sampler(device, s, is_depth)? });
         }
         self.sources = Sources::collect(m);
         let has_uniforms = m.total_uniform_size > 0;
@@ -387,7 +433,7 @@ impl Effect {
 
         // ---- Passes ----
         for (k, pass) in tech.passes.iter().enumerate() {
-            let mut res = PassRes { samples_color: samples_color[k], num_vertices: pass.num_vertices, ..PassRes::default() };
+            let mut res = PassRes { samples_color: samples_color[k], samples_depth: samples_depth[k], num_vertices: pass.num_vertices, ..PassRes::default() };
             // Só vale com um espelho (alvo de 8 bits); sem versão sRGB do formato, a flag é ignorada como no ReShade.
             res.srgb_shadow = pass.srgb_write && self.frame_srgb.image != vk::Image::null();
 
@@ -458,15 +504,15 @@ impl Effect {
             };
             for sb in &pass.samplers {
                 let (tex, index) = sampled_texture(bundle, sb.sampler)?;
+                let is_depth = tex.semantic.as_deref() == Some("DEPTH");
                 let view = match (tex.semantic.as_deref(), m.samplers[sb.sampler as usize].srgb) {
+                    (Some("DEPTH"), _) => self.depth_view,
                     (Some("COLOR"), true) if self.copy_srgb.image != vk::Image::null() => self.copy_srgb.view,
                     (Some("COLOR"), _) => self.copy.images[0].view,
                     _ => self.textures[index].view,
                 };
-                let image_info = [vk::DescriptorImageInfo::default()
-                    .sampler(self.samplers[sb.sampler as usize])
-                    .image_view(view)
-                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+                let layout = if is_depth { vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL } else { vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL };
+                let image_info = [vk::DescriptorImageInfo::default().sampler(self.samplers[sb.sampler as usize]).image_view(view).image_layout(layout)];
                 let write = vk::WriteDescriptorSet::default()
                     .dst_set(res.set1)
                     .dst_binding(sb.binding)
@@ -546,6 +592,7 @@ impl Effect {
                 copy_srgb: (self.copy_srgb.image != vk::Image::null()).then_some(self.copy_srgb.image),
                 shadow: (self.frame_srgb.image != vk::Image::null()).then_some(self.frame_srgb.image),
                 work: (self.work.image != vk::Image::null()).then_some(self.work.image),
+                depth: self.depth_barrier,
                 frame: target.images[i],
                 frame_extent: target.extent,
                 rest_layout: target.rest_layout,
@@ -729,6 +776,9 @@ impl Effect {
             self.copy.destroy(device);
             self.copy_srgb.destroy(device);
             self.work.destroy(device);
+            if self.depth_view != vk::ImageView::null() {
+                device.destroy_image_view(std::mem::take(&mut self.depth_view), None);
+            }
             self.frame_srgb.destroy(device);
         }
     }

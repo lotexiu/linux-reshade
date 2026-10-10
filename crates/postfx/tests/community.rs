@@ -48,6 +48,7 @@ fn every_compiled_bundle_either_runs_or_is_refused_explicitly() {
                 rest_layout: REST,
                 queue_family: gpu.family,
                 init_command_buffer: None,
+                depth: None,
             };
             let created = Effect::new(&gpu.device, &gpu.memory, &bundle, 0, &target, gpu.queue);
             match created {

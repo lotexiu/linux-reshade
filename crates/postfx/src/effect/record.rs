@@ -5,6 +5,16 @@ use super::{MipChain, PassRes, pipeline::Output};
 use crate::image::COLOR_RANGE;
 use ash::vk;
 
+/// A imagem de profundidade do jogo que os passes amostram: vai ao layout de leitura antes e volta depois.
+#[derive(Clone, Copy)]
+pub struct DepthBarrier {
+    pub image: vk::Image,
+    /// O formato tem estêncil (a barreira nomeia os dois aspectos).
+    pub stencil: bool,
+    /// O layout em que a imagem está (e para o qual deve voltar).
+    pub layout: vk::ImageLayout,
+}
+
 /// O que a gravação precisa saber, sem emprestar o `Effect` inteiro.
 pub struct Recording<'a> {
     pub device: &'a ash::Device,
@@ -17,6 +27,7 @@ pub struct Recording<'a> {
     pub shadow: Option<vk::Image>,
     /// Imagem de trabalho quando o alvo é sRGB: os passes a usam no lugar do frame, que só recebe a cópia dos bytes.
     pub work: Option<vk::Image>,
+    pub depth: Option<DepthBarrier>,
     pub frame: vk::Image,
     pub frame_extent: vk::Extent2D,
     pub rest_layout: vk::ImageLayout,
@@ -54,6 +65,22 @@ unsafe fn transition(device: &ash::Device, cb: vk::CommandBuffer, image: vk::Ima
         .subresource_range(COLOR_RANGE);
     unsafe {
         device.cmd_pipeline_barrier(cb, src_stage, dst_stage, vk::DependencyFlags::empty(), &[], &[], &[barrier]);
+    }
+}
+
+unsafe fn depth_transition(device: &ash::Device, cb: vk::CommandBuffer, d: &DepthBarrier, old: vk::ImageLayout, new: vk::ImageLayout) {
+    let aspect = if d.stencil { vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL } else { vk::ImageAspectFlags::DEPTH };
+    let barrier = vk::ImageMemoryBarrier::default()
+        .image(d.image)
+        .old_layout(old)
+        .new_layout(new)
+        .src_access_mask(vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE)
+        .dst_access_mask(vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE)
+        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+        .subresource_range(vk::ImageSubresourceRange { aspect_mask: aspect, base_mip_level: 0, level_count: 1, base_array_layer: 0, layer_count: 1 });
+    unsafe {
+        device.cmd_pipeline_barrier(cb, vk::PipelineStageFlags::ALL_COMMANDS, vk::PipelineStageFlags::ALL_COMMANDS, vk::DependencyFlags::empty(), &[], &[], &[barrier]);
     }
 }
 
@@ -145,6 +172,12 @@ pub unsafe fn record(rec: &Recording<'_>, cb: vk::CommandBuffer, index: usize) -
             }
             None => (rec.frame, rec.rest_layout),
         };
+        // A profundidade do jogo fica em layout de leitura enquanto os passes a amostram e volta ao que era depois.
+        if let Some(d) = &rec.depth
+            && rec.passes.iter().any(|p| p.samples_depth)
+        {
+            depth_transition(device, cb, d, d.layout, vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+        }
         let mut frame_layout = rest_layout;
         let mut copy_valid = false;
         let layers = vk::ImageSubresourceLayers { aspect_mask: vk::ImageAspectFlags::COLOR, mip_level: 0, base_array_layer: 0, layer_count: 1 };
@@ -243,6 +276,11 @@ pub unsafe fn record(rec: &Recording<'_>, cb: vk::CommandBuffer, index: usize) -
 
         if frame_layout != rest_layout {
             transition(device, cb, frame, frame_layout, rest_layout);
+        }
+        if let Some(d) = &rec.depth
+            && rec.passes.iter().any(|p| p.samples_depth)
+        {
+            depth_transition(device, cb, d, vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL, d.layout);
         }
         if rec.work.is_some() {
             // O resultado volta para a imagem do swapchain e ela segue para a apresentação.

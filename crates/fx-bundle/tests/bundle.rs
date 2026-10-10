@@ -113,8 +113,8 @@ fn rejects_unknown_enum_values() {
 
 #[test]
 fn rejects_what_v1_does_not_run() {
-    let depth = mutated(|v| v["textures"][0]["semantic"] = json!("DEPTH"));
-    assert!(matches!(depth, Err(Error::Unsupported(_))), "{depth:?}");
+    // Amostrar DEPTH é válido no bundle (o runtime decide se há profundidade); compute ainda não.
+    assert!(mutated(|v| v["textures"][0]["semantic"] = json!("DEPTH")).is_ok());
 
     let compute = mutated(|v| v["techniques"][0]["passes"][0]["compute_entry"] = json!("CS"));
     assert!(matches!(compute, Err(Error::Unsupported(_))), "{compute:?}");

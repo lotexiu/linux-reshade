@@ -60,7 +60,7 @@ fn run_in(gpu: &Gpu, bundle: &Bundle, format: vk::Format) -> Vec<[u8; 4]> {
     unsafe {
         let targets = gpu.targets_in(format, 1, input);
         let images: &'static [vk::Image] = Box::leak(targets.images.clone().into_boxed_slice());
-        let target = Target { images, format, extent: vk::Extent2D { width: W, height: H }, rest_layout: REST, queue_family: gpu.family, init_command_buffer: None };
+        let target = Target { images, format, extent: vk::Extent2D { width: W, height: H }, rest_layout: REST, queue_family: gpu.family, init_command_buffer: None, depth: None };
         let mut effect = Effect::new(&gpu.device, &gpu.memory, bundle, 0, &target, gpu.queue).expect("criar o efeito");
         gpu.submit(effect.command_buffer(0));
         let pixels = gpu.read(targets.images[0]);
