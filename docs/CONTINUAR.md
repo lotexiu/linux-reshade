@@ -144,3 +144,10 @@ lrctl config                        # de onde vêm efeitos, presets e cache
 VK_LOADER_DEBUG=layer LINUX_RESHADE=1 vkcube --wsi wayland --c 100   # o loader carregou a layer?
 target/release/lrpanel --effect Sepia --screenshot /tmp/painel.png --hold 2000 --wait 3000   # captura da interface
 ```
+
+## Roblox (Sober, Flatpak): o que se aprendeu
+
+- A layer só carrega como extensão VulkanLayer do Flatpak (`./scripts/dev.sh flatpak-layer org.vinegarhq.Sober --apply`). O script agora recria o repositório local a cada vez: antes o flatpak seguia instalando o commit velho ("nada a atualizar"). Confira com `sha1sum` da .so instalada.
+- Oscilação da profundidade tinha duas causas: (1) a candidata escolhida pelo número sumia quando o jogo recriava a imagem (mapas de sombra em cascata) e a escolha caía na heurística; agora herda a imagem de mesmo tamanho/formato (`picked_image`); (2) o daemon remontava o plano toda vez que a inversão (`reversed`) piscava entre `Some` e `None`, refazendo a cadeia; agora só muda depois de 25 ticks iguais (`REVERSED_TICKS`).
+- `lrctl layers` mostra "presents sem efeito/com efeito": se o primeiro número cresce durante a oscilação, a layer está pulando o efeito.
+- MSAA em qualidade máxima funciona com a layer atual (resolve da amostra 0).
