@@ -148,6 +148,14 @@ pub struct Depth {
     pub(crate) image_changes: AtomicU32,
     pub(crate) chain_rebuilds: AtomicU32,
     pub(crate) last_image: AtomicU64,
+    /// Diagnóstico por quadro: desenhos vistos, os que caíram num passe com profundidade, e limpezas de profundidade fora de
+    /// passes (`vkCmdClearAttachments` e `vkCmdClearDepthStencilImage`).
+    pub(crate) diag: Mutex<String>,
+    pub(crate) diag_frames: AtomicU32,
+    pub(crate) frame_draws: AtomicU32,
+    pub(crate) frame_depth_draws: AtomicU32,
+    pub(crate) frame_clear_attachments: AtomicU32,
+    pub(crate) frame_clear_images: AtomicU32,
 }
 
 /// Carrega do próximo elo a primeira das funções que existir (nome do núcleo e da extensão).
@@ -212,6 +220,12 @@ impl Depth {
             image_changes: AtomicU32::new(0),
             chain_rebuilds: AtomicU32::new(0),
             last_image: AtomicU64::new(0),
+            diag: Mutex::new(String::new()),
+            diag_frames: AtomicU32::new(0),
+            frame_draws: AtomicU32::new(0),
+            frame_depth_draws: AtomicU32::new(0),
+            frame_clear_attachments: AtomicU32::new(0),
+            frame_clear_images: AtomicU32::new(0),
         }
     }
 

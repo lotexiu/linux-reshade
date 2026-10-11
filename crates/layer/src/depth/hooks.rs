@@ -46,6 +46,8 @@ pub fn intercept_name(name: &[u8]) -> vk::PFN_vkVoidFunction {
         b"vkCmdPipelineBarrier2" | b"vkCmdPipelineBarrier2KHR" => erase(cmd_pipeline_barrier2 as vk::PFN_vkCmdPipelineBarrier2),
         b"vkCmdExecuteCommands" => erase(cmd_execute_commands as vk::PFN_vkCmdExecuteCommands),
         b"vkCmdSetDepthCompareOp" | b"vkCmdSetDepthCompareOpEXT" => erase(cmd_set_depth_compare_op as vk::PFN_vkCmdSetDepthCompareOp),
+        b"vkCmdClearAttachments" => erase(cmd_clear_attachments as vk::PFN_vkCmdClearAttachments),
+        b"vkCmdClearDepthStencilImage" => erase(cmd_clear_depth_stencil_image as vk::PFN_vkCmdClearDepthStencilImage),
         b"vkCmdBlitImage" => erase(cmd_blit_image as vk::PFN_vkCmdBlitImage),
         b"vkCmdCopyImage" => erase(cmd_copy_image as vk::PFN_vkCmdCopyImage),
         b"vkCmdResolveImage" => erase(cmd_resolve_image as vk::PFN_vkCmdResolveImage),
@@ -491,7 +493,11 @@ fn on_draw(data: &DeviceData, cmd: vk::CommandBuffer, vertices: u64, indirect: b
     if !data.depth.is_on() {
         return;
     }
+    data.depth.frame_draws.fetch_add(1, Ordering::Relaxed);
     if let Some(state) = data.depth.cmds.lock().unwrap().get_mut(&cmd.as_raw()) {
+        if state.current.is_some() {
+            data.depth.frame_depth_draws.fetch_add(1, Ordering::Relaxed);
+        }
         let compare = state.compare;
         if let Some(s) = state.screen_current.as_mut() {
             s.draws += 1;
@@ -771,6 +777,8 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
     }
     data.depth.pass_counter.store(0, Ordering::Relaxed);
     poll_pick(data);
+    let (frame_draws, frame_depth_draws) = (data.depth.frame_draws.swap(0, Ordering::Relaxed), data.depth.frame_depth_draws.swap(0, Ordering::Relaxed));
+    let (frame_clear_attachments, frame_clear_images) = (data.depth.frame_clear_attachments.swap(0, Ordering::Relaxed), data.depth.frame_clear_images.swap(0, Ordering::Relaxed));
     let stats = std::mem::take(&mut *data.depth.frame.lock().unwrap());
     let screen_summary = data.depth.screen.take_summary();
     if stats.is_empty() {
@@ -843,9 +851,25 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
         if !screen_summary.is_empty() {
             passes_summary = format!("tela: {screen_summary} | {passes_summary}");
         }
-        passes_summary = format!("trocas da imagem: {}, reconstruções da cadeia: {} | {passes_summary}", data.depth.image_changes.load(Ordering::Relaxed), data.depth.chain_rebuilds.load(Ordering::Relaxed));
+        // Os contadores mudam a cada quadro: só se atualizam de 90 em 90, para não reescrever o status sem parar.
+        {
+            let mut diag = data.depth.diag.lock().unwrap();
+            if data.depth.diag_frames.fetch_add(1, Ordering::Relaxed) % 90 == 0 || diag.is_empty() {
+                *diag = format!(
+                    "trocas da imagem: {}, reconstruções da cadeia: {}; um quadro: {} desenhos ({} em passes com profundidade), limpezas de profundidade fora de passe: {} de anexos e {} de imagens",
+                    data.depth.image_changes.load(Ordering::Relaxed),
+                    data.depth.chain_rebuilds.load(Ordering::Relaxed),
+                    frame_draws,
+                    frame_depth_draws,
+                    frame_clear_attachments,
+                    frame_clear_images,
+                );
+            }
+            passes_summary = format!("{} | {passes_summary}", *diag);
+        }
         let mut logged = data.depth.passes_logged.lock().unwrap();
-        if *logged != passes_summary {
+        // O resumo muda quase a cada quadro em alguns jogos: só se registra de vez em quando.
+        if *logged != passes_summary && data.depth.diag_frames.load(Ordering::Relaxed) % 90 == 1 {
             log!("passes da profundidade escolhida: {passes_summary}");
             *logged = passes_summary.clone();
         }
@@ -949,5 +973,32 @@ unsafe extern "system" fn cmd_clear_color_image(cmd: vk::CommandBuffer, image: v
         let Some(data) = data_of(cmd.as_raw()) else { return };
         screen_event(&data, cmd, image, super::screen::Kind::Clear);
         (data.device.fp_v1_0().cmd_clear_color_image)(cmd, image, layout, p_color, count, p_ranges);
+    }
+}
+
+unsafe extern "system" fn cmd_clear_attachments(cmd: vk::CommandBuffer, count: u32, p_attachments: *const vk::ClearAttachment, rect_count: u32, p_rects: *const vk::ClearRect) {
+    unsafe {
+        let Some(data) = data_of(cmd.as_raw()) else { return };
+        if data.depth.is_on() && !p_attachments.is_null() && std::slice::from_raw_parts(p_attachments, count as usize).iter().any(|a| a.aspect_mask.intersects(vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL)) {
+            data.depth.frame_clear_attachments.fetch_add(1, Ordering::Relaxed);
+        }
+        (data.device.fp_v1_0().cmd_clear_attachments)(cmd, count, p_attachments, rect_count, p_rects);
+    }
+}
+
+unsafe extern "system" fn cmd_clear_depth_stencil_image(
+    cmd: vk::CommandBuffer,
+    image: vk::Image,
+    layout: vk::ImageLayout,
+    p_value: *const vk::ClearDepthStencilValue,
+    count: u32,
+    p_ranges: *const vk::ImageSubresourceRange,
+) {
+    unsafe {
+        let Some(data) = data_of(cmd.as_raw()) else { return };
+        if data.depth.is_on() && data.depth.images.lock().unwrap().contains_key(&image.as_raw()) {
+            data.depth.frame_clear_images.fetch_add(1, Ordering::Relaxed);
+        }
+        (data.device.fp_v1_0().cmd_clear_depth_stencil_image)(cmd, image, layout, p_value, count, p_ranges);
     }
 }
