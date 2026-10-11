@@ -169,7 +169,8 @@ pub fn run(compiler: &Compiler, state: &ipc::Writer, presets_dir: Option<std::pa
             && last_arm.is_none_or(|t| t.elapsed() >= ARM_EVERY)
         {
             last_arm = Some(std::time::Instant::now());
-            g.sync_depth_arm(compiler, &ipc::state_dir());
+            // Só compila para analisar quando nenhum jogo está esperando o vigia.
+            g.sync_depth_arm(compiler, &ipc::state_dir(), layers.is_empty());
         }
         if last_prune.elapsed() >= PRUNE_EVERY {
             last_prune = std::time::Instant::now();

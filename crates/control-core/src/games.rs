@@ -87,8 +87,10 @@ impl Games {
 
     /// Marca (em `dir`) os jogos cujo preset tem algum efeito que usa profundidade, e desmarca os outros: a layer arma a
     /// observação da profundidade ao abrir o jogo se o marcador existe. Devolve os jogos marcados.
-    pub fn sync_depth_arm(&self, compiler: &Compiler, dir: &std::path::Path) -> Vec<String> {
+    pub fn sync_depth_arm(&self, compiler: &Compiler, dir: &std::path::Path, may_compile: bool) -> Vec<String> {
         let mut armed = Vec::new();
+        // Compilar para analisar trava o vigia: só se permitido, e um efeito por vez.
+        let mut budget = usize::from(may_compile);
         let Ok(entries) = std::fs::read_dir(&self.presets_dir) else { return armed };
         for entry in entries.flatten() {
             let Some(game) = entry.file_name().to_str().map(str::to_string) else { continue };
@@ -100,7 +102,17 @@ impl Games {
                 let preset = Preset::parse(&String::from_utf8_lossy(&bytes));
                 game_plan::enabled_order(&preset).iter().filter_map(|id| id.file.as_deref()).any(|file| {
                     let name = file.strip_suffix(".fx").unwrap_or(file);
-                    valid_name(name) && analysis::ensure(compiler, name).has(Feature::Depth)
+                    if !valid_name(name) {
+                        return false;
+                    }
+                    match analysis::load(compiler, name) {
+                        Some(info) => info.has(Feature::Depth),
+                        None if budget > 0 => {
+                            budget -= 1;
+                            analysis::ensure(compiler, name).has(Feature::Depth)
+                        }
+                        None => false,
+                    }
                 })
             });
             let _ = ipc::set_depth_arm_in(dir, &game, needs);
@@ -394,12 +406,17 @@ mod tests {
         }
         let dir = e.f.root.join("arm-dir");
         let games = Games::new(e.presets.clone());
-        assert_eq!(games.sync_depth_arm(&e.f.compiler, &dir), ["ComProf"]);
+        // Sem análise guardada e sem licença para compilar, nada é marcado (o vigia não pode travar).
+        assert!(games.sync_depth_arm(&e.f.compiler, &dir, false).is_empty());
+        for name in ["Depth", "Sepia"] {
+            analysis::ensure(&e.f.compiler, name);
+        }
+        assert_eq!(games.sync_depth_arm(&e.f.compiler, &dir, false), ["ComProf"]);
         assert!(ipc::depth_arm_wanted_in(&dir, "ComProf") && !ipc::depth_arm_wanted_in(&dir, "SemProf"));
 
         // Trocar o preset desmarca (e o marcador não sobra).
         fs::write(e.presets.join("ComProf/P.ini"), "Techniques=Sepia@Sepia.fx\n").unwrap();
-        assert!(games.sync_depth_arm(&e.f.compiler, &dir).is_empty());
+        assert!(games.sync_depth_arm(&e.f.compiler, &dir, false).is_empty());
         assert!(!ipc::depth_arm_wanted_in(&dir, "ComProf"));
     }
 }
