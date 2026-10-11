@@ -788,7 +788,11 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
         }
     }
     let active = candidates.iter().find(|c| c.chosen).cloned();
-    data.depth.watched_image.store(active.as_ref().map_or(0, |c| c.image), Ordering::Relaxed);
+    let now_image = active.as_ref().map_or(0, |c| c.image);
+    data.depth.watched_image.store(now_image, Ordering::Relaxed);
+    if data.depth.last_image.swap(now_image, Ordering::Relaxed) != now_image {
+        data.depth.image_changes.fetch_add(1, Ordering::Relaxed);
+    }
 
     // O que os efeitos recebem: a original (amostrável, com layout conhecido) ou, se pediram um passe, a foto dele.
     let linear = |format: i32| {
@@ -843,6 +847,7 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
         if !screen_summary.is_empty() {
             passes_summary = format!("tela: {screen_summary} | {passes_summary}");
         }
+        passes_summary = format!("trocas da imagem: {}, reconstruções da cadeia: {} | {passes_summary}", data.depth.image_changes.load(Ordering::Relaxed), data.depth.chain_rebuilds.load(Ordering::Relaxed));
         let mut logged = data.depth.passes_logged.lock().unwrap();
         if *logged != passes_summary {
             log!("passes da profundidade escolhida: {passes_summary}");

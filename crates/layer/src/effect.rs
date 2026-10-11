@@ -325,6 +325,7 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
                 let _ = data.device.device_wait_idle();
                 SwapchainFx::destroy_fx(&mut fx.fx, &data.device);
                 fx.fx = Fx::Unbuilt;
+                data.depth.chain_rebuilds.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 log!("profundidade para os efeitos mudou: cadeia será reconstruída");
             }
         }

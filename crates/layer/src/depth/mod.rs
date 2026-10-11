@@ -143,6 +143,11 @@ pub struct Depth {
     pub(crate) pipelines_logged: Mutex<(usize, usize, usize)>,
     /// O último resumo de passes registrado no log.
     pub(crate) passes_logged: Mutex<String>,
+    /// Diagnóstico (aparece em `lrctl layers`): quantas vezes a imagem de profundidade escolhida trocou e quantas vezes a
+    /// cadeia de efeitos foi reconstruída por causa disso.
+    pub(crate) image_changes: AtomicU32,
+    pub(crate) chain_rebuilds: AtomicU32,
+    pub(crate) last_image: AtomicU64,
 }
 
 /// Carrega do próximo elo a primeira das funções que existir (nome do núcleo e da extensão).
@@ -204,6 +209,9 @@ impl Depth {
             frames: AtomicU32::new(0),
             pipelines_logged: Mutex::new((usize::MAX, 0, 0)),
             passes_logged: Mutex::new(String::new()),
+            image_changes: AtomicU32::new(0),
+            chain_rebuilds: AtomicU32::new(0),
+            last_image: AtomicU64::new(0),
         }
     }
 
