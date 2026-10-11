@@ -191,6 +191,9 @@ pub struct Depth {
     /// A candidata em uso com histerese: `(imagem em uso, desafiante, quadros seguidos em que o desafiante vence)`. Alguns jogos
     /// (o Roblox) têm várias imagens de profundidade de contagens parecidas e a vencedora trocava de um quadro para outro.
     pub(crate) sticky: Mutex<(u64, u64, u32)>,
+    /// A candidata que a pessoa escolheu pelo número, resolvida para a imagem no momento do pedido: `(número pedido, imagem)`. A
+    /// lista de candidatas muda de ordem entre quadros (e entre cenas), então o número sozinho trocava de imagem.
+    pub(crate) picked_image: Mutex<(u32, u64)>,
     pub(crate) snapshot_clear: AtomicU32,
     pub(crate) clear_counter: AtomicU32,
     pub(crate) draws_since_event: AtomicU32,
@@ -272,6 +275,7 @@ impl Depth {
             chain_rebuilds: AtomicU32::new(0),
             last_image: AtomicU64::new(0),
             sticky: Mutex::new((0, 0, 0)),
+            picked_image: Mutex::new((0, 0)),
             snapshot_clear: AtomicU32::new(0),
             clear_counter: AtomicU32::new(0),
             draws_since_event: AtomicU32::new(0),

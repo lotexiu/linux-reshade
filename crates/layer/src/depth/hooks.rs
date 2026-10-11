@@ -951,17 +951,30 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
     }
     let layouts = data.depth.image_layouts.lock().unwrap().clone();
     let mut candidates = stats.candidates(frame, &layouts);
-    // O pedido da pessoa manda sobre a heurística: a N-ésima candidata da lista.
+    // O pedido da pessoa manda sobre a heurística. O número da candidata vira a IMAGEM daquele momento e ela fica: a ordem da lista
+    // muda entre quadros e cenas, e o número sozinho alternava entre imagens diferentes. Se a imagem some, volta à heurística.
     let pick = *data.depth.pick.lock().unwrap();
-    if let Some(n) = pick.candidate
-        && (n as usize) <= candidates.len()
+    let mut picked_by_number = false;
     {
-        for (i, c) in candidates.iter_mut().enumerate() {
-            c.chosen = i + 1 == n as usize;
+        let mut picked = data.depth.picked_image.lock().unwrap();
+        match pick.candidate {
+            Some(n) => {
+                if picked.0 != n {
+                    *picked = (n, candidates.get(n as usize - 1).map_or(0, |c| c.image));
+                }
+                if picked.1 != 0 && candidates.iter().any(|c| c.image == picked.1) {
+                    let image = picked.1;
+                    for c in candidates.iter_mut() {
+                        c.chosen = c.image == image;
+                    }
+                    picked_by_number = true;
+                }
+            }
+            None => *picked = (0, 0),
         }
     }
     // Histerese: a imagem em uso só perde o lugar depois de o desafiante vencer vários quadros seguidos (não vale para um pedido).
-    if pick.candidate.is_none() {
+    if !picked_by_number {
         let winner = candidates.iter().find(|c| c.chosen).map_or(0, |c| c.image);
         let mut sticky = data.depth.sticky.lock().unwrap();
         let keeps = sticky.0 != 0 && sticky.0 != winner && candidates.iter().any(|c| c.image == sticky.0 && c.unusable.is_none());
