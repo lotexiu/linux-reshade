@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Utilitário de desenvolvimento. Idempotente; serve para trocar de máquina sem esforço.
-# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|smoke-preset|smoke-depth|smoke-depth-effect|smoke-compute|smoke-dynamic|daemon|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-survey|fx-golden|placement|logs> [args]
+# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|smoke-preset|smoke-depth|smoke-depth-effect|smoke-compute|smoke-dynamic|flatpak-layer|daemon|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-survey|fx-golden|placement|logs> [args]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -501,6 +501,36 @@ cmd_smoke_compute() {
   [ "$ok" = 1 ] && say "smoke (compute): passou" || { warn "smoke (compute): falhou ($tmp, $LOG_FILE)"; "$lrctl" layers; grep -E "pulada|cadeia" "$LOG_FILE" | tail -8; exit 1; }
 }
 
+# Prepara a layer para um app Flatpak (por exemplo o Sober, que roda o Roblox): o sandbox não enxerga a pasta do projeto nem o
+# manifesto da layer. Copia o .so e um manifesto para uma pasta que o sandbox pode ler e mostra (ou, com --apply, executa) o
+# `flatpak override --user` que libera o necessário. Desfaz com --undo.
+#   scripts/dev.sh flatpak-layer [app-id] [--apply|--undo]     (padrão: org.vinegarhq.Sober)
+cmd_flatpak_layer() {
+  local app="org.vinegarhq.Sober" mode="show" arg
+  for arg in "$@"; do
+    case "$arg" in
+      --apply) mode="apply" ;;
+      --undo) mode="undo" ;;
+      -*) warn "opção desconhecida: $arg"; exit 2 ;;
+      *) app="$arg" ;;
+    esac
+  done
+  command -v flatpak >/dev/null || { warn "flatpak não está instalado"; exit 1; }
+  local dir="${XDG_DATA_HOME:-$HOME/.local/share}/linux-reshade/flatpak-layer" cache="${XDG_CACHE_HOME:-$HOME/.cache}/linux-reshade"
+  cmd_install >/dev/null
+  mkdir -p "$dir"
+  cp -f "$ROOT/target/release/$LAYER_LIB" "$dir/$LAYER_LIB"
+  sed "s|\"library_path\": \"[^\"]*\"|\"library_path\": \"$dir/$LAYER_LIB\"|" "$MANIFEST" >"$dir/$(basename "$MANIFEST")"
+  say "layer copiada para $dir (refaça este comando depois de recompilar a layer)"
+  local -a grant=(--device=shm "--filesystem=$dir:ro" "--filesystem=$cache:ro" "--env=VK_ADD_LAYER_PATH=$dir" "--env=$ENABLE_VAR=1" "--env=LINUX_RESHADE_DEPTH=1" "--env=LINUX_RESHADE_LOG=/tmp/linux-reshade-flatpak.log")
+  local -a revoke=(--nodevice=shm "--nofilesystem=$dir" "--nofilesystem=$cache" --unset-env=VK_ADD_LAYER_PATH "--unset-env=$ENABLE_VAR" --unset-env=LINUX_RESHADE_DEPTH --unset-env=LINUX_RESHADE_LOG)
+  case "$mode" in
+    apply) flatpak override --user "${grant[@]}" "$app" && say "liberado para $app (desfaça com: scripts/dev.sh flatpak-layer $app --undo)" ;;
+    undo) flatpak override --user "${revoke[@]}" "$app" && say "removido de $app" ;;
+    *) echo "flatpak override --user ${grant[*]} $app"; say "para aplicar: scripts/dev.sh flatpak-layer $app --apply" ;;
+  esac
+}
+
 # Teste da escolha por limpeza de profundidade: um app de renderização dinâmica (como o DXVK) com limpezas DENTRO do passe, numa
 # superfície headless, com a validation layer. Confere a foto gravada antes da limpeza escolhida e nenhum erro de validação.
 cmd_smoke_dynamic() {
@@ -705,6 +735,7 @@ case "${1:-}" in
   smoke-depth-effect) cmd_smoke_depth_effect ;;
   smoke-compute) cmd_smoke_compute ;;
   smoke-dynamic) cmd_smoke_dynamic ;;
+  flatpak-layer) shift; cmd_flatpak_layer "$@" ;;
   daemon)    cmd_daemon ;;
   panel)     shift; cmd_panel "$@" ;;
   panel-smoke) cmd_panel_smoke ;;
