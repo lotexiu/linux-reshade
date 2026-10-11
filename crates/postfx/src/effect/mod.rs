@@ -583,7 +583,8 @@ impl Effect {
                     return Err(unsupported(format!("passe {k}: vários anexos para o frame")));
                 }
                 let format = if res.srgb_shadow { convert::srgb_counterpart(working_format).unwrap_or(working_format) } else { working_format };
-                res.preserves_frame = !pass.clear && (pass.blend.iter().any(|b| b.enable) || pass.viewport != [0, 0]);
+                // Só um passe que limpa dispensa o que havia: sem blend e tela cheia ainda pode dar `discard` (o SMAA do iMMERSE).
+                res.preserves_frame = !pass.clear;
                 (Output::Frame, vec![format], target.extent)
             } else if some.len() == pass.render_targets.len() {
                 let first = &m.textures[tex_index[some[0]]];

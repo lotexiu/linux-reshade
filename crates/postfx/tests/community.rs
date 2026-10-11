@@ -136,10 +136,35 @@ fn a_chain_of_compiled_bundles_runs() {
         .and_then(|s| s.split_once('x').and_then(|(a, b)| Some((a.parse::<u32>().ok()?, b.parse::<u32>().ok()?))))
         .unwrap_or((W, H));
     let bundles: Vec<Bundle> = std::env::split_paths(&list).map(|p| Bundle::load(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))).collect();
-    let steps: Vec<postfx::Step<'_>> = bundles.iter().map(|b| postfx::Step { bundle: b, technique: 0 }).collect();
+    // `LINUX_RESHADE_CHAIN_ALL_TECHNIQUES=1`: uma etapa por técnica de cada bundle (o painel acrescenta todas as de um efeito).
+        let all = std::env::var_os("LINUX_RESHADE_CHAIN_ALL_TECHNIQUES").is_some();
+        // `LINUX_RESHADE_CHAIN_ONLY_TECHNIQUE=1`: só a técnica de índice 1 de cada bundle.
+        let only: Option<usize> = std::env::var("LINUX_RESHADE_CHAIN_ONLY_TECHNIQUE").ok().and_then(|v| v.parse().ok());
+        let steps: Vec<postfx::Step<'_>> = bundles
+            .iter()
+            .flat_map(|b| {
+                let range = match only {
+                    Some(n) => n..n + 1,
+                    None => 0..if all { b.manifest.techniques.len() } else { 1 },
+                };
+                range.map(move |t| postfx::Step { bundle: b, technique: t })
+            })
+            .collect();
+        let step_bundles: Vec<&Bundle> = steps.iter().map(|s| s.bundle).collect();
     unsafe {
         // Quadro de entrada: um degradê colorido com xadrez (algo para os efeitos enxergarem).
-        let (image, image_mem) = gpu.target_sized(w, h, |x, y| [(x * 255 / w) as u8, (y * 255 / h) as u8, if (x / 64 + y / 64) % 2 == 0 { 200 } else { 60 }, 255]);
+        // `LINUX_RESHADE_CHAIN_INPUT=aliased`: círculos e diagonais pretos e brancos, sem suavização (para antialiasing).
+        let aliased = std::env::var("LINUX_RESHADE_CHAIN_INPUT").is_ok_and(|v| v == "aliased");
+        let (image, image_mem) = gpu.target_sized(w, h, |x, y| {
+            if aliased {
+                let (dx, dy) = (x as f32 - w as f32 / 2.0, y as f32 - h as f32 / 2.0);
+                let on = (dx * dx + dy * dy).sqrt() < h as f32 * 0.3 || ((x as i32 - y as i32).rem_euclid(200) < 40);
+                let v = if on { 235 } else { 20 };
+                [v, v, v, 255]
+            } else {
+                [(x * 255 / w) as u8, (y * 255 / h) as u8, if (x / 64 + y / 64) % 2 == 0 { 200 } else { 60 }, 255]
+            }
+        });
         let images = [image];
         let base: f32 = std::env::var("LINUX_RESHADE_CHAIN_DEPTH").ok().and_then(|v| v.parse().ok()).unwrap_or(0.5);
         // `LINUX_RESHADE_CHAIN_DEPTH_SPREAD=0.3`: a profundidade varia de `base` a `base + spread` da esquerda para a direita.
@@ -173,13 +198,19 @@ fn a_chain_of_compiled_bundles_runs() {
                 for s in &skipped {
                     eprintln!("  pulada: etapa {}: {}", s.step, s.why);
                 }
+                // Os valores padrão do efeito (a layer os recebe pelo plano): sem isso, limiares e passos ficam em zero.
+                for pos in 0..chain.len() {
+                    if let Some(origin) = chain.origin(pos) {
+                        chain.write_uniforms(pos, 0, 0, &fx_bundle::uniforms::default_block(&step_bundles[origin].manifest));
+                    }
+                }
                 // Uniforms pedidos.
                 if let Ok(sets) = std::env::var("LINUX_RESHADE_CHAIN_SET") {
                     for item in sets.split(',').filter(|i| !i.is_empty()) {
                         let Some((name, value)) = item.split_once('=') else { continue };
                         for pos in 0..chain.len() {
                             let Some(origin) = chain.origin(pos) else { continue };
-                            let m = &bundles[origin].manifest;
+                            let m = &step_bundles[origin].manifest;
                             let Some(u) = m.uniforms.iter().find(|u| u.name == name) else { continue };
                             let bytes = match u.ty.base {
                                 fx_bundle::manifest::ScalarBase::Float => value.parse::<f32>().unwrap().to_le_bytes().to_vec(),

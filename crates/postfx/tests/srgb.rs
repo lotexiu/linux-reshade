@@ -134,3 +134,17 @@ fn an_srgb_target_works_with_the_srgb_flags_too() {
         assert_pixel(got, [want(s[0]), want(s[1]), want(s[2]), s[3]], 2, &format!("leitura, pixel {n}"));
     }
 }
+
+/// Um passe com `SRGBWriteEnable` que dá `discard` em parte da tela deixa ali o quadro do jogo (o desenho vai para um espelho sRGB
+/// do quadro, e o quadro entra nele antes). Sem isso o SMAA do iMMERSE saía preto fora das bordas.
+#[test]
+fn a_discarding_srgb_write_pass_keeps_the_game_frame_where_it_does_not_draw() {
+    let gpu = gpu_or_skip!();
+    let bundle = Bundle::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/Discard")).unwrap();
+    assert!(std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/Discard/manifest.json")).unwrap().contains("\"srgb_write\":true"));
+    for (n, got) in run(&gpu, &bundle).into_iter().enumerate() {
+        let (x, y) = (n as u32 % W, n as u32 / W);
+        let want = if x < W / 2 { input(x, y) } else { [255, 0, 0, 255] };
+        assert_pixel(got, want, 1, &format!("pixel {n}"));
+    }
+}

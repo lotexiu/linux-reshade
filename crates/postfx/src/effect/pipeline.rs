@@ -30,16 +30,10 @@ pub unsafe fn create_render_pass(
         Output::Frame => vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
         Output::Textures => vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
     };
-    // Quando é seguro descartar o conteúdo: o passe limpa, ou cobre tudo (triângulo de tela cheia
-    // sem blend e sem viewport menor). Fora disso, preserva o que já havia.
-    let covers_all = !pass.blend.iter().any(|b| b.enable) && pass.viewport == [0, 0];
-    let load_op = if pass.clear {
-        vk::AttachmentLoadOp::CLEAR
-    } else if output == Output::Frame && covers_all {
-        vk::AttachmentLoadOp::DONT_CARE
-    } else {
-        vk::AttachmentLoadOp::LOAD
-    };
+    // O passe só pode descartar o conteúdo se limpa. Cobrir a tela com um triângulo sem blend NÃO basta: o shader pode dar
+    // `discard` nos pixels que não quer mudar (o SMAA do iMMERSE só escreve onde há borda e conta com o quadro do jogo por baixo),
+    // e com DONT_CARE o resto virava preto.
+    let load_op = if pass.clear { vk::AttachmentLoadOp::CLEAR } else { vk::AttachmentLoadOp::LOAD };
     // Com DONT_CARE o layout inicial pode ser UNDEFINED; com LOAD precisa ser o real.
     let initial = if load_op == vk::AttachmentLoadOp::DONT_CARE { vk::ImageLayout::UNDEFINED } else { attachment_layout };
 
