@@ -674,6 +674,23 @@ mod tests {
     }
 
     #[test]
+    fn a_known_source_defect_is_compiled_from_a_patched_copy_and_the_bundle_goes_stale_without_the_marker() {
+        let f = fake("patched", OK_TOOL);
+        let original = "for(uint b = 1; b <= AF_POINTS; b <<= 1, barrier())";
+        fs::write(f.root.join("effects/MartysMods_DEPTHOFFIELD.fx"), original).unwrap();
+        assert!(matches!(f.compiler.ensure("MartysMods_DEPTHOFFIELD", 64, 64).unwrap(), Ensured::Compiled(_)));
+        let call = &calls(&f)[0];
+        assert!(call.contains("/cache/patched/MartysMods_DEPTHOFFIELD.fx"), "{call}");
+        assert!(call.contains(&format!("-I {}", f.root.join("effects").display())), "o diretório original continua nos includes: {call}");
+        assert_eq!(fs::read_to_string(f.root.join("effects/MartysMods_DEPTHOFFIELD.fx")).unwrap(), original, "o original não muda");
+        assert!(fs::read_to_string(f.root.join("cache/patched/MartysMods_DEPTHOFFIELD.fx")).unwrap().contains("b < AF_POINTS"));
+        assert!(f.compiler.is_current("MartysMods_DEPTHOFFIELD", 64, 64));
+        // Um bundle de antes das correções (sem a anotação) fica desatualizado.
+        fs::remove_file(f.root.join("cache/MartysMods_DEPTHOFFIELD-64x64/patches")).unwrap();
+        assert!(!f.compiler.is_current("MartysMods_DEPTHOFFIELD", 64, 64));
+    }
+
+    #[test]
     fn editing_the_source_triggers_a_recompile() {
         let f = fake("stale", OK_TOOL);
         f.compiler.ensure("Sepia", 64, 64).unwrap();
