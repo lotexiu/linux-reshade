@@ -113,16 +113,17 @@ fn rejects_unknown_enum_values() {
 
 #[test]
 fn rejects_what_v1_does_not_run() {
-    // Amostrar DEPTH é válido no bundle (o runtime decide se há profundidade); compute ainda não.
+    // Amostrar DEPTH é válido no bundle (o runtime decide se há profundidade).
     assert!(mutated(|v| v["textures"][0]["semantic"] = json!("DEPTH")).is_ok());
 
+    // Compute só existe a partir da versão 2 do formato.
     let compute = mutated(|v| v["techniques"][0]["passes"][0]["compute_entry"] = json!("CS"));
-    assert!(matches!(compute, Err(Error::Unsupported(_))), "{compute:?}");
+    assert!(matches!(compute, Err(Error::Invalid(_))), "{compute:?}");
 
     let texture_3d = mutated(|v| v["textures"][0]["type"] = json!("3d"));
     assert!(matches!(texture_3d, Err(Error::Unsupported(_))), "{texture_3d:?}");
 
-    let future = mutated(|v| v["version"] = json!(2));
+    let future = mutated(|v| v["version"] = json!(3));
     assert!(matches!(future, Err(Error::Unsupported(_))), "{future:?}");
 
     let huge = mutated(|v| v["total_uniform_size"] = json!(1_000_000));

@@ -7,7 +7,8 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 pub const FORMAT: &str = "linux-reshade-bundle";
-pub const VERSION: u32 = 1;
+/// A versão mais nova que esta build lê. A 2 acrescenta passes de compute e imagens de armazenamento; a 1 segue valendo.
+pub const VERSION: u32 = 2;
 
 /// Valor de uma anotação ou de um default: escalar ou lista de escalares.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -47,6 +48,8 @@ pub struct Manifest {
     pub textures: Vec<Texture>,
     #[serde(default)]
     pub samplers: Vec<Sampler>,
+    #[serde(default)]
+    pub storages: Vec<Storage>,
     #[serde(default)]
     pub uniforms: Vec<Uniform>,
     pub techniques: Vec<Technique>,
@@ -134,6 +137,24 @@ pub enum Address {
     Mirror,
     Clamp,
     Border,
+}
+
+/// Uma imagem de armazenamento (`storage2D`): a textura escrita por um passe de compute, num nível de mipmap.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Storage {
+    pub name: String,
+    pub unique_name: String,
+    /// `unique_name` da textura.
+    pub texture: String,
+    #[serde(default)]
+    pub level: u32,
+}
+
+/// Uma imagem de armazenamento usada por um passe de compute e o binding dela (set 2).
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct StorageBinding {
+    pub storage: u32,
+    pub binding: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -257,6 +278,12 @@ pub struct Pass {
     pub vertex_entry: String,
     pub pixel_entry: String,
     pub compute_entry: Option<String>,
+    /// Passe de compute: grupos de threads a despachar (`DispatchSizeX/Y/Z`).
+    #[serde(default)]
+    pub dispatch: Option<[u32; 3]>,
+    /// Passe de compute: as imagens de armazenamento que ele usa.
+    #[serde(default)]
+    pub storages: Vec<StorageBinding>,
     /// `unique_name` das texturas de saída; `None` (ou lista vazia) = o frame do jogo.
     pub render_targets: Vec<Option<String>>,
     pub samplers: Vec<SamplerBinding>,

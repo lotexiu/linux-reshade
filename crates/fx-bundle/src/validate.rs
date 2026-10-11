@@ -32,8 +32,8 @@ impl Manifest {
         if self.format != FORMAT {
             return Err(invalid(format!("format {:?}, esperado {FORMAT:?}", self.format)));
         }
-        if self.version != VERSION {
-            return Err(unsupported(format!("versão {} do formato (esta build lê a {VERSION})", self.version)));
+        if !(1..=VERSION).contains(&self.version) {
+            return Err(unsupported(format!("versão {} do formato (esta build lê até a {VERSION})", self.version)));
         }
         if self.spirv_version != "1.0" && self.spirv_version != "1.3" {
             return Err(invalid(format!("spirv_version {:?}", self.spirv_version)));
@@ -80,6 +80,11 @@ impl Manifest {
             }
         }
 
+        for st in &self.storages {
+            if !textures.contains(st.texture.as_str()) {
+                return Err(invalid(format!("storage {:?} usa a textura inexistente {:?}", st.name, st.texture)));
+            }
+        }
         for s in &self.samplers {
             if !textures.contains(s.texture.as_str()) {
                 return Err(invalid(format!("sampler {:?} usa a textura inexistente {:?}", s.name, s.texture)));
@@ -124,7 +129,7 @@ impl Manifest {
     fn validate_pass(&self, tech: &str, index: usize, pass: &Pass, entries: &HashSet<&str>) -> Result<(), Error> {
         let at = format!("técnica {tech:?}, passe {index}");
         if pass.compute_entry.is_some() {
-            return Err(unsupported(format!("{at}: passe de compute")));
+            return self.validate_compute_pass(&at, pass, entries);
         }
         for (entry, want) in [(&pass.vertex_entry, Stage::Vertex), (&pass.pixel_entry, Stage::Pixel)] {
             if !entries.contains(entry.as_str()) {
@@ -165,6 +170,45 @@ impl Manifest {
             // Amostrar `DEPTH` é válido no bundle; quem decide se dá é o runtime (precisa de uma imagem de profundidade).
             if targets.contains(sampler.texture.as_str()) {
                 return Err(invalid(format!("{at}: amostra a textura que é o próprio alvo ({:?})", sampler.texture)));
+            }
+        }
+        Ok(())
+    }
+
+    /// Passe de compute: sem render pass, só um entry point de compute, o tamanho do despacho e as imagens de armazenamento.
+    fn validate_compute_pass(&self, at: &str, pass: &Pass, entries: &HashSet<&str>) -> Result<(), Error> {
+        if self.version < 2 {
+            return Err(invalid(format!("{at}: passe de compute num bundle da versão 1")));
+        }
+        let entry = pass.compute_entry.as_deref().unwrap_or_default();
+        if !entries.contains(entry) {
+            return Err(invalid(format!("{at}: entry point {entry:?} não existe")));
+        }
+        if self.entry_stage(entry) != Some(Stage::Compute) {
+            return Err(invalid(format!("{at}: entry point {entry:?} não é de compute")));
+        }
+        let Some(dispatch) = pass.dispatch else {
+            return Err(invalid(format!("{at}: passe de compute sem tamanho de despacho")));
+        };
+        if dispatch.contains(&0) {
+            return Err(invalid(format!("{at}: despacho com uma dimensão zero")));
+        }
+        let mut bindings = HashSet::new();
+        for b in &pass.storages {
+            if self.storages.get(b.storage as usize).is_none() {
+                return Err(invalid(format!("{at}: storage {} não existe", b.storage)));
+            }
+            if !bindings.insert(b.binding) {
+                return Err(invalid(format!("{at}: binding de storage {} usado duas vezes", b.binding)));
+            }
+        }
+        let mut sampler_bindings = HashSet::new();
+        for b in &pass.samplers {
+            if self.samplers.get(b.sampler as usize).is_none() {
+                return Err(invalid(format!("{at}: sampler {} não existe", b.sampler)));
+            }
+            if !sampler_bindings.insert(b.binding) {
+                return Err(invalid(format!("{at}: binding {} usado duas vezes", b.binding)));
             }
         }
         Ok(())

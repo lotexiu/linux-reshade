@@ -368,17 +368,17 @@ int main(int argc, char **argv)
 	size_t spirv_bytes = 0;
 	for (const Entry &e : entries) spirv_bytes += e.spirv.size();
 
-	// Recusa o que a v1 do formato não suporta, em vez de produzir um bundle que falharia depois.
-	if (!m.storages.empty()) { std::cerr << "erro: imagens de armazenamento (storage) não são suportadas na v1\n"; return 1; }
+	// Passes de compute e imagens de armazenamento levam o formato à versão 2 (um runtime da v1 recusa o bundle).
+	bool uses_compute = !m.storages.empty();
 	for (const technique &t : m.techniques)
 		for (const pass &ps : t.passes)
-			if (!ps.cs_entry_point.empty()) { std::cerr << "erro: passes de compute não são suportados na v1\n"; return 1; }
+			if (!ps.cs_entry_point.empty()) uses_compute = true;
 
 	// 3. Manifesto.
 	Json j;
 	j.object();
 	j.field("format", std::string("linux-reshade-bundle"));
-	j.field("version", 1);
+	j.field("version", uses_compute ? 2 : 1);
 	j.field("source", opt.input.filename().string());
 	j.key("compiler").object();
 	j.field("name", std::string("reshadefx"));
@@ -450,6 +450,22 @@ int main(int argc, char **argv)
 	}
 	j.end();
 
+	if (!m.storages.empty())
+	{
+		// Imagens de armazenamento (compute): a textura é escrita por `imageStore` no nível `level`.
+		j.key("storages").array();
+		for (const storage &st : m.storages)
+		{
+			j.object();
+			j.field("name", st.name);
+			j.field("unique_name", st.unique_name);
+			j.field("texture", st.texture_name);
+			j.field("level", static_cast<uint32_t>(st.level));
+			j.end();
+		}
+		j.end();
+	}
+
 	j.key("uniforms").array();
 	for (const uniform &u : m.uniforms)
 	{
@@ -479,7 +495,7 @@ int main(int argc, char **argv)
 			j.field("name", ps.name);
 			j.field("vertex_entry", ps.vs_entry_point);
 			j.field("pixel_entry", ps.ps_entry_point);
-			j.key("compute_entry").null();
+			if (ps.cs_entry_point.empty()) j.key("compute_entry").null(); else j.field("compute_entry", ps.cs_entry_point);
 			// Anexos de saída: até o último usado; item vazio significa "o frame do jogo".
 			size_t rt_count = 0;
 			for (size_t k = 0; k < 8; ++k) if (!ps.render_target_names[k].empty()) rt_count = k + 1;
@@ -516,6 +532,20 @@ int main(int argc, char **argv)
 				j.end();
 			}
 			j.end();
+			if (!ps.cs_entry_point.empty())
+			{
+				// Grupos de threads a despachar (DispatchSizeX/Y/Z) e as imagens de armazenamento do passe (set 2).
+				j.key("dispatch").array().integer(ps.viewport_width).integer(ps.viewport_height).integer(ps.viewport_dispatch_z).end();
+				j.key("storages").array();
+				for (const storage_binding &sb : ps.storage_bindings)
+				{
+					j.object();
+					j.field("storage", sb.index);
+					j.field("binding", sb.entry_point_binding);
+					j.end();
+				}
+				j.end();
+			}
 			j.field("topology", std::string(topology_name(ps.topology)));
 			j.field("num_vertices", ps.num_vertices);
 			j.key("viewport").array().integer(ps.viewport_width).integer(ps.viewport_height).end();
