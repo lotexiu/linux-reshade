@@ -22,7 +22,7 @@ fn main() {
 unsafe fn run() {
     unsafe {
         let entry = ash::Entry::load().expect("loader Vulkan");
-        let app = vk::ApplicationInfo::default().application_name(c"dynclear").api_version(vk::make_api_version(0, 1, 3, 0));
+        let app = vk::ApplicationInfo::default().application_name(c"dynclear").api_version(if std::env::var_os("DYN_API14").is_some() { vk::make_api_version(0, 1, 4, 0) } else { vk::make_api_version(0, 1, 3, 0) });
         let extensions = [khr::surface::NAME.as_ptr(), ext::headless_surface::NAME.as_ptr()];
         let instance = entry.create_instance(&vk::InstanceCreateInfo::default().application_info(&app).enabled_extension_names(&extensions), None).expect("instância");
         let hardware = std::env::var_os("DYN_HARDWARE").is_some_and(|v| v != "0");

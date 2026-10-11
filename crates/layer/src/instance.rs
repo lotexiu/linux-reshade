@@ -13,7 +13,9 @@ pub unsafe extern "system" fn create_instance(
     p_instance: *mut vk::Instance,
 ) -> vk::Result {
     unsafe {
+        log!("vkCreateInstance: entrada");
         let Some(link) = chain::instance_link(p_create_info) else {
+            log!("vkCreateInstance: sem o elo da cadeia do loader");
             return vk::Result::ERROR_INITIALIZATION_FAILED;
         };
         let layer_info = (*link).u.p_layer_info;
@@ -25,7 +27,9 @@ pub unsafe extern "system" fn create_instance(
         ) else {
             return vk::Result::ERROR_INITIALIZATION_FAILED;
         };
+        log!("vkCreateInstance: chamando o próximo elo");
         let result = next_create(p_create_info, p_allocator, p_instance);
+        log!("vkCreateInstance: o próximo elo devolveu {}", result.as_raw());
         if result != vk::Result::SUCCESS {
             return result;
         }

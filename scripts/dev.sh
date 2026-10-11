@@ -501,10 +501,11 @@ cmd_smoke_compute() {
   [ "$ok" = 1 ] && say "smoke (compute): passou" || { warn "smoke (compute): falhou ($tmp, $LOG_FILE)"; "$lrctl" layers; grep -E "pulada|cadeia" "$LOG_FILE" | tail -8; exit 1; }
 }
 
-# Prepara a layer para um app Flatpak (por exemplo o Sober, que roda o Roblox): o sandbox não enxerga a pasta do projeto nem o
-# manifesto da layer. Copia o .so e um manifesto para uma pasta que o sandbox pode ler e mostra (ou, com --apply, executa) o
-# `flatpak override --user` que libera o necessário. Desfaz com --undo.
-#   scripts/dev.sh flatpak-layer [app-id] [--apply|--undo]     (padrão: org.vinegarhq.Sober)
+# Prepara a layer para um app Flatpak (por exemplo o Sober, que roda o Roblox). O app roda dentro de um sandbox e (medido com o
+# Sober) o Roblox só carrega layers Vulkan que vêm de uma EXTENSÃO do runtime (`org.freedesktop.Platform.VulkanLayer.*`, montada
+# em /usr/lib/extensions/vulkan): uma layer em pasta comum (home, /tmp, dados do app) derruba o jogo ao carregar. Então este comando
+# empacota a layer como uma extensão local do usuário, instala e libera o resto (memória compartilhada, cache de bundles, variáveis).
+#   scripts/dev.sh flatpak-layer [app-id] [--apply|--undo]     (padrão: org.vinegarhq.Sober; sem opção só mostra o que faria)
 cmd_flatpak_layer() {
   local app="org.vinegarhq.Sober" mode="show" arg
   for arg in "$@"; do
@@ -516,18 +517,43 @@ cmd_flatpak_layer() {
     esac
   done
   command -v flatpak >/dev/null || { warn "flatpak não está instalado"; exit 1; }
-  local dir="${XDG_DATA_HOME:-$HOME/.local/share}/linux-reshade/flatpak-layer" cache="${XDG_CACHE_HOME:-$HOME/.cache}/linux-reshade"
+  local id="org.freedesktop.Platform.VulkanLayer.linux_reshade" name="linux_reshade"
+  local base="${XDG_DATA_HOME:-$HOME/.local/share}/linux-reshade/flatpak" cache="${XDG_CACHE_HOME:-$HOME/.cache}/linux-reshade"
+  # O runtime do app e a versão do ponto de extensão VulkanLayer dele.
+  local runtime version
+  runtime="$(flatpak info "$app" 2>/dev/null | awk '/Runtime:/{print $2}')"
+  [ -n "$runtime" ] || { warn "não achei o app $app (instalado?)"; exit 1; }
+  version="$(flatpak info --show-metadata "$runtime" 2>/dev/null | awk '/^\[Extension org.freedesktop.Platform.VulkanLayer\]/{f=1;next} /^\[/{f=0} f&&/^version *=/{gsub(/ /,"");sub(/version=/,"");print;exit}')"
+  [ -n "$version" ] || { warn "o runtime $runtime não tem o ponto de extensão VulkanLayer"; exit 1; }
+  local -a grant=(--device=shm "--filesystem=$cache:ro" "--env=$ENABLE_VAR=1" "--env=LINUX_RESHADE_DEPTH=1" "--env=LINUX_RESHADE_LOG=/tmp/linux-reshade-flatpak.log")
+  local -a revoke=(--nodevice=shm "--nofilesystem=$cache" "--unset-env=$ENABLE_VAR" --unset-env=LINUX_RESHADE_DEPTH --unset-env=LINUX_RESHADE_LOG)
+  if [ "$mode" = "undo" ]; then
+    flatpak override --user "${revoke[@]}" "$app"
+    flatpak --user uninstall -y "$id" >/dev/null 2>&1 || true
+    say "removido de $app (extensão e permissões)"
+    return
+  fi
   cmd_install >/dev/null
-  mkdir -p "$dir"
-  cp -f "$ROOT/target/release/$LAYER_LIB" "$dir/$LAYER_LIB"
-  sed "s|\"library_path\": \"[^\"]*\"|\"library_path\": \"$dir/$LAYER_LIB\"|" "$MANIFEST" >"$dir/$(basename "$MANIFEST")"
-  say "layer copiada para $dir (refaça este comando depois de recompilar a layer)"
-  local -a grant=(--device=shm "--filesystem=$dir:ro" "--filesystem=$cache:ro" "--env=VK_ADD_IMPLICIT_LAYER_PATH=$dir" "--env=$ENABLE_VAR=1" "--env=LINUX_RESHADE_DEPTH=1" "--env=LINUX_RESHADE_LOG=/tmp/linux-reshade-flatpak.log")
-  local -a revoke=(--nodevice=shm "--nofilesystem=$dir" "--nofilesystem=$cache" --unset-env=VK_ADD_IMPLICIT_LAYER_PATH "--unset-env=$ENABLE_VAR" --unset-env=LINUX_RESHADE_DEPTH --unset-env=LINUX_RESHADE_LOG)
+  rm -rf "$base/ext"; mkdir -p "$base/ext/files/lib" "$base/ext/files/share/vulkan/implicit_layer.d"
+  cp -f "$ROOT/target/release/$LAYER_LIB" "$base/ext/files/lib/$LAYER_LIB"
+  cat >"$base/ext/metadata" <<EOF
+[Runtime]
+name=$id
+runtime=org.freedesktop.Platform/x86_64/$version
+sdk=org.freedesktop.Sdk/x86_64/$version
+
+[ExtensionOf]
+ref=runtime/org.freedesktop.Platform/x86_64/$version
+EOF
+  sed "s|\"library_path\": \"[^\"]*\"|\"library_path\": \"/usr/lib/extensions/vulkan/$name/lib/$LAYER_LIB\"|" "$MANIFEST" >"$base/ext/files/share/vulkan/implicit_layer.d/$(basename "$MANIFEST")"
+  flatpak build-export --runtime "$base/repo" "$base/ext" "$version" >/dev/null || { warn "build-export falhou"; exit 1; }
+  say "extensão $id//$version empacotada (refaça este comando depois de recompilar a layer)"
   case "$mode" in
-    apply) flatpak override --user "${grant[@]}" "$app" && say "liberado para $app (desfaça com: scripts/dev.sh flatpak-layer $app --undo)" ;;
-    undo) flatpak override --user "${revoke[@]}" "$app" && say "removido de $app" ;;
-    *) echo "flatpak override --user ${grant[*]} $app"; say "para aplicar: scripts/dev.sh flatpak-layer $app --apply" ;;
+    apply)
+      flatpak --user remote-add --if-not-exists --no-gpg-verify lr-local "$base/repo" 2>/dev/null || true
+      if flatpak --user list --runtime 2>/dev/null | grep -q "$id"; then flatpak --user update -y "$id//$version" >/dev/null 2>&1 || true; else flatpak --user install -y lr-local "$id//$version" >/dev/null || { warn "não consegui instalar a extensão"; exit 1; }; fi
+      flatpak override --user "${grant[@]}" "$app" && say "pronto para $app (desfaça com: scripts/dev.sh flatpak-layer $app --undo)" ;;
+    *) echo "flatpak override --user ${grant[*]} $app"; say "para instalar a extensão e liberar o app: scripts/dev.sh flatpak-layer $app --apply" ;;
   esac
 }
 

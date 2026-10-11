@@ -53,6 +53,7 @@ fn intercept_instance(name: &[u8]) -> vk::PFN_vkVoidFunction {
 pub unsafe extern "system" fn vkNegotiateLoaderLayerInterfaceVersion(
     interface: *mut NegotiateLayerInterface,
 ) -> vk::Result {
+    crate::log::log!("negociação com o loader");
     let interface = unsafe { &mut *interface };
     if interface.s_type != NEGOTIATE_INTERFACE_STRUCT
         || interface.loader_layer_interface_version < LOADER_LAYER_INTERFACE_VERSION
