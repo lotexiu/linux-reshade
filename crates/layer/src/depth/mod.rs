@@ -160,7 +160,8 @@ unsafe fn load<T: Copy>(gdpa: vk::PFN_vkGetDeviceProcAddr, device: vk::Device, n
 impl Depth {
     pub fn new(gdpa: vk::PFN_vkGetDeviceProcAddr, device: vk::Device) -> Self {
         let flag = |name: &str| std::env::var_os(name).is_some_and(|v| v != "0");
-        let armed = flag("LINUX_RESHADE_DEPTH");
+        // Armado pela variável de ambiente ou pelo marcador que o app de controle deixa para jogos cujo preset usa profundidade.
+        let armed = flag("LINUX_RESHADE_DEPTH") || ipc::depth_arm_wanted(&crate::status::game_id());
         let force_store = armed && flag("LINUX_RESHADE_DEPTH_FORCE_STORE");
         let on = armed || flag("LINUX_RESHADE_DEPTH_OBSERVE");
         let next = unsafe {

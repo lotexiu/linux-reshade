@@ -151,15 +151,26 @@ fn describe(e: &CompileError) -> String {
     e.to_string()
 }
 
+/// De quanto em quanto tempo o vigia refaz os marcadores de profundidade dos jogos.
+const ARM_EVERY: Duration = Duration::from_secs(3);
+
 /// Vigia para sempre: a cada [`INTERVAL`] olha as layers vivas e compila o que falta, contando o que fez.
 pub fn run(compiler: &Compiler, state: &ipc::Writer, presets_dir: Option<std::path::PathBuf>, global_macros: &str) -> ! {
     let mut failures = Failures::new();
     let mut games = presets_dir.map(|dir| crate::games::Games::new(dir).with_global_macros(global_macros));
     let mut last_prune = std::time::Instant::now();
+    let mut last_arm: Option<std::time::Instant> = None;
     loop {
         let layers = ipc::live_layers().unwrap_or_default();
         let report = tick(compiler, state, &layers, &mut failures);
         let games_report = games.as_mut().map(|g| g.tick(compiler, state, &layers, &mut failures));
+        // Marca os jogos que precisam da profundidade (a layer lê o marcador ao abrir o jogo).
+        if let Some(g) = &games
+            && last_arm.is_none_or(|t| t.elapsed() >= ARM_EVERY)
+        {
+            last_arm = Some(std::time::Instant::now());
+            g.sync_depth_arm(compiler, &ipc::state_dir());
+        }
         if last_prune.elapsed() >= PRUNE_EVERY {
             last_prune = std::time::Instant::now();
             state.prune_channels();

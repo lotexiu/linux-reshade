@@ -108,6 +108,38 @@ pub fn state_dir() -> PathBuf {
     PathBuf::from(format!("/dev/shm/linux-reshade-{uid}"))
 }
 
+/// O marcador "este jogo precisa da profundidade" (`depth-arm-<jogo>`): o app de controle o cria quando o preset do
+/// jogo tem efeitos que a usam, e a layer o lê ao criar o dispositivo (antes de o jogo criar as imagens), para armar a
+/// observação sem a pessoa precisar de `LINUX_RESHADE_DEPTH=1`.
+fn depth_arm_file(dir: &std::path::Path, game: &str) -> Option<PathBuf> {
+    (!game.is_empty() && !game.starts_with('.') && !game.contains(['/', '\\', '\0'])).then(|| dir.join(format!("depth-arm-{game}")))
+}
+
+pub fn depth_arm_wanted_in(dir: &std::path::Path, game: &str) -> bool {
+    depth_arm_file(dir, game).is_some_and(|f| f.exists())
+}
+
+pub fn depth_arm_wanted(game: &str) -> bool {
+    depth_arm_wanted_in(&state_dir(), game)
+}
+
+/// Cria ou remove o marcador; não mexe no disco se já está como se pede.
+pub fn set_depth_arm_in(dir: &std::path::Path, game: &str, on: bool) -> io::Result<()> {
+    let Some(file) = depth_arm_file(dir, game) else { return Ok(()) };
+    match (on, file.exists()) {
+        (true, false) => {
+            ensure_private_dir(dir)?;
+            fs::write(file, b"")
+        }
+        (false, true) => fs::remove_file(file),
+        _ => Ok(()),
+    }
+}
+
+pub fn set_depth_arm(game: &str, on: bool) -> io::Result<()> {
+    set_depth_arm_in(&state_dir(), game, on)
+}
+
 /// Cria o diretório do estado (se preciso) e garante que é do usuário atual e privado.
 pub(crate) fn ensure_private_dir(dir: &std::path::Path) -> io::Result<()> {
     fs::create_dir_all(dir)?;

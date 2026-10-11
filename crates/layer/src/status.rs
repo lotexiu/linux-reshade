@@ -45,6 +45,11 @@ pub fn instance_destroyed() {
 
 /// O nome do executável do jogo, sem extensão. Sob Wine/Proton o processo é o do Wine; o `.exe` do jogo está no
 /// primeiro argumento (`Z:\\...\\RocketLeague.exe`), então ele vale mais que o nome do binário.
+/// O id do jogo para o app de controle (o nome do executável), como em `LayerStatus::game_id`.
+pub fn game_id() -> String {
+    exe_name()
+}
+
 fn exe_name() -> String {
     let from_cmdline = std::fs::read("/proc/self/cmdline").ok().and_then(|bytes| {
         let first = bytes.split(|b| *b == 0).next()?;

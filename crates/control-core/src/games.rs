@@ -6,7 +6,8 @@
 //! O id do jogo é o nome do executável que a layer informa (`RocketLeague` para `RocketLeague.exe`, também sob
 //! Proton) e, se ela não o souber, o nome da aplicação no Vulkan.
 
-use crate::compiler::{Compiler, Defines, Ensured, variant_key};
+use crate::analysis::{self, Feature};
+use crate::compiler::{Compiler, Defines, Ensured, valid_name, variant_key};
 use crate::game_plan;
 use crate::watch::{Failures, Job};
 use ipc::{EffectState, LiveLayer};
@@ -82,6 +83,32 @@ impl Games {
             }
         }
         used
+    }
+
+    /// Marca (em `dir`) os jogos cujo preset tem algum efeito que usa profundidade, e desmarca os outros: a layer arma a
+    /// observação da profundidade ao abrir o jogo se o marcador existe. Devolve os jogos marcados.
+    pub fn sync_depth_arm(&self, compiler: &Compiler, dir: &std::path::Path) -> Vec<String> {
+        let mut armed = Vec::new();
+        let Ok(entries) = std::fs::read_dir(&self.presets_dir) else { return armed };
+        for entry in entries.flatten() {
+            let Some(game) = entry.file_name().to_str().map(str::to_string) else { continue };
+            if !entry.path().is_dir() || !preset::game::valid_game_id(&game) {
+                continue;
+            }
+            let needs = preset::game::find(&self.presets_dir, &game).is_some_and(|found| {
+                let Ok(bytes) = std::fs::read(&found.path) else { return false };
+                let preset = Preset::parse(&String::from_utf8_lossy(&bytes));
+                game_plan::enabled_order(&preset).iter().filter_map(|id| id.file.as_deref()).any(|file| {
+                    let name = file.strip_suffix(".fx").unwrap_or(file);
+                    valid_name(name) && analysis::ensure(compiler, name).has(Feature::Depth)
+                })
+            });
+            let _ = ipc::set_depth_arm_in(dir, &game, needs);
+            if needs {
+                armed.push(game);
+            }
+        }
+        armed
     }
 
     /// Uma olhada: publica o plano de quem ainda não tem ou cujo preset mudou, e compila o que falta para as
@@ -355,5 +382,24 @@ mod tests {
         let mut failures = Failures::new();
         assert_eq!(games.tick(&e.f.compiler, &e.state, &[layer("Jogo", &[])], &mut failures), Report::default());
         assert_eq!(games.tick(&e.f.compiler, &e.state, &[layer("Jogo", &[(100, 100)])], &mut failures).published.len(), 1);
+    }
+
+    #[test]
+    fn depth_arm_marks_only_the_games_whose_preset_uses_depth() {
+        let e = env("games-arm");
+        for (game, techniques) in [("ComProf", "Depth@Depth.fx"), ("SemProf", "Sepia@Sepia.fx"), ("Global", "")] {
+            fs::create_dir_all(e.presets.join(game)).unwrap();
+            fs::write(e.presets.join(game).join("game.ini"), "preset=P.ini\n").unwrap();
+            fs::write(e.presets.join(game).join("P.ini"), format!("Techniques={techniques}\n")).unwrap();
+        }
+        let dir = e.f.root.join("arm-dir");
+        let games = Games::new(e.presets.clone());
+        assert_eq!(games.sync_depth_arm(&e.f.compiler, &dir), ["ComProf"]);
+        assert!(ipc::depth_arm_wanted_in(&dir, "ComProf") && !ipc::depth_arm_wanted_in(&dir, "SemProf"));
+
+        // Trocar o preset desmarca (e o marcador não sobra).
+        fs::write(e.presets.join("ComProf/P.ini"), "Techniques=Sepia@Sepia.fx\n").unwrap();
+        assert!(games.sync_depth_arm(&e.f.compiler, &dir).is_empty());
+        assert!(!ipc::depth_arm_wanted_in(&dir, "ComProf"));
     }
 }
