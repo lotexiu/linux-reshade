@@ -92,6 +92,7 @@ pub unsafe extern "system" fn destroy_device(device: vk::Device, p_allocator: *c
             for (_, mut fx) in data.swapchains.lock().unwrap().drain() {
                 fx.destroy(&data.device);
             }
+            crate::effect::reap_semaphores(&data.device, true);
             crate::depth::destroy(&data);
             (data.device.fp_v1_0().destroy_device)(device, p_allocator);
         }

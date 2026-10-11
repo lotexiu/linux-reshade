@@ -92,8 +92,7 @@ pub unsafe extern "system" fn destroy_swapchain(
         let Some(data) = DEVICES.get(dispatch_key(device.as_raw())) else { return };
         let removed = data.swapchains.lock().unwrap().remove(&swapchain.as_raw());
         if let Some(mut fx) = removed {
-            // Um present anterior pode ainda estar executando o efeito.
-            let _ = data.device.device_wait_idle();
+            // Um present anterior pode ainda estar executando o efeito: `destroy` espera as fences da cadeia.
             fx.destroy(&data.device);
         }
         (data.swapchain.destroy_swapchain_khr)(device, swapchain, p_allocator);

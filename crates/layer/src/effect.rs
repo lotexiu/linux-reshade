@@ -41,6 +41,35 @@ fn active_control() -> Option<String> {
     value
 }
 
+/// Quantos presents depois de a cadeia sair os semáforos dela são destruídos.
+const SEMAPHORE_RETIRE_PRESENTS: u32 = 8;
+
+static RETIRED_SEMAPHORES: std::sync::Mutex<Vec<(u64, vk::Semaphore, u32)>> = std::sync::Mutex::new(Vec::new());
+
+fn retire_semaphores(device: &ash::Device, semaphores: impl Iterator<Item = vk::Semaphore>) {
+    let key = device.handle().as_raw();
+    let mut retired = RETIRED_SEMAPHORES.lock().unwrap();
+    retired.extend(semaphores.map(|s| (key, s, SEMAPHORE_RETIRE_PRESENTS)));
+}
+
+/// Conta um present para os semáforos aposentados deste dispositivo e destrói os que chegaram ao fim (todos, com `all`).
+pub unsafe fn reap_semaphores(device: &ash::Device, all: bool) {
+    let key = device.handle().as_raw();
+    let mut retired = RETIRED_SEMAPHORES.lock().unwrap();
+    retired.retain_mut(|(owner, semaphore, left)| {
+        if *owner != key {
+            return true;
+        }
+        *left = left.saturating_sub(1);
+        if all || *left == 0 {
+            unsafe { device.destroy_semaphore(*semaphore, None) };
+            false
+        } else {
+            true
+        }
+    });
+}
+
 /// Recursos que só existem depois do primeiro present com os efeitos ligados.
 struct Built {
     chain: Chain,
@@ -186,11 +215,8 @@ impl SwapchainFx {
             if built.signature != new_signature {
                 log!("efeito do swapchain {:#x} descartado: o bundle mudou (a cadeia é outra)", self.handle);
                 crate::status::set_techniques(Vec::new());
-                // A GPU precisa estar ociosa para destruir os recursos.
-                unsafe {
-                    let _ = data.device.device_wait_idle();
-                    Self::destroy_fx(&mut self.fx, &data.device);
-                }
+                // `destroy_fx` espera o trabalho da cadeia (as fences dela).
+                unsafe { Self::destroy_fx(&mut self.fx, &data.device) };
                 self.fx = Fx::Unbuilt;
             } else if let Some(built) = match &mut self.fx { Fx::Ready(b) => Some(b), _ => None } {
                 // A mesma cadeia: só os uniforms do plano podem ter mudado.
@@ -239,10 +265,15 @@ impl SwapchainFx {
         };
         if let Some(mut built) = built {
             unsafe {
-                built.chain.destroy(device);
-                for s in built.semaphores.drain(..) {
-                    device.destroy_semaphore(s, None);
+                // Só o trabalho da própria cadeia precisa terminar (suas fences). `vkDeviceWaitIdle` exige que nenhuma outra thread
+                // use NENHUMA fila durante a espera, e o jogo submete de outras threads: era a suspeita dos erros de GPU (Xid 69)
+                // ao trocar de efeitos.
+                if !built.fences.is_empty() {
+                    let _ = device.wait_for_fences(&built.fences, true, 5_000_000_000);
                 }
+                built.chain.destroy(device);
+                // Um present já enfileirado ainda pode esperar o semáforo do efeito: ele sai alguns presents depois.
+                retire_semaphores(device, built.semaphores.drain(..));
                 for f in built.fences.drain(..) {
                     device.destroy_fence(f, None);
                 }
@@ -361,6 +392,7 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
         return None;
     }
     unsafe {
+        reap_semaphores(&data.device, false);
         let swapchain = *info.p_swapchains;
         let index = *info.p_image_indices as usize;
 
@@ -387,7 +419,6 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
             let now = data.depth.chosen().map(|d| (d.image, d.layout));
             if built.depth_key != now {
                 let old = built.depth_key;
-                let _ = data.device.device_wait_idle();
                 SwapchainFx::destroy_fx(&mut fx.fx, &data.device);
                 fx.fx = Fx::Unbuilt;
                 data.depth.chain_rebuilds.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -559,10 +590,7 @@ pub fn on_depth_image_destroyed(data: &DeviceData, image: u64) {
     let mut swapchains = data.swapchains.lock().unwrap();
     for fx in swapchains.values_mut() {
         if matches!(&fx.fx, Fx::Ready(b) if b.depth_key.is_some_and(|k| k.0 == image)) || matches!(&fx.fx, Fx::Building(j) if j.depth_image == Some(image)) {
-            unsafe {
-                let _ = data.device.device_wait_idle();
-                SwapchainFx::destroy_fx(&mut fx.fx, &data.device);
-            }
+            unsafe { SwapchainFx::destroy_fx(&mut fx.fx, &data.device) };
             fx.fx = Fx::Unbuilt;
             log!("efeito descartado: o jogo destruiu a imagem de profundidade que ele usava");
         }
