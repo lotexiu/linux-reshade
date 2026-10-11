@@ -1113,7 +1113,7 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
             let mut diag = data.depth.diag.lock().unwrap();
             if data.depth.diag_frames.fetch_add(1, Ordering::Relaxed) % 90 == 0 || diag.is_empty() {
                 *diag = format!(
-                    "trocas da imagem: {}, reconstruções da cadeia: {}; um quadro: {} desenhos ({} em passes com profundidade), limpezas de profundidade fora de passe: {} de anexos e {} de imagens; limpeza escolhida: {} de {}; última mudança que reconstruiu: {}",
+                    "trocas da imagem: {}, reconstruções da cadeia: {}; um quadro: {} desenhos ({} em passes com profundidade), limpezas de profundidade fora de passe: {} de anexos e {} de imagens; limpeza escolhida: {} de {}; última mudança que reconstruiu: {}; presents sem efeito/com efeito: {}/{}",
                     data.depth.image_changes.load(Ordering::Relaxed),
                     data.depth.chain_rebuilds.load(Ordering::Relaxed),
                     frame_draws,
@@ -1123,6 +1123,8 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
                     data.depth.snapshot_clear.load(Ordering::Relaxed),
                     clear_count,
                     data.depth.last_key_change.lock().unwrap(),
+                    data.depth.fx_presents[0].load(Ordering::Relaxed),
+                    data.depth.fx_presents[1].load(Ordering::Relaxed),
                 );
             }
             passes_summary = format!("{} | {passes_summary}", *diag);

@@ -181,6 +181,8 @@ pub struct Depth {
     /// cadeia de efeitos foi reconstruída por causa disso.
     pub(crate) image_changes: AtomicU32,
     pub(crate) chain_rebuilds: AtomicU32,
+    /// Presents com e sem o efeito aplicado (um efeito que some em alguns quadros aparece como oscilação).
+    pub(crate) fx_presents: [AtomicU32; 2],
     pub(crate) last_image: AtomicU64,
     /// Diagnóstico por quadro: desenhos vistos, os que caíram num passe com profundidade, e limpezas de profundidade fora de
     /// passes (`vkCmdClearAttachments` e `vkCmdClearDepthStencilImage`).
@@ -273,6 +275,7 @@ impl Depth {
             passes_logged: Mutex::new(String::new()),
             image_changes: AtomicU32::new(0),
             chain_rebuilds: AtomicU32::new(0),
+            fx_presents: [AtomicU32::new(0), AtomicU32::new(0)],
             last_image: AtomicU64::new(0),
             sticky: Mutex::new((0, 0, 0)),
             picked_image: Mutex::new((0, 0)),
