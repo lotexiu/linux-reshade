@@ -21,6 +21,7 @@ pub mod games;
 pub mod layers;
 pub mod location;
 pub mod params;
+pub mod patches;
 pub mod presets;
 pub mod select;
 pub mod watch;

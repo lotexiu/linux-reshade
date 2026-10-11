@@ -188,6 +188,15 @@ fn images_up_to_date(dir: &Path, compiled: SystemTime) -> bool {
 
 /// O arquivo `source` dentro das pastas de texturas: o nome exato e, se não houver, sem diferenciar maiúsculas
 /// (os efeitos foram escritos no Windows) e com `\` como separador.
+/// O bundle anota quais correções de código (`patches`) entraram nele.
+const PATCHES_MARKER: &str = "patches";
+
+fn patches_up_to_date(dir: &Path, name: &str, source: &Path) -> bool {
+    let wanted = crate::patches::applicable(base_name(name), source);
+    let have = std::fs::read_to_string(dir.join(PATCHES_MARKER)).unwrap_or_default();
+    have.lines().filter(|l| !l.is_empty()).eq(wanted.iter().copied())
+}
+
 fn find_texture(dirs: &[PathBuf], source: &str) -> Option<PathBuf> {
     let relative = source.replace('\\', "/");
     let lower = relative.to_ascii_lowercase();
@@ -335,7 +344,9 @@ impl Compiler {
         // Um compilador mais novo que o bundle (o formato ganhou campos, um defeito foi corrigido) invalida o cache.
         let tool = modified(&self.fx2spv);
         match (modified(&dir.join("manifest.json")), modified(&source)) {
-            (Some(compiled), Some(edited)) => compiled >= edited && tool.is_none_or(|t| compiled >= t) && images_up_to_date(&dir, compiled),
+            (Some(compiled), Some(edited)) => {
+                compiled >= edited && tool.is_none_or(|t| compiled >= t) && images_up_to_date(&dir, compiled) && patches_up_to_date(&dir, name, &source)
+            }
             _ => false,
         }
     }
@@ -401,6 +412,23 @@ impl Compiler {
             }
             command.arg("-D").arg(format!("{name}={value}"));
         }
+        // Correções de código que o Vulkan não perdoa (ver `patches`): compila uma cópia corrigida, e os `#include` relativos
+        // continuam a valer pelo diretório do arquivo original.
+        let applied = crate::patches::applicable(base_name(name), &source);
+        let source = if applied.is_empty() {
+            source
+        } else {
+            let text = std::fs::read_to_string(&source).map_err(|e| CompileError::Io(format!("{}: {e}", source.display())))?;
+            let (patched, _) = crate::patches::apply(base_name(name), &text);
+            let staging = self.cache.join("patched");
+            std::fs::create_dir_all(&staging).map_err(|e| CompileError::Io(format!("{}: {e}", staging.display())))?;
+            let copy = staging.join(format!("{}.fx", base_name(name)));
+            std::fs::write(&copy, patched).map_err(|e| CompileError::Io(format!("{}: {e}", copy.display())))?;
+            if let Some(parent) = source.parent() {
+                command.arg("-I").arg(parent);
+            }
+            copy
+        };
         command.arg("-o").arg(&dir).arg(&source);
         let output = run_retrying_busy(&mut command).map_err(|e| CompileError::Io(format!("{}: {e}", self.fx2spv.display())))?;
         if !output.status.success() {
@@ -409,6 +437,7 @@ impl Compiler {
                 output: String::from_utf8_lossy(&output.stderr).into_owned(),
             });
         }
+        let _ = std::fs::write(dir.join(PATCHES_MARKER), applied.join("\n"));
         if let Err(e) = self.write_images(&dir) {
             // Um bundle sem as imagens não serve e não pode passar por "atual" na próxima olhada.
             let _ = std::fs::remove_dir_all(&dir);
