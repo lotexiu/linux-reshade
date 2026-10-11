@@ -22,6 +22,8 @@ use std::time::Duration;
 struct Options {
     smoke: Option<String>,
     screenshot: Option<String>,
+    /// Escolhe este jogo antes de agir (para fotografar a tela dele).
+    game: Option<String>,
     /// Abre o editor de definições (para fotografar a tela com ele aberto).
     open_macros: bool,
     /// Espera antes de agir (para um jogo abrir depois do painel).
@@ -36,7 +38,7 @@ struct Options {
 
 impl Options {
     fn is_test_run(&self) -> bool {
-        self.smoke.is_some() || self.open_macros || self.screenshot.is_some() || self.effect.is_some() || self.hold_ms > 0 || self.wait_ms > 0 || self.keepalive_check
+        self.game.is_some() || self.smoke.is_some() || self.open_macros || self.screenshot.is_some() || self.effect.is_some() || self.hold_ms > 0 || self.wait_ms > 0 || self.keepalive_check
     }
 }
 
@@ -49,6 +51,7 @@ fn parse_args() -> Result<Options, String> {
             "--effect" => options.effect = Some(args.next().ok_or("--effect precisa do nome de um efeito")?),
             "--wait" => options.wait_ms = args.next().and_then(|v| v.parse().ok()).ok_or("--wait precisa de um tempo em milissegundos")?,
             "--hold" => options.hold_ms = args.next().and_then(|v| v.parse().ok()).ok_or("--hold precisa de um tempo em milissegundos")?,
+            "--game" => options.game = Some(args.next().ok_or("--game precisa do id de um jogo")?),
             "--open-macros" => options.open_macros = true,
             "--keepalive-check" => options.keepalive_check = true,
             "--screenshot" => options.screenshot = Some(args.next().ok_or("--screenshot precisa de um arquivo .png")?),
@@ -142,6 +145,10 @@ async fn test_run(app: gtk::Application, ui: Rc<window::Ui>, options: Rc<Options
     };
     glib::timeout_future(Duration::from_millis(600 + options.wait_ms)).await;
 
+    if let Some(game) = &options.game {
+        ui.select_game(game);
+        glib::timeout_future(Duration::from_millis(700)).await;
+    }
     if let Some(name) = &options.smoke {
         let problems = ui.smoke(name);
         if problems.is_empty() {

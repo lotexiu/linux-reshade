@@ -8,7 +8,7 @@
 
 use crate::control::{Control, controls_of};
 use control_core::compiler::{Compiler, DEFAULT_SIZE, valid_name};
-use control_core::analysis::{self, EffectInfo};
+use control_core::analysis::{self, EffectInfo, Feature};
 use control_core::{game_plan, presets};
 use fx_bundle::Bundle;
 use fx_bundle::manifest::{Scalar, Value};
@@ -107,6 +107,8 @@ pub struct HomeSnapshot {
     /// Andamento da análise: efeitos analisados e total.
     pub analysis: (usize, usize),
     pub layers: Vec<LiveLayer>,
+    /// O que dizer sobre a profundidade do jogo escolhido (`None`: nada a dizer).
+    pub depth_note: Option<crate::DepthNote>,
     /// A última mensagem para o usuário; some na próxima ação.
     pub notice: Option<String>,
 }
@@ -242,6 +244,15 @@ impl Home {
 
         self.load_preset();
         self.build_view();
+        self.update_depth_note();
+    }
+
+    fn update_depth_note(&mut self) {
+        self.snapshot.depth_note = None;
+        let Some(id) = self.game.clone() else { return };
+        let uses_depth = self.snapshot.techniques.iter().filter(|t| t.enabled).any(|t| self.snapshot.infos.get(effect_name(&t.file)).is_some_and(|i| i.has(Feature::Depth)));
+        let layer = self.snapshot.layers.iter().find(|l| l.status.game_id() == id);
+        self.snapshot.depth_note = crate::depth_note::note(uses_depth, layer);
     }
 
     /// Relê as análises dos efeitos quando o worker salvou mais alguma.

@@ -132,7 +132,7 @@ fn layout_name(layout: i32) -> String {
     }
 }
 
-fn depth_format_name(format: i32) -> String {
+pub fn depth_format_name(format: i32) -> String {
     match format {
         124 => "D16_UNORM".into(),
         125 => "X8_D24_UNORM".into(),

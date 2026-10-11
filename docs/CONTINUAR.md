@@ -25,7 +25,9 @@ cadeia. Commits de referência: `smoke-preset` (`f5eae79`), `lrctl preset` (`7ae
 | F6 macros por nível (recompilam) | **feita**; atalhos de preset e transição suave ainda não |
 | D1 observar a profundidade (`LINUX_RESHADE_DEPTH_OBSERVE=1`) | **feita**, testada no vkcube e no Haste; ver `docs/depth.md` |
 | F7 o resto do inventário (atalhos por técnica, capturas, OSD, mouse/teclado) | a fazer |
-| Marco 5: depth buffer | não iniciado; 40 dos 152 efeitos do dono pedem |
+| D2 profundidade amostrada (original ou foto de um passe) | **feita**; regra automática do `DontCare` validada no Haste (2026-10-10); `docs/depth.md` |
+| D3 profundidade por jogo | parcial: marcador `depth-arm-<jogo>` arma o jogo sozinho; o painel mostra o estado da profundidade e as macros (`UPSIDE_DOWN` à mão, no preset); falta escolher candidata/passe no painel |
+| Efeito antes da UI | adiado: no Haste a UI já está na imagem de render (`docs/antes-da-ui.md`) |
 
 Também feito nesta etapa: sRGB (8 bits), mipmaps, texturas de arquivo (PNG), o remendo de `#include` do Windows
 no `fx2spv` (`tools/fx2spv/patches`), a pasta de dados padrão (`~/.local/share/linux-reshade`), o id do jogo

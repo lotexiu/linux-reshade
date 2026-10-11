@@ -31,6 +31,7 @@ pub struct Ui {
     preset: gtk::DropDown,
     preset_names: RefCell<Vec<String>>,
     preset_note: gtk::Label,
+    depth_note: gtk::Label,
     new_preset: gtk::MenuButton,
     macros: Rc<MacroEditor>,
     new_name: gtk::Entry,
@@ -145,6 +146,12 @@ impl Ui {
         let macros = MacroEditor::new("Definições…", "Definições de pré-processador do preset, para todos os efeitos (como no ReShade). Mudar recompila os efeitos afetados.");
         let delete_preset = gtk::Button::from_icon_name("user-trash-symbolic");
         delete_preset.set_tooltip_text(Some("Apagar este preset"));
+        let depth_note = gtk::Label::new(None);
+        depth_note.set_halign(gtk::Align::Start);
+        depth_note.set_xalign(0.0);
+        depth_note.set_wrap(true);
+        depth_note.add_css_class("caption");
+        depth_note.set_visible(false);
         let preset_note = gtk::Label::new(None);
         preset_note.set_halign(gtk::Align::Start);
         preset_note.set_wrap(true);
@@ -271,6 +278,7 @@ impl Ui {
         page.append(&line("Jogo", &[game.upcast_ref()]));
         page.append(&line("Preset", &[preset.upcast_ref(), new_preset.upcast_ref(), delete_preset.upcast_ref()]));
         page.append(&preset_note);
+        page.append(&depth_note);
         macros.button.set_halign(gtk::Align::Start);
         page.append(&line("Macros", &[macros.button.upcast_ref()]));
         let tools = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -307,6 +315,7 @@ impl Ui {
             preset,
             preset_names: RefCell::new(Vec::new()),
             preset_note,
+            depth_note: depth_note.clone(),
             new_preset: new_preset.clone(),
             macros: macros.clone(),
             new_name: name_entry.clone(),
@@ -566,6 +575,19 @@ impl Ui {
                 (None, true) => "Este jogo não tem preset. Adicione um efeito para criar o dele.".to_string(),
                 (None, false) => "Ainda não há preset global. Adicione um efeito para criá-lo (vale para os jogos sem preset próprio).".to_string(),
             });
+
+            match &s.depth_note {
+                Some(n) => {
+                    self.depth_note.set_text(&n.text);
+                    if n.attention {
+                        self.depth_note.add_css_class("warning");
+                    } else {
+                        self.depth_note.remove_css_class("warning");
+                    }
+                    self.depth_note.set_visible(true);
+                }
+                None => self.depth_note.set_visible(false),
+            }
 
             // Efeitos que podem ser adicionados.
             if *self.add_effects.borrow() != s.effects {
@@ -940,6 +962,11 @@ impl Ui {
     }
 
     // ---- Apoio aos testes automáticos: aciona os widgets de verdade e confere o que o modelo viu. ----
+
+    /// Escolhe um jogo, como pela lista.
+    pub fn select_game(self: &Rc<Self>, id: &str) {
+        self.act(|h| h.select_game(Some(id)));
+    }
 
     /// Adiciona um efeito ao preset do jogo escolhido, como pelo botão. `false` se o efeito não existe.
     pub fn choose_effect(self: &Rc<Self>, name: &str) -> bool {
