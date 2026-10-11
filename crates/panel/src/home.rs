@@ -574,7 +574,15 @@ impl Home {
         };
         let layer_id = layer.id.clone();
         match ipc::set_depth_pick(&layer_id, pick) {
-            Ok(()) => self.update_depth_note(),
+            Ok(()) => {
+                // Lembra para as próximas vezes que o jogo abrir (o `game.ini` do jogo).
+                if let Some(dir) = &self.presets_dir
+                    && let Err(e) = game::set_depth_choice(dir, &id, pick.text().as_deref())
+                {
+                    self.done(Some(format!("a escolha vale agora, mas não consegui gravá-la no game.ini: {e}")));
+                }
+                self.update_depth_note();
+            }
             Err(e) => self.done(Some(format!("não consegui gravar a escolha da profundidade: {e}"))),
         }
     }

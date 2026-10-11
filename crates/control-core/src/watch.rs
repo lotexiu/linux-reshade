@@ -157,7 +157,7 @@ const ARM_EVERY: Duration = Duration::from_secs(3);
 /// Vigia para sempre: a cada [`INTERVAL`] olha as layers vivas e compila o que falta, contando o que fez.
 pub fn run(compiler: &Compiler, state: &ipc::Writer, presets_dir: Option<std::path::PathBuf>, global_macros: &str) -> ! {
     let mut failures = Failures::new();
-    let mut games = presets_dir.map(|dir| crate::games::Games::new(dir).with_global_macros(global_macros));
+    let mut games = presets_dir.map(|dir| crate::games::Games::new(dir).with_global_macros(global_macros).with_depth_dir(ipc::state_dir()));
     let mut last_prune = std::time::Instant::now();
     let mut last_arm: Option<std::time::Instant> = None;
     loop {

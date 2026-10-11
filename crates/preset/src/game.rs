@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 pub const GAME_FILE: &str = "game.ini";
 pub const GLOBAL_PRESET: &str = "preset.ini";
 const PRESET_KEY: &str = "preset";
+const DEPTH_KEY: &str = "depth";
 
 /// De onde veio o preset escolhido.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,6 +77,32 @@ pub fn set_game_preset(presets_dir: &Path, game: &str, preset: Option<&str>) -> 
     ini.save(&file)
 }
 
+/// A escolha de profundidade do jogo gravada em `game.ini` (`depth=pass:2`, `depth=candidate:1`), como texto. `None`: automática.
+pub fn depth_choice(presets_dir: &Path, game: &str) -> Option<String> {
+    let dir = game_dir(presets_dir, game)?;
+    let ini = Ini::load(&dir.join(GAME_FILE)).ok()?;
+    ini.get("", DEPTH_KEY).map(str::trim).filter(|v| !v.is_empty()).map(String::from)
+}
+
+/// Grava (ou apaga, com `None`) a escolha de profundidade do jogo. O resto do `game.ini` é preservado; sem `game.ini`
+/// e sem escolha, não cria nada.
+pub fn set_depth_choice(presets_dir: &Path, game: &str, choice: Option<&str>) -> io::Result<()> {
+    let dir = game_dir(presets_dir, game).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, format!("id de jogo inválido: {game:?}")))?;
+    let file = dir.join(GAME_FILE);
+    if choice.is_none() && !file.exists() {
+        return Ok(());
+    }
+    let mut ini = Ini::load(&file).unwrap_or_default();
+    match choice {
+        Some(text) => ini.set("", DEPTH_KEY, text),
+        None => {
+            ini.remove("", DEPTH_KEY);
+        }
+    }
+    std::fs::create_dir_all(&dir)?;
+    ini.save(&file)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -99,6 +126,23 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn the_depth_choice_is_kept_in_game_ini_next_to_the_preset() {
+        let d = Dir::new("depth");
+        d.write("Jogo/game.ini", "preset=Noturno.ini\n");
+        assert_eq!(depth_choice(&d.0, "Jogo"), None);
+        set_depth_choice(&d.0, "Jogo", Some("pass:2")).unwrap();
+        assert_eq!(depth_choice(&d.0, "Jogo").as_deref(), Some("pass:2"));
+        d.write("Jogo/Noturno.ini", "Techniques=\n");
+        assert_eq!(find(&d.0, "Jogo").unwrap().source, Source::Game, "o preset escolhido continua valendo");
+        set_depth_choice(&d.0, "Jogo", None).unwrap();
+        assert_eq!(depth_choice(&d.0, "Jogo"), None);
+        // Sem escolha e sem game.ini: nada é criado.
+        set_depth_choice(&d.0, "Novo", None).unwrap();
+        assert!(!d.0.join("Novo").exists());
+        assert!(set_depth_choice(&d.0, "../x", Some("pass:1")).is_err());
     }
 
     #[test]

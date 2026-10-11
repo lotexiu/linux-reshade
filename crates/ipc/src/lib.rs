@@ -156,6 +156,27 @@ pub enum DepthPick {
     Pass(u32),
 }
 
+impl DepthPick {
+    /// Como se grava no `game.ini` (`pass:2`, `candidate:1`); `None` para a automática.
+    pub fn text(self) -> Option<String> {
+        match self {
+            DepthPick::Auto => None,
+            DepthPick::Candidate(n) => Some(format!("candidate:{n}")),
+            DepthPick::Pass(n) => Some(format!("pass:{n}")),
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        let (kind, n) = text.trim().split_once(':')?;
+        let n: u32 = n.trim().parse().ok().filter(|n| *n > 0)?;
+        match kind.trim() {
+            "candidate" => Some(DepthPick::Candidate(n)),
+            "pass" => Some(DepthPick::Pass(n)),
+            _ => None,
+        }
+    }
+}
+
 fn depth_pick_file(dir: &std::path::Path, layer_id: &str) -> Option<PathBuf> {
     (!layer_id.is_empty() && !layer_id.contains(['/', '\\', '\0'])).then(|| dir.join(format!("depth-pick-{layer_id}")))
 }
@@ -458,6 +479,18 @@ impl ParamSource for Reader {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_depth_pick_text_round_trips_and_rejects_garbage() {
+        use super::*;
+        for pick in [DepthPick::Candidate(3), DepthPick::Pass(2)] {
+            assert_eq!(DepthPick::parse(&pick.text().unwrap()), Some(pick));
+        }
+        assert_eq!(DepthPick::Auto.text(), None);
+        for bad in ["", "pass", "pass:0", "pass:x", "outra:1", "candidate:-1"] {
+            assert_eq!(DepthPick::parse(bad), None, "{bad:?}");
+        }
+    }
+
     #[test]
     fn the_depth_pick_round_trips_through_its_file() {
         use super::*;

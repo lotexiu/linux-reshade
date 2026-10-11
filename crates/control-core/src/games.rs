@@ -41,6 +41,10 @@ pub struct Games {
     /// Definições globais (`config.ini`), já lidas.
     global_macros: Macros,
     published: HashMap<String, Published>,
+    /// Onde a layer lê o pedido de profundidade; `None` não aplica a escolha gravada no `game.ini` (testes).
+    depth_dir: Option<PathBuf>,
+    /// As layers (id) cuja escolha de profundidade gravada já foi aplicada.
+    depth_applied: HashSet<String>,
 }
 
 fn modified(path: &std::path::Path) -> Option<SystemTime> {
@@ -63,12 +67,18 @@ fn resolutions(layer: &LiveLayer) -> Vec<(u32, u32)> {
 
 impl Games {
     pub fn new(presets_dir: PathBuf) -> Self {
-        Self { presets_dir, global_macros: Macros::new(), published: HashMap::new() }
+        Self { presets_dir, global_macros: Macros::new(), published: HashMap::new(), depth_dir: None, depth_applied: HashSet::new() }
     }
 
     /// As definições de pré-processador globais (`NOME=VALOR,OUTRO`); valem para todos os efeitos, abaixo do preset.
     pub fn with_global_macros(mut self, text: &str) -> Self {
         self.global_macros = preset::parse_macros(text);
+        self
+    }
+
+    /// Passa a aplicar, ao ver um jogo pela primeira vez, a escolha de profundidade do `game.ini` (`depth=pass:2`) em `dir`.
+    pub fn with_depth_dir(mut self, dir: PathBuf) -> Self {
+        self.depth_dir = Some(dir);
         self
     }
 
@@ -128,10 +138,27 @@ impl Games {
     pub fn tick(&mut self, compiler: &Compiler, state: &ipc::Writer, layers: &[LiveLayer], failures: &mut Failures) -> Report {
         let mut report = Report::default();
         self.published.retain(|id, _| layers.iter().any(|l| &l.id == id));
+        self.depth_applied.retain(|id| layers.iter().any(|l| &l.id == id));
         for layer in layers {
+            self.apply_depth_choice(layer);
             self.tick_layer(compiler, state, layer, failures, &mut report);
         }
         report
+    }
+
+    /// A primeira vez que se vê um jogo aberto: a escolha de profundidade gravada no `game.ini` vira o pedido que a layer lê
+    /// (se a pessoa ainda não pediu outra coisa nesta sessão).
+    fn apply_depth_choice(&mut self, layer: &LiveLayer) {
+        let Some(dir) = &self.depth_dir else { return };
+        if !self.depth_applied.insert(layer.id.clone()) {
+            return;
+        }
+        if ipc::depth_pick_in(dir, &layer.id) != ipc::DepthPick::Auto {
+            return;
+        }
+        if let Some(pick) = preset::game::depth_choice(&self.presets_dir, layer.status.game_id()).and_then(|t| ipc::DepthPick::parse(&t)) {
+            let _ = ipc::set_depth_pick_in(dir, &layer.id, pick);
+        }
     }
 
     fn tick_layer(&mut self, compiler: &Compiler, state: &ipc::Writer, layer: &LiveLayer, failures: &mut Failures, report: &mut Report) {
@@ -418,5 +445,25 @@ mod tests {
         fs::write(e.presets.join("ComProf/P.ini"), "Techniques=Sepia@Sepia.fx\n").unwrap();
         assert!(games.sync_depth_arm(&e.f.compiler, &dir, false).is_empty());
         assert!(!ipc::depth_arm_wanted_in(&dir, "ComProf"));
+    }
+
+    #[test]
+    fn the_depth_choice_in_game_ini_becomes_the_layers_request_once() {
+        let e = env("games-depth-choice");
+        fs::create_dir_all(e.presets.join("Jogo")).unwrap();
+        fs::write(e.presets.join("Jogo/game.ini"), "depth=pass:2\n").unwrap();
+        let dir = e.f.root.join("pick-dir");
+        let mut games = Games::new(e.presets.clone()).with_depth_dir(dir.clone());
+        let live = [layer("Jogo", &[(8, 4)])];
+        games.apply_depth_choice(&live[0]);
+        assert_eq!(ipc::depth_pick_in(&dir, "layer-Jogo"), ipc::DepthPick::Pass(2));
+        // A pessoa muda de ideia nesta sessão: não é sobrescrito de novo.
+        ipc::set_depth_pick_in(&dir, "layer-Jogo", ipc::DepthPick::Candidate(1)).unwrap();
+        games.apply_depth_choice(&live[0]);
+        assert_eq!(ipc::depth_pick_in(&dir, "layer-Jogo"), ipc::DepthPick::Candidate(1));
+        // Sem escolha gravada, nada é pedido.
+        let mut other = Games::new(e.presets.clone()).with_depth_dir(dir.clone());
+        other.apply_depth_choice(&layer("Outro", &[(8, 4)]));
+        assert_eq!(ipc::depth_pick_in(&dir, "layer-Outro"), ipc::DepthPick::Auto);
     }
 }
