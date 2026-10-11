@@ -95,7 +95,6 @@ pub fn analyze(name: &str, manifest: &Manifest) -> EffectInfo {
             features.push(f);
         }
     };
-    let mut problems = Vec::new();
     let texture_of = |sampler: u32| manifest.samplers.get(sampler as usize).and_then(|s| manifest.textures.iter().find(|t| t.unique_name == s.texture));
 
     for technique in &manifest.techniques {
@@ -128,11 +127,9 @@ pub fn analyze(name: &str, manifest: &Manifest) -> EffectInfo {
     }
     features.sort();
 
-    // Profundidade já é suportada (a layer entrega a imagem do jogo); só precisa do jogo aberto com LINUX_RESHADE_DEPTH=1.
-    // Compute e imagens de armazenamento são suportados; texturas 1D e 3D ainda não.
-    if manifest.textures.iter().any(|t| t.kind != fx_bundle::manifest::TextureType::D2) {
-        problems.push("usa texturas 1D ou 3D, ainda não suportadas".to_string());
-    }
+    // Profundidade, compute, armazenamento e texturas 1D/3D são suportados; a profundidade só precisa do jogo aberto com
+    // LINUX_RESHADE_DEPTH=1. O que o bundle não suporta já é recusado ao compilar (`fx-bundle`).
+    let problems: Vec<String> = Vec::new();
     EffectInfo { name: name.to_string(), techniques: manifest.techniques.iter().map(|t| t.name.clone()).collect(), features, problems, error: None }
 }
 
@@ -194,7 +191,7 @@ pub fn load(compiler: &Compiler, name: &str) -> Option<EffectInfo> {
         name: name.to_string(),
         techniques: list("techniques"),
         features: list("features").iter().filter_map(|k| Feature::from_key(k)).collect(),
-        problems: ini.get("", "problems").unwrap_or("").split(" | ").map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect(),
+        problems: ini.get("", "problems").unwrap_or("").split(" | ").map(str::trim).filter(|s| !s.is_empty() && !s.contains("1D ou 3D")).map(String::from).collect(), // análises antigas guardavam este aviso, hoje falso
         error: ini.get("", "error").filter(|e| !e.is_empty()).map(String::from),
     })
 }
@@ -262,13 +259,13 @@ mod tests {
     }
 
     #[test]
-    fn compute_is_a_feature_and_1d_or_3d_textures_are_a_problem() {
+    fn compute_is_a_feature_and_1d_or_3d_textures_are_supported() {
         let mut m = manifest("Sepia");
         m.techniques[0].passes[0].compute_entry = Some("CS".into());
         let info = analyze("Sepia", &m);
         assert!(info.compatible() && info.has(Feature::Compute), "{info:?}");
         m.textures[0].kind = fx_bundle::manifest::TextureType::D3;
-        assert!(!analyze("Sepia", &m).compatible());
+        assert!(analyze("Sepia", &m).compatible());
     }
 
     #[test]

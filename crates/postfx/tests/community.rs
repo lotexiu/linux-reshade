@@ -121,6 +121,7 @@ fn every_compiled_bundle_either_runs_or_is_refused_explicitly() {
 /// profundidade falsa: o que o app de controle compilou para um jogo, para ver o que o driver da GPU aceita (com
 /// `LINUX_RESHADE_TEST_HARDWARE=1`). `LINUX_RESHADE_CHAIN_SIZE=1920x1080` muda o tamanho do alvo (padrão 8x4),
 /// `LINUX_RESHADE_CHAIN_SET=NOME=valor,...` escreve uniforms (inteiros ou decimais) em todas as etapas que os têm e
+/// `LINUX_RESHADE_CHAIN_DEPTH=0.3` muda o valor da profundidade falsa (padrão 0,5) e
 /// `LINUX_RESHADE_CHAIN_PNG=arquivo.ppm` grava o último quadro. Sem a primeira variável, não faz nada.
 #[test]
 fn a_chain_of_compiled_bundles_runs() {
@@ -139,7 +140,7 @@ fn a_chain_of_compiled_bundles_runs() {
         // Quadro de entrada: um degradê colorido com xadrez (algo para os efeitos enxergarem).
         let (image, image_mem) = gpu.target_sized(w, h, |x, y| [(x * 255 / w) as u8, (y * 255 / h) as u8, if (x / 64 + y / 64) % 2 == 0 { 200 } else { 60 }, 255]);
         let images = [image];
-        let depth = depth_image(&gpu, w, h, 0.5);
+        let depth = depth_image(&gpu, w, h, std::env::var("LINUX_RESHADE_CHAIN_DEPTH").ok().and_then(|v| v.parse().ok()).unwrap_or(0.5));
         let input_depth = DepthInput { image: depth.image, format: DEPTH_FORMAT, layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL, extent: vk::Extent2D { width: w, height: h }, linear_filter: true };
         let target = Target { images: &images, format: FORMAT, extent: vk::Extent2D { width: w, height: h }, rest_layout: REST, queue_family: gpu.family, init_command_buffer: None, depth: Some(input_depth) };
         let started = std::time::Instant::now();

@@ -74,6 +74,21 @@ fn save_screenshot(window: &gtk::ApplicationWindow, path: &str) -> Result<(), St
     texture.save_to_png(path).map_err(|e| e.to_string())
 }
 
+/// Tema escuro próprio: o do sistema pode deixar o texto de erro ilegível (letras brancas sobre fundo claro). Força o esquema
+/// escuro do GTK e fixa as cores dos estados.
+fn apply_dark_theme() {
+    if let Some(settings) = gtk::Settings::default() {
+        settings.set_gtk_application_prefer_dark_theme(true);
+    }
+    let provider = gtk::CssProvider::new();
+    provider.load_from_data(
+        ".error { color: #ff7b72; }\n.success { color: #7ee787; }\n.warning { color: #e3b341; }\n.dim-label { opacity: 0.7; }\ntooltip { background: #2b2d33; color: #e6e6e6; }",
+    );
+    if let Some(display) = gtk::gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(&display, &provider, gtk::STYLE_PROVIDER_PRIORITY_USER);
+    }
+}
+
 fn main() -> glib::ExitCode {
     let options = match parse_args() {
         Ok(o) => o,
@@ -99,6 +114,7 @@ fn main() -> glib::ExitCode {
         let options = Rc::new(options);
         move |app| {
             let Some(state) = state.borrow_mut().take() else { return };
+            apply_dark_theme();
             // Analisa os efeitos em segundo plano (compila cada um uma vez): a lista de adicionar mostra os incompatíveis.
             let _ = panel::start_analysis();
             let home = panel::Home::new(Compiler::from_env(), config::Config::load().presets_dir, state);
