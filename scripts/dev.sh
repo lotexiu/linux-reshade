@@ -546,12 +546,16 @@ sdk=org.freedesktop.Sdk/x86_64/$version
 ref=runtime/org.freedesktop.Platform/x86_64/$version
 EOF
   sed "s|\"library_path\": \"[^\"]*\"|\"library_path\": \"/usr/lib/extensions/vulkan/$name/lib/$LAYER_LIB\"|" "$MANIFEST" >"$base/ext/files/share/vulkan/implicit_layer.d/$(basename "$MANIFEST")"
+  # Repositório novo a cada vez: reaproveitar o antigo deixava o flatpak instalando o commit velho ("nada a atualizar").
+  flatpak --user uninstall -y "$id//$version" >/dev/null 2>&1 || true
+  flatpak --user remote-delete --force lr-local >/dev/null 2>&1 || true
+  rm -rf "$base/repo"
   flatpak build-export --runtime "$base/repo" "$base/ext" "$version" >/dev/null || { warn "build-export falhou"; exit 1; }
   say "extensão $id//$version empacotada (refaça este comando depois de recompilar a layer)"
   case "$mode" in
     apply)
-      flatpak --user remote-add --if-not-exists --no-gpg-verify lr-local "$base/repo" 2>/dev/null || true
-      if flatpak --user list --runtime 2>/dev/null | grep -q "$id"; then flatpak --user update -y "$id//$version" >/dev/null 2>&1 || true; else flatpak --user install -y lr-local "$id//$version" >/dev/null || { warn "não consegui instalar a extensão"; exit 1; }; fi
+      flatpak --user remote-add --no-gpg-verify lr-local "$base/repo" || { warn "não consegui registrar o repositório local"; exit 1; }
+      flatpak --user install -y lr-local "$id//$version" >/dev/null || { warn "não consegui instalar a extensão"; exit 1; }
       flatpak override --user "${grant[@]}" "$app" && say "pronto para $app (desfaça com: scripts/dev.sh flatpak-layer $app --undo)" ;;
     *) echo "flatpak override --user ${grant[*]} $app"; say "para instalar a extensão e liberar o app: scripts/dev.sh flatpak-layer $app --apply" ;;
   esac
