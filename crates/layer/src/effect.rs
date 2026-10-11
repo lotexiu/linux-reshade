@@ -359,6 +359,7 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
                     for (step, ignored) in built.chain.ignored_sources() {
                         log!("etapa {step}: uniform sem fonte no runtime (fica no valor padrão): {ignored}");
                     }
+                    fx.set_state(EffectState::Ready);
                     Fx::Ready(built)
                 }
                 Err(why) => {
