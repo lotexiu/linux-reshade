@@ -420,13 +420,20 @@ impl Compiler {
         } else {
             let text = std::fs::read_to_string(&source).map_err(|e| CompileError::Io(format!("{}: {e}", source.display())))?;
             let (patched, _) = crate::patches::apply(base_name(name), &text);
-            let staging = self.cache.join("patched");
+            // Uma pasta de trabalho com links para tudo o que há ao lado do original e a cópia corrigida no lugar dele: os `#include`
+            // relativos resolvem pelo mesmo caminho de sempre (o mesmo cabeçalho por dois caminhos entraria duas vezes).
+            let staging = self.cache.join("patched").join(dir.file_name().unwrap_or_default());
+            let _ = std::fs::remove_dir_all(&staging);
             std::fs::create_dir_all(&staging).map_err(|e| CompileError::Io(format!("{}: {e}", staging.display())))?;
             let copy = staging.join(format!("{}.fx", base_name(name)));
-            std::fs::write(&copy, patched).map_err(|e| CompileError::Io(format!("{}: {e}", copy.display())))?;
             if let Some(parent) = source.parent() {
-                command.arg("-I").arg(parent);
+                for entry in std::fs::read_dir(parent).map_err(|e| CompileError::Io(format!("{}: {e}", parent.display())))?.flatten() {
+                    if entry.path() != source {
+                        let _ = std::os::unix::fs::symlink(entry.path(), staging.join(entry.file_name()));
+                    }
+                }
             }
+            std::fs::write(&copy, patched).map_err(|e| CompileError::Io(format!("{}: {e}", copy.display())))?;
             copy
         };
         command.arg("-o").arg(&dir).arg(&source);
@@ -680,10 +687,10 @@ mod tests {
         fs::write(f.root.join("effects/MartysMods_DEPTHOFFIELD.fx"), original).unwrap();
         assert!(matches!(f.compiler.ensure("MartysMods_DEPTHOFFIELD", 64, 64).unwrap(), Ensured::Compiled(_)));
         let call = &calls(&f)[0];
-        assert!(call.contains("/cache/patched/MartysMods_DEPTHOFFIELD.fx"), "{call}");
-        assert!(call.contains(&format!("-I {}", f.root.join("effects").display())), "o diretório original continua nos includes: {call}");
+        assert!(call.contains("/cache/patched/MartysMods_DEPTHOFFIELD-64x64/MartysMods_DEPTHOFFIELD.fx"), "{call}");
+        assert!(f.root.join("cache/patched/MartysMods_DEPTHOFFIELD-64x64/Sepia.fx").exists(), "o que há ao lado do original aparece na pasta de trabalho");
         assert_eq!(fs::read_to_string(f.root.join("effects/MartysMods_DEPTHOFFIELD.fx")).unwrap(), original, "o original não muda");
-        assert!(fs::read_to_string(f.root.join("cache/patched/MartysMods_DEPTHOFFIELD.fx")).unwrap().contains("b < AF_POINTS"));
+        assert!(fs::read_to_string(f.root.join("cache/patched/MartysMods_DEPTHOFFIELD-64x64/MartysMods_DEPTHOFFIELD.fx")).unwrap().contains("b < AF_POINTS"));
         assert!(f.compiler.is_current("MartysMods_DEPTHOFFIELD", 64, 64));
         // Um bundle de antes das correções (sem a anotação) fica desatualizado.
         fs::remove_file(f.root.join("cache/MartysMods_DEPTHOFFIELD-64x64/patches")).unwrap();
