@@ -2,7 +2,7 @@
 //! amostrável e a execução dos passes em ordem.
 
 use super::{MipChain, PassRes, pipeline::Output};
-use crate::image::COLOR_RANGE;
+use crate::image::{ALL_LEVELS, COLOR_RANGE};
 use ash::vk;
 
 /// A imagem de profundidade do jogo que os passes amostram: vai ao layout de leitura antes e volta depois.
@@ -202,6 +202,14 @@ pub unsafe fn record(rec: &Recording<'_>, cb: vk::CommandBuffer, index: usize) -
                 copy_valid = true;
             }
 
+            if let Some(c) = &pass.compute {
+                record_compute(device, cb, pass, c, rec.set0);
+                for chain in &pass.mips {
+                    generate_mips(device, cb, chain);
+                }
+                continue;
+            }
+
             let shadow = if pass.srgb_shadow { rec.shadow } else { None };
             if let Some(shadow) = shadow {
                 // O passe desenha no espelho sRGB (a GPU codifica ao escrever); o conteúdo atual do frame, se o
@@ -289,5 +297,38 @@ pub unsafe fn record(rec: &Recording<'_>, cb: vk::CommandBuffer, index: usize) -
             transition(device, cb, rec.frame, vk::ImageLayout::TRANSFER_DST_OPTIMAL, rec.rest_layout);
         }
         device.end_command_buffer(cb)
+    }
+}
+
+/// Um passe de compute: as imagens que ele escreve vão a `GENERAL`, o despacho roda e elas voltam a ser lidas por amostragem.
+unsafe fn record_compute(device: &ash::Device, cb: vk::CommandBuffer, pass: &super::PassRes, c: &super::ComputeRes, set0: Option<vk::DescriptorSet>) {
+    use vk::ImageLayout as L;
+    let all = vk::PipelineStageFlags::ALL_COMMANDS;
+    let memory = vk::MemoryBarrier::default().src_access_mask(vk::AccessFlags::MEMORY_WRITE).dst_access_mask(vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE);
+    let to = |old: L, new: L| -> Vec<vk::ImageMemoryBarrier<'static>> {
+        c.images
+            .iter()
+            .map(|&image| {
+                vk::ImageMemoryBarrier::default()
+                    .image(image)
+                    .old_layout(old)
+                    .new_layout(new)
+                    .src_access_mask(vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE)
+                    .dst_access_mask(vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE)
+                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .subresource_range(ALL_LEVELS)
+            })
+            .collect()
+    };
+    unsafe {
+        device.cmd_pipeline_barrier(cb, all, all, vk::DependencyFlags::empty(), &[memory], &[], &to(L::SHADER_READ_ONLY_OPTIMAL, L::GENERAL));
+        device.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, pass.pipeline);
+        match set0 {
+            Some(set0) => device.cmd_bind_descriptor_sets(cb, vk::PipelineBindPoint::COMPUTE, pass.pipeline_layout, 0, &[set0, pass.set1, c.set2], &[]),
+            None => device.cmd_bind_descriptor_sets(cb, vk::PipelineBindPoint::COMPUTE, pass.pipeline_layout, 1, &[pass.set1, c.set2], &[]),
+        }
+        device.cmd_dispatch(cb, c.dispatch[0], c.dispatch[1], c.dispatch[2]);
+        device.cmd_pipeline_barrier(cb, all, all, vk::DependencyFlags::empty(), &[memory], &[], &to(L::GENERAL, L::SHADER_READ_ONLY_OPTIMAL));
     }
 }

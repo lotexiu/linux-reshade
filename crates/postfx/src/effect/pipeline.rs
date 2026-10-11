@@ -167,3 +167,19 @@ pub unsafe fn create_pipeline(
         result.map(|p| p[0]).map_err(|(_, e)| e)
     }
 }
+
+/// Cria o pipeline de compute de um passe.
+///
+/// # Safety
+/// `device` válido; `code` é SPIR-V válido com o entry point `entry`.
+pub unsafe fn create_compute_pipeline(device: &ash::Device, layout: vk::PipelineLayout, code: &[u32], entry: &str) -> Result<vk::Pipeline, vk::Result> {
+    unsafe {
+        let module = device.create_shader_module(&vk::ShaderModuleCreateInfo::default().code(code), None)?;
+        let name = std::ffi::CString::new(entry).map_err(|_| vk::Result::ERROR_INITIALIZATION_FAILED)?;
+        let stage = vk::PipelineShaderStageCreateInfo::default().stage(vk::ShaderStageFlags::COMPUTE).module(module).name(&name);
+        let info = vk::ComputePipelineCreateInfo::default().stage(stage).layout(layout);
+        let result = device.create_compute_pipelines(vk::PipelineCache::null(), &[info], None);
+        device.destroy_shader_module(module, None);
+        result.map(|p| p[0]).map_err(|(_, e)| e)
+    }
+}

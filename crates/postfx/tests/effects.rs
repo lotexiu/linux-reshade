@@ -240,3 +240,27 @@ fn a_file_texture_without_its_image_is_refused_explicitly() {
         gpu.destroy_targets(targets);
     }
 }
+
+#[test]
+fn a_compute_pass_writes_a_storage_image_that_a_later_pass_draws() {
+    let gpu = gpu_or_skip!();
+    unsafe {
+        let targets = gpu.targets(2, input);
+        let mut effect = Effect::new(&gpu.device, &gpu.memory, &bundle("Compute"), 0, &target(&targets.images, &gpu), gpu.queue).expect("criar o efeito");
+        // Dois quadros sobre as mesmas imagens: o 1º inverte, o 2º inverte o invertido (a textura de armazenamento volta a
+        // ser escrita e lida por amostragem em cada quadro).
+        for frame in 0..2 {
+            for (i, &image) in targets.images.iter().enumerate() {
+                gpu.submit(effect.command_buffer(i));
+                for (n, got) in gpu.read(image).into_iter().enumerate() {
+                    let (x, y) = (n as u32 % W, n as u32 / W);
+                    let s = input(x, y);
+                    let want = if frame == 0 { [255 - s[0], 255 - s[1], 255 - s[2], s[3]] } else { s };
+                    assert_pixel(got, want, 1, &format!("quadro {frame} imagem {i} pixel ({x},{y})"));
+                }
+            }
+        }
+        effect.destroy(&gpu.device);
+        gpu.destroy_targets(targets);
+    }
+}

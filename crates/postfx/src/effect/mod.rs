@@ -89,6 +89,19 @@ pub(crate) struct PassRes {
     pub preserves_frame: bool,
     /// Texturas com mipmaps que este passe escreve: os níveis seguintes são gerados depois dele.
     pub mips: Vec<MipChain>,
+    /// Passe de compute (sem render pass nem framebuffer).
+    pub compute: Option<ComputeRes>,
+}
+
+/// O que um passe de compute precisa além do pipeline.
+#[derive(Default)]
+pub(crate) struct ComputeRes {
+    pub set2_layout: vk::DescriptorSetLayout,
+    pub set2: vk::DescriptorSet,
+    /// Grupos de threads a despachar.
+    pub dispatch: [u32; 3],
+    /// As imagens (todos os níveis) que o passe escreve: vão a `GENERAL` durante o despacho.
+    pub images: Vec<vk::Image>,
 }
 
 /// O que gerar os níveis de mipmap de uma textura precisa saber.
@@ -111,6 +124,8 @@ pub struct Effect {
     /// Paralelo a `manifest.textures`; só as texturas intermediárias (render targets) têm imagem.
     textures: Vec<GpuImage>,
     samplers: Vec<vk::Sampler>,
+    /// Views (um nível cada) das imagens de armazenamento dos passes de compute.
+    storage_views: Vec<vk::ImageView>,
     /// Um por imagem do alvo; vazio se o efeito não tem uniforms.
     uniform_buffers: Vec<UniformBuffer>,
     set0_layout: vk::DescriptorSetLayout,
@@ -152,7 +167,7 @@ fn file_texture_srgb(m: &fx_bundle::Manifest) -> Result<HashMap<usize, bool>, Er
     let mut out: HashMap<usize, bool> = HashMap::new();
     for s in &m.samplers {
         let Some((index, tex)) = m.textures.iter().enumerate().find(|(_, t)| t.unique_name == s.texture) else { continue };
-        if tex.semantic.is_some() || tex.render_target {
+        if tex.semantic.is_some() || tex.render_target || m.storages.iter().any(|st| st.texture == tex.unique_name) {
             continue;
         }
         if let Some(previous) = out.insert(index, s.srgb)
@@ -280,7 +295,7 @@ impl Effect {
             for sb in &pass.samplers {
                 let sampler = &m.samplers[sb.sampler as usize];
                 let (tex, _) = sampled_texture(bundle, sb.sampler)?;
-                if sampler.srgb && tex.render_target {
+                if sampler.srgb && (tex.render_target || m.storages.iter().any(|st| st.texture == tex.unique_name)) {
                     return Err(unsupported(format!("sampler {:?}: leitura sRGB de uma textura de render target", sampler.name)));
                 }
                 match tex.semantic.as_deref() {
@@ -294,7 +309,7 @@ impl Effect {
                         }
                         samples_depth[k] = true;
                     }
-                    None if tex.render_target => {}
+                    None if tex.render_target || m.storages.iter().any(|st| st.texture == tex.unique_name) => {}
                     None => file_texture_supported(bundle, tex, tex_position(m, tex))?,
                     Some(other) => return Err(unsupported(format!("textura {:?} com semântica {other}", tex.name))),
                 }
@@ -327,8 +342,10 @@ impl Effect {
         // Texturas intermediárias: todas as que são render target, para qualquer passe poder usá-las.
         let tex_index: HashMap<&str, usize> = m.textures.iter().enumerate().map(|(i, t)| (t.unique_name.as_str(), i)).collect();
         self.textures = m.textures.iter().map(|_| GpuImage::default()).collect();
+        // Texturas que um passe de compute escreve (`storage2D`): têm imagem própria como as de render target.
+        let stored: Vec<bool> = m.textures.iter().map(|t| m.storages.iter().any(|st| st.texture == t.unique_name)).collect();
         for (i, t) in m.textures.iter().enumerate() {
-            if t.semantic.is_none() && !t.render_target {
+            if t.semantic.is_none() && !t.render_target && !stored[i] {
                 // Textura de arquivo: os pixels são enviados em `initialize_textures`.
                 let Some(image) = bundle.image(i) else { continue };
                 let base = match t.format {
@@ -343,9 +360,15 @@ impl Effect {
                     usage |= vk::ImageUsageFlags::TRANSFER_SRC;
                 }
                 self.textures[i] = unsafe { GpuImage::with_levels(device, memory, format, extent, usage, t.levels)? };
-            } else if t.semantic.is_none() && t.render_target {
+            } else if t.semantic.is_none() && (t.render_target || stored[i]) {
                 let extent = vk::Extent2D { width: t.width, height: t.height };
-                let mut usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST;
+                let mut usage = vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST;
+                if t.render_target {
+                    usage |= vk::ImageUsageFlags::COLOR_ATTACHMENT;
+                }
+                if stored[i] {
+                    usage |= vk::ImageUsageFlags::STORAGE;
+                }
                 if t.levels > 1 {
                     usage |= vk::ImageUsageFlags::TRANSFER_SRC; // os níveis seguintes saem de blits do anterior
                 }
@@ -409,20 +432,25 @@ impl Effect {
             .binding(0)
             .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
             .descriptor_count(1)
-            .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)];
+            .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT | vk::ShaderStageFlags::COMPUTE)];
         let set0_used: &[vk::DescriptorSetLayoutBinding<'_>] = if has_uniforms { &set0_bindings } else { &[] };
         self.set0_layout = unsafe {
             device.create_descriptor_set_layout(&vk::DescriptorSetLayoutCreateInfo::default().bindings(set0_used), None)?
         };
 
         let sampler_descriptors: usize = tech.passes.iter().map(|p| p.samplers.len()).sum();
-        let sizes = [
+        let storage_descriptors: usize = tech.passes.iter().map(|p| p.storages.len()).sum();
+        let compute_passes = tech.passes.iter().filter(|p| p.compute_entry.is_some()).count();
+        let mut sizes = vec![
             vk::DescriptorPoolSize::default().ty(vk::DescriptorType::UNIFORM_BUFFER).descriptor_count(count.max(1) as u32),
             vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                 .descriptor_count(sampler_descriptors.max(1) as u32),
         ];
-        let max_sets = (if has_uniforms { count } else { 0 } + tech.passes.len()).max(1) as u32;
+        if storage_descriptors > 0 {
+            sizes.push(vk::DescriptorPoolSize::default().ty(vk::DescriptorType::STORAGE_IMAGE).descriptor_count(storage_descriptors as u32));
+        }
+        let max_sets = (if has_uniforms { count } else { 0 } + tech.passes.len() + compute_passes).max(1) as u32;
         self.descriptor_pool = unsafe {
             device.create_descriptor_pool(&vk::DescriptorPoolCreateInfo::default().max_sets(max_sets).pool_sizes(&sizes), None)?
         };
@@ -446,6 +474,10 @@ impl Effect {
 
         // ---- Passes ----
         for (k, pass) in tech.passes.iter().enumerate() {
+            if pass.compute_entry.is_some() {
+                unsafe { self.build_compute_pass(device, bundle, pass, samples_color[k], samples_depth[k])? };
+                continue;
+            }
             let mut res = PassRes { samples_color: samples_color[k], samples_depth: samples_depth[k], num_vertices: pass.num_vertices, ..PassRes::default() };
             // Só vale com um espelho (alvo de 8 bits); sem versão sRGB do formato, a flag é ignorada como no ReShade.
             res.srgb_shadow = pass.srgb_write && self.frame_srgb.image != vk::Image::null();
@@ -616,6 +648,121 @@ impl Effect {
         Ok(())
     }
 
+    /// Cria um passe de compute: sets 1 (samplers) e 2 (imagens de armazenamento), pipeline e despacho.
+    unsafe fn build_compute_pass(
+        &mut self,
+        device: &ash::Device,
+        bundle: &Bundle,
+        pass: &fx_bundle::manifest::Pass,
+        samples_color: bool,
+        samples_depth: bool,
+    ) -> Result<(), Error> {
+        let m = &bundle.manifest;
+        let entry = pass.compute_entry.as_deref().unwrap_or_default();
+        let dispatch = pass.dispatch.ok_or_else(|| Error::Invalid("passe de compute sem tamanho de despacho".into()))?;
+        // Como não há render pass, o passe fica como "escreve texturas": não mexe no frame nem invalida a cópia dele.
+        self.passes.push(PassRes { samples_color, samples_depth, output: Output::Textures, compute: Some(ComputeRes { dispatch, ..ComputeRes::default() }), ..PassRes::default() });
+        let k = self.passes.len() - 1;
+
+        let sampler_bindings: Vec<_> = pass
+            .samplers
+            .iter()
+            .map(|sb| {
+                vk::DescriptorSetLayoutBinding::default()
+                    .binding(sb.binding)
+                    .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                    .descriptor_count(1)
+                    .stage_flags(vk::ShaderStageFlags::COMPUTE)
+            })
+            .collect();
+        let storage_bindings: Vec<_> = pass
+            .storages
+            .iter()
+            .map(|sb| {
+                vk::DescriptorSetLayoutBinding::default()
+                    .binding(sb.binding)
+                    .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+                    .descriptor_count(1)
+                    .stage_flags(vk::ShaderStageFlags::COMPUTE)
+            })
+            .collect();
+        let set1_layout = unsafe { device.create_descriptor_set_layout(&vk::DescriptorSetLayoutCreateInfo::default().bindings(&sampler_bindings), None)? };
+        self.passes[k].set1_layout = set1_layout;
+        let set2_layout = unsafe { device.create_descriptor_set_layout(&vk::DescriptorSetLayoutCreateInfo::default().bindings(&storage_bindings), None)? };
+        if let Some(c) = self.passes[k].compute.as_mut() {
+            c.set2_layout = set2_layout;
+        }
+        let layouts = [self.set0_layout, set1_layout, set2_layout];
+        let pipeline_layout = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&layouts), None)? };
+        self.passes[k].pipeline_layout = pipeline_layout;
+        let sets = unsafe {
+            device.allocate_descriptor_sets(&vk::DescriptorSetAllocateInfo::default().descriptor_pool(self.descriptor_pool).set_layouts(&[set1_layout, set2_layout]))?
+        };
+        let (set1, set2) = (sets[0], sets[1]);
+        self.passes[k].set1 = set1;
+        if let Some(c) = self.passes[k].compute.as_mut() {
+            c.set2 = set2;
+        }
+
+        for sb in &pass.samplers {
+            let (tex, index) = sampled_texture(bundle, sb.sampler)?;
+            let is_depth = tex.semantic.as_deref() == Some("DEPTH");
+            let view = match (tex.semantic.as_deref(), m.samplers[sb.sampler as usize].srgb) {
+                (Some("DEPTH"), _) => self.depth_view,
+                (Some("COLOR"), true) if self.copy_srgb.image != vk::Image::null() => self.copy_srgb.view,
+                (Some("COLOR"), _) => self.copy.images[0].view,
+                _ => self.textures[index].view,
+            };
+            let layout = if is_depth { vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL } else { vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL };
+            let image_info = [vk::DescriptorImageInfo::default().sampler(self.samplers[sb.sampler as usize]).image_view(view).image_layout(layout)];
+            let write = vk::WriteDescriptorSet::default().dst_set(set1).dst_binding(sb.binding).descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER).image_info(&image_info);
+            unsafe { device.update_descriptor_sets(&[write], &[]) };
+        }
+
+        // Uma view (um nível) por imagem de armazenamento.
+        let mut written: Vec<vk::Image> = Vec::new();
+        for sb in &pass.storages {
+            let storage = m.storages.get(sb.storage as usize).ok_or_else(|| Error::Invalid(format!("storage {}", sb.storage)))?;
+            let (index, tex) = m
+                .textures
+                .iter()
+                .enumerate()
+                .find(|(_, t)| t.unique_name == storage.texture)
+                .ok_or_else(|| Error::Invalid(format!("textura {:?}", storage.texture)))?;
+            let image = &self.textures[index];
+            if image.image == vk::Image::null() {
+                return Err(unsupported(format!("imagem de armazenamento {:?}: a textura {:?} não tem imagem", storage.name, tex.name)));
+            }
+            if storage.level >= image.levels {
+                return Err(Error::Invalid(format!("storage {:?}: nível {} de uma textura com {} níveis", storage.name, storage.level, image.levels)));
+            }
+            let info = vk::ImageViewCreateInfo::default()
+                .image(image.image)
+                .view_type(vk::ImageViewType::TYPE_2D)
+                .format(convert::texture_format(tex.format))
+                .subresource_range(vk::ImageSubresourceRange { base_mip_level: storage.level, level_count: 1, ..COLOR_RANGE });
+            let view = unsafe { device.create_image_view(&info, None)? };
+            self.storage_views.push(view);
+            let image_info = [vk::DescriptorImageInfo::default().image_view(view).image_layout(vk::ImageLayout::GENERAL)];
+            let write = vk::WriteDescriptorSet::default().dst_set(set2).dst_binding(sb.binding).descriptor_type(vk::DescriptorType::STORAGE_IMAGE).image_info(&image_info);
+            unsafe { device.update_descriptor_sets(&[write], &[]) };
+            if !written.contains(&image.image) {
+                written.push(image.image);
+                if image.levels > 1 {
+                    let linear = !matches!(tex.format, TextureFormat::R32f | TextureFormat::Rg32f | TextureFormat::Rgba32f);
+                    self.passes[k].mips.push(MipChain { image: image.image, extent: vk::Extent2D { width: tex.width, height: tex.height }, levels: image.levels, linear });
+                }
+            }
+        }
+        if let Some(c) = self.passes[k].compute.as_mut() {
+            c.images = written;
+        }
+
+        let code = bundle.shader(entry).ok_or_else(|| Error::Invalid(format!("sem SPIR-V de {entry:?}")))?;
+        self.passes[k].pipeline = unsafe { pipeline::create_compute_pipeline(device, pipeline_layout, code, entry)? };
+        Ok(())
+    }
+
     /// Leva as texturas ao layout de repouso (`SHADER_READ_ONLY_OPTIMAL`): as intermediárias zeradas, as de arquivo
     /// com os pixels do bundle. Uma submissão única, no momento da criação.
     unsafe fn initialize_textures(
@@ -633,7 +780,7 @@ impl Effect {
             if image.image == vk::Image::null() {
                 continue;
             }
-            if t.render_target {
+            if t.render_target || m.storages.iter().any(|st| st.texture == t.unique_name) {
                 clear.push(image.image);
             } else {
                 upload.push(i);
@@ -763,6 +910,11 @@ impl Effect {
                 if pass.set1_layout != vk::DescriptorSetLayout::null() {
                     device.destroy_descriptor_set_layout(pass.set1_layout, None);
                 }
+                if let Some(c) = &pass.compute
+                    && c.set2_layout != vk::DescriptorSetLayout::null()
+                {
+                    device.destroy_descriptor_set_layout(c.set2_layout, None);
+                }
                 if pass.render_pass != vk::RenderPass::null() {
                     device.destroy_render_pass(pass.render_pass, None);
                 }
@@ -782,6 +934,9 @@ impl Effect {
             }
             for mut t in self.textures.drain(..) {
                 t.destroy(device);
+            }
+            for v in self.storage_views.drain(..) {
+                device.destroy_image_view(v, None);
             }
             for v in self.target_views.drain(..) {
                 device.destroy_image_view(v, None);
