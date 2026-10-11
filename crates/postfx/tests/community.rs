@@ -28,7 +28,13 @@ fn every_compiled_bundle_either_runs_or_is_refused_explicitly() {
         return;
     };
 
-    let mut names: Vec<_> = entries.flatten().filter(|e| e.path().join("manifest.json").is_file()).collect();
+    // LINUX_RESHADE_SURVEY_ONLY=Texto: só os bundles cujo nome contém o texto.
+    let only = std::env::var("LINUX_RESHADE_SURVEY_ONLY").ok();
+    let mut names: Vec<_> = entries
+        .flatten()
+        .filter(|e| e.path().join("manifest.json").is_file())
+        .filter(|e| only.as_deref().is_none_or(|o| e.file_name().to_string_lossy().contains(o)))
+        .collect();
     names.sort_by_key(|e| e.file_name());
 
     let (mut ran, mut refused, mut failed) = (Vec::new(), Vec::new(), Vec::new());
@@ -108,5 +114,46 @@ fn every_compiled_bundle_either_runs_or_is_refused_explicitly() {
     eprintln!("{} recusados:", refused.len());
     for r in &refused {
         eprintln!("  {r}");
+    }
+}
+
+/// Executa uma cadeia de bundles já compilados (`LINUX_RESHADE_CHAIN_BUNDLES=dir1:dir2:...`, na ordem), com uma imagem de
+/// profundidade falsa: o que o app de controle compilou para um jogo, para ver o que o driver da GPU aceita (com
+/// `LINUX_RESHADE_TEST_HARDWARE=1`). Sem a variável, não faz nada.
+#[test]
+fn a_chain_of_compiled_bundles_runs() {
+    let Some(list) = std::env::var_os("LINUX_RESHADE_CHAIN_BUNDLES") else { return };
+    let Some(gpu) = Gpu::software() else {
+        eprintln!("sem dispositivo Vulkan; teste ignorado");
+        return;
+    };
+    let bundles: Vec<Bundle> = std::env::split_paths(&list).map(|p| Bundle::load(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))).collect();
+    let steps: Vec<postfx::Step<'_>> = bundles.iter().map(|b| postfx::Step { bundle: b, technique: 0 }).collect();
+    unsafe {
+        let targets = gpu.targets(2, input);
+        let depth = depth_image(&gpu, W, H, 0.5);
+        let input_depth = DepthInput { image: depth.image, format: DEPTH_FORMAT, layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL, extent: vk::Extent2D { width: W, height: H }, linear_filter: true };
+        let target = Target { images: &targets.images, format: FORMAT, extent: vk::Extent2D { width: W, height: H }, rest_layout: REST, queue_family: gpu.family, init_command_buffer: None, depth: Some(input_depth) };
+        match postfx::Chain::new_lenient(&gpu.device, &gpu.memory, &steps, &target, gpu.queue) {
+            Ok((mut chain, skipped)) => {
+                eprintln!("cadeia criada: {} etapa(s), {} pulada(s)", chain.len(), skipped.len());
+                for s in &skipped {
+                    eprintln!("  pulada: etapa {}: {}", s.step, s.why);
+                }
+                let frame = FrameInfo { time_ms: 10_000.0, frame_time_ms: 16.6, frame_count: 600, date: [2026.0, 10.0, 9.0, 43_200.0] };
+                for _ in 0..3 {
+                    for i in 0..targets.images.len() {
+                        chain.update_sources(i, &frame);
+                        gpu.submit_all(&chain.command_buffers(i));
+                    }
+                }
+                eprintln!("3 quadros executados");
+                chain.destroy(&gpu.device);
+            }
+            Err(e) => eprintln!("a cadeia falhou: {e}"),
+        }
+        gpu.device.destroy_image(depth.image, None);
+        gpu.device.free_memory(depth.memory, None);
+        gpu.destroy_targets(targets);
     }
 }

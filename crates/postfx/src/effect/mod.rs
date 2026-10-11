@@ -20,6 +20,7 @@ pub use sources::{FrameInfo, utc_date};
 use crate::backbuffer::BackbufferCopies;
 use crate::error::{Error, unsupported};
 use crate::image::{ALL_LEVELS, COLOR_RANGE, Dims, GpuImage};
+use crate::shared::{Desc, Shared};
 use ash::vk;
 use fx_bundle::Bundle;
 use fx_bundle::manifest::{Texture, TextureFormat};
@@ -121,8 +122,11 @@ pub struct Effect {
     copy_srgb: GpuImage,
     /// Espelho sRGB do frame, onde desenham os passes com `SRGBWriteEnable` (a escrita codifica sozinha).
     frame_srgb: GpuImage,
-    /// Paralelo a `manifest.textures`; só as texturas intermediárias (render targets) têm imagem.
+    /// Paralelo a `manifest.textures`; só as texturas intermediárias (render targets, de armazenamento ou só lidas) têm imagem.
+    /// As compartilhadas são apelidos: quem as libera é a cadeia.
     textures: Vec<GpuImage>,
+    /// Paralelo a `textures`: esta etapa criou a imagem (e a inicializa); falso se veio de outra etapa.
+    init_here: Vec<bool>,
     samplers: Vec<vk::Sampler>,
     /// Views (um nível cada) das imagens de armazenamento dos passes de compute.
     storage_views: Vec<vk::ImageView>,
@@ -142,6 +146,11 @@ pub struct Effect {
     command_buffers: Vec<vk::CommandBuffer>,
     /// Uniforms alimentados pelo runtime (`source = "timer"` etc.).
     sources: Sources,
+}
+
+/// A textura vem de um arquivo de imagem (`source = "..."`)?
+fn is_file(t: &Texture) -> bool {
+    t.semantic.is_none() && fx_bundle::images::source_of(t).is_some()
 }
 
 /// Posição de uma textura no manifesto.
@@ -167,7 +176,7 @@ fn file_texture_srgb(m: &fx_bundle::Manifest) -> Result<HashMap<usize, bool>, Er
     let mut out: HashMap<usize, bool> = HashMap::new();
     for s in &m.samplers {
         let Some((index, tex)) = m.textures.iter().enumerate().find(|(_, t)| t.unique_name == s.texture) else { continue };
-        if tex.semantic.is_some() || tex.render_target || m.storages.iter().any(|st| st.texture == tex.unique_name) {
+        if !is_file(tex) {
             continue;
         }
         if let Some(previous) = out.insert(index, s.srgb)
@@ -208,8 +217,25 @@ impl Effect {
         target: &Target<'_>,
         queue: vk::Queue,
     ) -> Result<Self, Error> {
+        unsafe { Self::new_shared(device, memory, bundle, technique, target, queue, None) }
+    }
+
+    /// Como [`Effect::new`], com as texturas compartilhadas da cadeia: uma textura que outra etapa já criou com o mesmo
+    /// nome e propriedades é a mesma imagem, e as que esta etapa cria ficam à disposição das seguintes.
+    ///
+    /// # Safety
+    /// As mesmas de [`Effect::new`]; `shared` precisa viver (e as imagens dele) mais que o efeito.
+    pub unsafe fn new_shared(
+        device: &ash::Device,
+        memory: &vk::PhysicalDeviceMemoryProperties,
+        bundle: &Bundle,
+        technique: usize,
+        target: &Target<'_>,
+        queue: vk::Queue,
+        shared: Option<&mut Shared>,
+    ) -> Result<Self, Error> {
         let mut effect = Self::default();
-        if let Err(e) = unsafe { effect.build(device, memory, bundle, technique, target, queue) } {
+        if let Err(e) = unsafe { effect.build(device, memory, bundle, technique, target, queue, shared) } {
             unsafe { effect.destroy(device) };
             return Err(e);
         }
@@ -263,6 +289,7 @@ impl Effect {
         technique: usize,
         target: &Target<'_>,
         queue: vk::Queue,
+        mut shared: Option<&mut Shared>,
     ) -> Result<(), Error> {
         let m = &bundle.manifest;
         let tech = m.techniques.get(technique).ok_or_else(|| Error::Invalid(format!("técnica {technique} não existe")))?;
@@ -295,7 +322,7 @@ impl Effect {
             for sb in &pass.samplers {
                 let sampler = &m.samplers[sb.sampler as usize];
                 let (tex, _) = sampled_texture(bundle, sb.sampler)?;
-                if sampler.srgb && (tex.render_target || m.storages.iter().any(|st| st.texture == tex.unique_name)) {
+                if sampler.srgb && tex.semantic.is_none() && !is_file(tex) {
                     return Err(unsupported(format!("sampler {:?}: leitura sRGB de uma textura de render target", sampler.name)));
                 }
                 match tex.semantic.as_deref() {
@@ -309,7 +336,7 @@ impl Effect {
                         }
                         samples_depth[k] = true;
                     }
-                    None if tex.render_target || m.storages.iter().any(|st| st.texture == tex.unique_name) => {}
+                    None if !is_file(tex) => {}
                     None => file_texture_supported(bundle, tex, tex_position(m, tex))?,
                     Some(other) => return Err(unsupported(format!("textura {:?} com semântica {other}", tex.name))),
                 }
@@ -342,10 +369,25 @@ impl Effect {
         // Texturas intermediárias: todas as que são render target, para qualquer passe poder usá-las.
         let tex_index: HashMap<&str, usize> = m.textures.iter().enumerate().map(|(i, t)| (t.unique_name.as_str(), i)).collect();
         self.textures = m.textures.iter().map(|_| GpuImage::default()).collect();
-        // Texturas que um passe de compute escreve (`storage2D`): têm imagem própria como as de render target.
+        // Texturas que um passe de compute escreve (`storage2D`) e as que algum passe desta técnica amostra.
         let stored: Vec<bool> = m.textures.iter().map(|t| m.storages.iter().any(|st| st.texture == t.unique_name)).collect();
+        let mut referenced = vec![false; m.textures.len()];
+        for pass in &tech.passes {
+            for sb in &pass.samplers {
+                if let Some(s) = m.samplers.get(sb.sampler as usize)
+                    && let Some(i) = tex_index.get(m.samplers[sb.sampler as usize].texture.as_str())
+                {
+                    let _ = s;
+                    referenced[*i] = true;
+                }
+            }
+        }
+        self.init_here = vec![false; m.textures.len()];
         for (i, t) in m.textures.iter().enumerate() {
-            if t.semantic.is_none() && !t.render_target && !stored[i] {
+            if t.semantic.is_some() {
+                continue;
+            }
+            if is_file(t) {
                 // Textura de arquivo: os pixels são enviados em `initialize_textures`.
                 let Some(image) = bundle.image(i) else { continue };
                 let base = match t.format {
@@ -360,25 +402,42 @@ impl Effect {
                     usage |= vk::ImageUsageFlags::TRANSFER_SRC;
                 }
                 self.textures[i] = unsafe { GpuImage::with_levels(device, memory, format, extent, usage, t.levels)? };
-            } else if t.semantic.is_none() && (t.render_target || stored[i]) {
-                let extent = vk::Extent2D { width: t.width, height: t.height };
-                let mut usage = vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST;
-                if t.render_target {
-                    usage |= vk::ImageUsageFlags::COLOR_ATTACHMENT;
-                }
-                if stored[i] {
-                    usage |= vk::ImageUsageFlags::STORAGE;
-                }
-                if t.levels > 1 {
-                    usage |= vk::ImageUsageFlags::TRANSFER_SRC; // os níveis seguintes saem de blits do anterior
-                }
-                let dims = match t.kind {
-                    fx_bundle::manifest::TextureType::D1 => Dims::D1,
-                    fx_bundle::manifest::TextureType::D2 => Dims::D2,
-                    fx_bundle::manifest::TextureType::D3 => Dims::D3(t.depth),
-                };
-                self.textures[i] = unsafe { GpuImage::with_dims(device, memory, convert::texture_format(t.format), dims, extent, usage, t.levels)? };
+                continue;
             }
+            // Intermediária: alvo de renderização, de armazenamento ou só lida (às vezes escrita por outra etapa da cadeia).
+            if !(t.render_target || stored[i] || referenced[i]) {
+                continue;
+            }
+            let desc = Desc::of(t);
+            if let Some(shared) = shared.as_deref()
+                && let Some(image) = shared.find(&t.unique_name, &desc)
+            {
+                self.textures[i] = image;
+                continue;
+            }
+            let uses = shared.as_deref().map(|s| s.uses(&t.unique_name)).unwrap_or_default();
+            let extent = vk::Extent2D { width: t.width, height: t.height };
+            let mut usage = vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST;
+            if t.render_target || uses.render_target {
+                usage |= vk::ImageUsageFlags::COLOR_ATTACHMENT;
+            }
+            if stored[i] || uses.stored {
+                usage |= vk::ImageUsageFlags::STORAGE;
+            }
+            if t.levels > 1 {
+                usage |= vk::ImageUsageFlags::TRANSFER_SRC; // os níveis seguintes saem de blits do anterior
+            }
+            let dims = match t.kind {
+                fx_bundle::manifest::TextureType::D1 => Dims::D1,
+                fx_bundle::manifest::TextureType::D2 => Dims::D2,
+                fx_bundle::manifest::TextureType::D3 => Dims::D3(t.depth),
+            };
+            let image = unsafe { GpuImage::with_dims(device, memory, convert::texture_format(t.format), dims, extent, usage, t.levels)? };
+            self.textures[i] = match shared.as_deref_mut() {
+                Some(shared) => shared.insert(&t.unique_name, desc, image),
+                None => image,
+            };
+            self.init_here[i] = true;
         }
 
         if through_work {
@@ -790,8 +849,11 @@ impl Effect {
             if image.image == vk::Image::null() {
                 continue;
             }
-            if t.render_target || m.storages.iter().any(|st| st.texture == t.unique_name) {
-                clear.push(image.image);
+            if !is_file(t) {
+                // Intermediária: só quem a criou a zera (uma compartilhada já vem inicializada pela etapa anterior).
+                if self.init_here.get(i).copied().unwrap_or(false) {
+                    clear.push(image.image);
+                }
             } else {
                 upload.push(i);
             }

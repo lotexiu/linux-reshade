@@ -42,6 +42,8 @@ impl Dims {
 #[derive(Default)]
 pub struct GpuImage {
     dims: Dims,
+    /// Apelido de uma imagem de outro dono (textura compartilhada): `destroy` não a libera.
+    borrowed: bool,
     pub image: vk::Image,
     /// View de todos os níveis (para amostrar).
     pub view: vk::ImageView,
@@ -151,6 +153,11 @@ impl GpuImage {
         Ok(())
     }
 
+    /// Uma cópia dos handles que não é dona da imagem: serve a quem usa uma textura compartilhada.
+    pub fn alias(&self) -> GpuImage {
+        GpuImage { dims: self.dims, borrowed: true, image: self.image, view: self.view, view0: self.view0, levels: self.levels, memory: self.memory }
+    }
+
     /// A view para usar como anexo de render pass (só o nível 0).
     pub fn attachment_view(&self) -> vk::ImageView {
         if self.view0 == vk::ImageView::null() { self.view } else { self.view0 }
@@ -161,6 +168,10 @@ impl GpuImage {
     /// # Safety
     /// A GPU não pode estar usando a imagem.
     pub unsafe fn destroy(&mut self, device: &ash::Device) {
+        if self.borrowed {
+            *self = Self::default();
+            return;
+        }
         unsafe {
             if self.view0 != vk::ImageView::null() {
                 device.destroy_image_view(std::mem::take(&mut self.view0), None);

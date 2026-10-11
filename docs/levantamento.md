@@ -28,6 +28,18 @@ limita a 32 KiB; as GPUs NVIDIA permitem 48 KiB) e SPIR-V que o `spirv-val` recu
 (`MartysMods_EXPOSUREFUSION`, `FFTBLOOM`, `INSIGHT`, `vort_HDR`, `vort_Motion`, `lilium__hdr_and_sdr_analysis`: um
 `OpFunctionCall` com argumento de tipo diferente do parâmetro, defeito do gerador de SPIR-V do compilador).
 
+## RTGI do Marty (2026-10-10): texturas compartilhadas entre efeitos
+
+O dono testou no Haste: `MXAO` funcionou; `RTGI_DIFFUSE` e `RTGI_SPECULAR` deram erro. A causa: o RTGI lê texturas que o
+`LAUNCHPAD` produz (`GeoNormalsTexV4`, vetores de movimento...), declaradas nos dois efeitos com o mesmo nome. No ReShade
+duas declarações com o mesmo nome e propriedades são a mesma textura; aqui cada efeito tinha as suas e a do RTGI, só
+lida, era tratada como "textura de arquivo sem imagem". Agora a cadeia compartilha (`postfx::shared`): a primeira
+etapa cria, as seguintes apelidam; o uso (alvo, armazenamento) é somado antes, para a imagem servir a todas.
+Verificado: um teste (`ShareProducer` + `ShareConsumer`) e a cadeia `LAUNCHPAD` + `RTGI_DIFFUSE` + `RTGI_SPECULAR`
+(compilada pelo app de controle para 1920x1080) cria e executa 3 quadros na lavapipe **e na RTX 3060** (sem jogo).
+O RTGI exige o `LAUNCHPAD` na cadeia, antes dele (o próprio efeito avisa); no preset do dono o `LAUNCHPAD` estava só
+no `TechniqueSorting`, não em `Techniques`.
+
 ## Antes (só o levantamento inicial)
 
 | Resultado | Quantos | O que é |

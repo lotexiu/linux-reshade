@@ -8,6 +8,7 @@
 
 use crate::effect::{Effect, FrameInfo, Target};
 use crate::error::Error;
+use crate::shared::Shared;
 use ash::vk;
 use fx_bundle::Bundle;
 
@@ -42,6 +43,8 @@ pub struct Skipped {
 #[derive(Default)]
 pub struct Chain {
     effects: Vec<Effect>,
+    /// As texturas que mais de uma etapa pode usar (a cadeia é a dona das imagens).
+    shared: Shared,
     /// De que etapa da lista original vem cada efeito (difere da posição se alguma foi pulada).
     origin: Vec<usize>,
 }
@@ -59,9 +62,9 @@ impl Chain {
         target: &Target<'_>,
         queue: vk::Queue,
     ) -> Result<Self, Error> {
-        let mut chain = Self::default();
+        let mut chain = Self { shared: Shared::scan(steps), ..Self::default() };
         for (n, step) in steps.iter().enumerate() {
-            match unsafe { Effect::new(device, memory, step.bundle, step.technique, target, queue) } {
+            match unsafe { Effect::new_shared(device, memory, step.bundle, step.technique, target, queue, Some(&mut chain.shared)) } {
                 Ok(effect) => {
                     chain.effects.push(effect);
                     chain.origin.push(n);
@@ -162,5 +165,7 @@ impl Chain {
         }
         self.effects.clear();
         self.origin.clear();
+        // Depois dos efeitos: eles apelidam as imagens compartilhadas.
+        unsafe { self.shared.destroy(device) };
     }
 }

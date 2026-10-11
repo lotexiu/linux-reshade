@@ -646,7 +646,7 @@ cmd_fx_golden() {
   for name in Sepia; do
     "$fx" --width 8 --height 4 -o "$ROOT/crates/postfx/tests/data/$name" "$ROOT/effects/$name.fx"
   done
-  for name in Invert TwoPass Timer Mip Tex Depth Compute Volume; do
+  for name in Invert TwoPass Timer Mip Tex Depth Compute Volume ShareProducer ShareConsumer; do
     "$fx" --width 8 --height 4 -o "$ROOT/crates/postfx/tests/data/$name" "$ROOT/crates/postfx/tests/fx/$name.fx"
   done
 }

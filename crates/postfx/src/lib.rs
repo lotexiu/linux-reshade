@@ -14,6 +14,7 @@ pub mod effect;
 mod error;
 mod image;
 mod memory;
+pub mod shared;
 
 pub use backbuffer::BackbufferCopies;
 pub use chain::{Chain, Skipped, Step};

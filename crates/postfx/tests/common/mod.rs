@@ -45,14 +45,29 @@ impl Gpu {
                 .enumerate_physical_devices()
                 .ok()?
                 .into_iter()
-                .find(|&p| instance.get_physical_device_properties(p).device_type == vk::PhysicalDeviceType::CPU)?;
+                .find(|&p| {
+                    let kind = instance.get_physical_device_properties(p).device_type;
+                    // LINUX_RESHADE_TEST_HARDWARE=1: usa a GPU de verdade (para ver o que o driver dela recusa).
+                    if std::env::var_os("LINUX_RESHADE_TEST_HARDWARE").is_some_and(|v| v != "0") {
+                        kind == vk::PhysicalDeviceType::DISCRETE_GPU
+                    } else {
+                        kind == vk::PhysicalDeviceType::CPU
+                    }
+                })?;
             let family = instance
                 .get_physical_device_queue_family_properties(physical)
                 .iter()
                 .position(|q| q.queue_flags.contains(vk::QueueFlags::GRAPHICS))? as u32;
             let priorities = [1.0];
             let queues = [vk::DeviceQueueCreateInfo::default().queue_family_index(family).queue_priorities(&priorities)];
-            let device = instance.create_device(physical, &vk::DeviceCreateInfo::default().queue_create_infos(&queues), None).ok()?;
+            // Os mesmos recursos opcionais que a layer liga no dispositivo do jogo.
+            let have = instance.get_physical_device_features(physical);
+            let features = vk::PhysicalDeviceFeatures::default()
+                .shader_image_gather_extended(have.shader_image_gather_extended == vk::TRUE)
+                .shader_storage_image_extended_formats(have.shader_storage_image_extended_formats == vk::TRUE)
+                .shader_storage_image_read_without_format(have.shader_storage_image_read_without_format == vk::TRUE)
+                .shader_storage_image_write_without_format(have.shader_storage_image_write_without_format == vk::TRUE);
+            let device = instance.create_device(physical, &vk::DeviceCreateInfo::default().queue_create_infos(&queues).enabled_features(&features), None).ok()?;
             let queue = device.get_device_queue(family, 0);
             let memory = instance.get_physical_device_memory_properties(physical);
             Some(Self { _entry: entry, instance, device, queue, family, memory })
