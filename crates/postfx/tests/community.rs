@@ -121,6 +121,7 @@ fn every_compiled_bundle_either_runs_or_is_refused_explicitly() {
 /// profundidade falsa: o que o app de controle compilou para um jogo, para ver o que o driver da GPU aceita (com
 /// `LINUX_RESHADE_TEST_HARDWARE=1`). `LINUX_RESHADE_CHAIN_SIZE=1920x1080` muda o tamanho do alvo (padrão 8x4),
 /// `LINUX_RESHADE_CHAIN_SET=NOME=valor,...` escreve uniforms (inteiros ou decimais) em todas as etapas que os têm e
+/// `LINUX_RESHADE_CHAIN_FRAMES=300` roda mais quadros (efeitos que convergem no tempo, como o autofoco),
 /// `LINUX_RESHADE_CHAIN_DEPTH=0.3` muda o valor da profundidade falsa (padrão 0,5) e
 /// `LINUX_RESHADE_CHAIN_PNG=arquivo.ppm` grava o último quadro. Sem a primeira variável, não faz nada.
 #[test]
@@ -140,7 +141,11 @@ fn a_chain_of_compiled_bundles_runs() {
         // Quadro de entrada: um degradê colorido com xadrez (algo para os efeitos enxergarem).
         let (image, image_mem) = gpu.target_sized(w, h, |x, y| [(x * 255 / w) as u8, (y * 255 / h) as u8, if (x / 64 + y / 64) % 2 == 0 { 200 } else { 60 }, 255]);
         let images = [image];
-        let depth = depth_image(&gpu, w, h, std::env::var("LINUX_RESHADE_CHAIN_DEPTH").ok().and_then(|v| v.parse().ok()).unwrap_or(0.5));
+        let base: f32 = std::env::var("LINUX_RESHADE_CHAIN_DEPTH").ok().and_then(|v| v.parse().ok()).unwrap_or(0.5);
+        // `LINUX_RESHADE_CHAIN_DEPTH_SPREAD=0.3`: a profundidade varia de `base` a `base + spread` da esquerda para a direita.
+        let spread: f32 = std::env::var("LINUX_RESHADE_CHAIN_DEPTH_SPREAD").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+        let gradient = move |x: u32, _y: u32| base + spread * x as f32 / w as f32;
+        let depth = depth_image_with(&gpu, w, h, base, (spread != 0.0).then_some(&gradient));
         let input_depth = DepthInput { image: depth.image, format: DEPTH_FORMAT, layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL, extent: vk::Extent2D { width: w, height: h }, linear_filter: true };
         let target = Target { images: &images, format: FORMAT, extent: vk::Extent2D { width: w, height: h }, rest_layout: REST, queue_family: gpu.family, init_command_buffer: None, depth: Some(input_depth) };
         let started = std::time::Instant::now();
@@ -171,11 +176,12 @@ fn a_chain_of_compiled_bundles_runs() {
                     }
                 }
                 let frame = FrameInfo { time_ms: 10_000.0, frame_time_ms: 16.6, frame_count: 600, date: [2026.0, 10.0, 9.0, 43_200.0] };
-                for n in 0..4 {
+                let frames: u32 = std::env::var("LINUX_RESHADE_CHAIN_FRAMES").ok().and_then(|v| v.parse().ok()).unwrap_or(4);
+                for n in 0..frames {
                     chain.update_sources(0, &FrameInfo { frame_count: 600 + n, ..frame });
                     gpu.submit_all(&chain.command_buffers(0));
                 }
-                eprintln!("4 quadros executados");
+                eprintln!("{frames} quadros executados");
                 // Diagnóstico: o que há em cada textura compartilhada pedida (`LINUX_RESHADE_CHAIN_DUMP=nome1,nome2`).
                 if let Ok(names) = std::env::var("LINUX_RESHADE_CHAIN_DUMP") {
                     for name in names.split(',').filter(|n| !n.is_empty()) {

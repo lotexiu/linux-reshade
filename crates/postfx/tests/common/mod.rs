@@ -260,6 +260,12 @@ pub struct DepthImage {
 /// Uma imagem de profundidade `width`x`height` cheia de `value`, no layout `DEPTH_STENCIL_ATTACHMENT_OPTIMAL`,
 /// como um jogo a deixaria (com `SAMPLED` no uso, que a layer acrescenta).
 pub unsafe fn depth_image(gpu: &Gpu, width: u32, height: u32, value: f32) -> DepthImage {
+    unsafe { depth_image_with(gpu, width, height, value, None) }
+}
+
+/// Como `depth_image`, mas com um padrão por pixel (`(x, y) -> profundidade`) no lugar do valor único: uma imagem plana
+/// esconde erros que só aparecem quando a profundidade varia (autofoco, ordenação).
+pub unsafe fn depth_image_with(gpu: &Gpu, width: u32, height: u32, value: f32, pattern: Option<&dyn Fn(u32, u32) -> f32>) -> DepthImage {
     unsafe {
         let info = vk::ImageCreateInfo::default()
             .image_type(vk::ImageType::TYPE_2D)
@@ -290,12 +296,40 @@ pub unsafe fn depth_image(gpu: &Gpu, width: u32, height: u32, value: f32) -> Dep
                 .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
                 .subresource_range(range)
         };
+        let staging = pattern.map(|f| {
+            let bytes = u64::from(width) * u64::from(height) * 4;
+            let buffer = gpu.device.create_buffer(&vk::BufferCreateInfo::default().size(bytes).usage(vk::BufferUsageFlags::TRANSFER_SRC), None).unwrap();
+            let req = gpu.device.get_buffer_memory_requirements(buffer);
+            let mem = gpu
+                .device
+                .allocate_memory(&vk::MemoryAllocateInfo::default().allocation_size(req.size).memory_type_index(gpu.memory_type(req.memory_type_bits, vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT)), None)
+                .unwrap();
+            gpu.device.bind_buffer_memory(buffer, mem, 0).unwrap();
+            let ptr = gpu.device.map_memory(mem, 0, bytes, vk::MemoryMapFlags::empty()).unwrap().cast::<f32>();
+            for y in 0..height {
+                for x in 0..width {
+                    ptr.add((y * width + x) as usize).write(f(x, y));
+                }
+            }
+            gpu.device.unmap_memory(mem);
+            (buffer, mem)
+        });
         gpu.run(|cb| {
             let all = vk::PipelineStageFlags::ALL_COMMANDS;
             gpu.device.cmd_pipeline_barrier(cb, all, all, vk::DependencyFlags::empty(), &[], &[], &[barrier(vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL)]);
             gpu.device.cmd_clear_depth_stencil_image(cb, image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &vk::ClearDepthStencilValue { depth: value, stencil: 0 }, &[range]);
+            if let Some((buffer, _)) = &staging {
+                let copy = vk::BufferImageCopy::default()
+                    .image_subresource(vk::ImageSubresourceLayers { aspect_mask: vk::ImageAspectFlags::DEPTH, mip_level: 0, base_array_layer: 0, layer_count: 1 })
+                    .image_extent(vk::Extent3D { width, height, depth: 1 });
+                gpu.device.cmd_copy_buffer_to_image(cb, *buffer, image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[copy]);
+            }
             gpu.device.cmd_pipeline_barrier(cb, all, all, vk::DependencyFlags::empty(), &[], &[], &[barrier(vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)]);
         });
+        if let Some((buffer, mem)) = staging {
+            gpu.device.destroy_buffer(buffer, None);
+            gpu.device.free_memory(mem, None);
+        }
         DepthImage { image, memory }
     }
 }

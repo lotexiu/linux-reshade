@@ -525,8 +525,8 @@ cmd_flatpak_layer() {
   [ -n "$runtime" ] || { warn "não achei o app $app (instalado?)"; exit 1; }
   version="$(flatpak info --show-metadata "$runtime" 2>/dev/null | awk '/^\[Extension org.freedesktop.Platform.VulkanLayer\]/{f=1;next} /^\[/{f=0} f&&/^version *=/{gsub(/ /,"");sub(/version=/,"");print;exit}')"
   [ -n "$version" ] || { warn "o runtime $runtime não tem o ponto de extensão VulkanLayer"; exit 1; }
-  local -a grant=(--device=shm "--filesystem=$cache:ro" "--env=$ENABLE_VAR=1" "--env=LINUX_RESHADE_DEPTH=1" "--env=LINUX_RESHADE_LOG=/tmp/linux-reshade-flatpak.log")
-  local -a revoke=(--nodevice=shm "--nofilesystem=$cache" "--unset-env=$ENABLE_VAR" --unset-env=LINUX_RESHADE_DEPTH --unset-env=LINUX_RESHADE_LOG)
+  local -a grant=(--device=shm "--filesystem=$cache:ro" "--env=$ENABLE_VAR=1" "--env=LINUX_RESHADE_DEPTH=1" "--env=LINUX_RESHADE_LOG=/tmp/linux-reshade-flatpak.log" --env=LINUX_RESHADE_SIGNALS=1)
+  local -a revoke=(--nodevice=shm "--nofilesystem=$cache" "--unset-env=$ENABLE_VAR" --unset-env=LINUX_RESHADE_DEPTH --unset-env=LINUX_RESHADE_LOG --unset-env=LINUX_RESHADE_SIGNALS)
   if [ "$mode" = "undo" ]; then
     flatpak override --user "${revoke[@]}" "$app"
     flatpak --user uninstall -y "$id" >/dev/null 2>&1 || true
