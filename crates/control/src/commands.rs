@@ -375,12 +375,14 @@ fn depth_pick(pick: DepthPick, layer: Option<String>) -> ExitCode {
             DepthPick::Auto => ipc::DepthPick::Auto,
             DepthPick::Candidate(n) => ipc::DepthPick::Candidate(n),
             DepthPick::Pass(n) => ipc::DepthPick::Pass(n),
+            DepthPick::Clear(n) => ipc::DepthPick::Clear(n),
         };
         match ipc::set_depth_pick(&l.id, wanted) {
             Ok(()) => println!("{}: {}", l.status.app, match pick {
                 DepthPick::Auto => "profundidade automática".to_string(),
                 DepthPick::Candidate(n) => format!("candidata {n}"),
                 DepthPick::Pass(n) => format!("profundidade depois do passe {n}"),
+                DepthPick::Clear(n) => format!("profundidade antes da limpeza {n}"),
             }),
             Err(e) => return fail(format!("{}: {e}", l.id)),
         }

@@ -396,6 +396,7 @@ fn finish_pass(data: &DeviceData, cmd: vk::CommandBuffer) -> Option<PassRecord> 
     if let Some(screen) = state.screen_current.take() {
         state.screen_passes.push(screen);
     }
+    state.rendering = None;
     let pass = state.current.take()?;
     if pass.end_layout != 0 {
         state.layouts.push((pass.image, pass.end_layout));
@@ -440,6 +441,117 @@ unsafe extern "system" fn cmd_end_render_pass2(cmd: vk::CommandBuffer, p_end: *c
     }
 }
 
+// ---- limpezas da profundidade ("copiar antes de limpar", como o ReShade) ----
+
+/// Registra uma limpeza (ou recomeço) da imagem observada. Devolve se é a que a pessoa (ou a regra automática) quer copiar.
+fn register_clear_event(data: &DeviceData, image: u64, splittable: bool) -> bool {
+    if image == 0 || image != data.depth.watched_image.load(Ordering::Relaxed) {
+        return false;
+    }
+    let ordinal = data.depth.clear_counter.fetch_add(1, Ordering::Relaxed) + 1;
+    let draws_before = data.depth.draws_since_event.swap(0, Ordering::Relaxed);
+    data.depth.frame_clears.lock().unwrap().push(super::ClearEvent { draws_before, splittable });
+    ordinal == data.depth.snapshot_clear.load(Ordering::Relaxed)
+}
+
+/// Grava a cópia da profundidade de `image` (no layout `layout`) para a foto da layer, fora de um passe de renderização.
+unsafe fn snapshot_now(data: &DeviceData, cmd: vk::CommandBuffer, image: u64, layout: vk::ImageLayout) {
+    let Some(info) = data.depth.images.lock().unwrap().get(&image).copied() else { return };
+    let Some((dst, format)) = data.depth.snapshot.lock().unwrap().as_ref().map(|s| (s.image, s.format)) else { return };
+    if layout == vk::ImageLayout::UNDEFINED || format.as_raw() != info.format {
+        return;
+    }
+    unsafe { super::snapshot::record_copy(data, cmd, vk::Image::from_raw(image), layout, dst, format, info.width, info.height) };
+    if !data.depth.snapshot_written.swap(true, Ordering::Relaxed) {
+        log!("foto da profundidade gravada antes da limpeza {} (primeira vez)", data.depth.snapshot_clear.load(Ordering::Relaxed));
+    }
+}
+
+/// Guarda uma cópia do `VkRenderingInfo` se o passe é sobre a imagem observada (para partir o passe numa limpeza).
+unsafe fn remember_rendering(data: &DeviceData, cmd: vk::CommandBuffer, info: &vk::RenderingInfo<'_>, image: u64) {
+    unsafe {
+        let own = |a: &vk::RenderingAttachmentInfo<'_>| {
+            let mut c = *a;
+            c.p_next = std::ptr::null();
+            // SAFETY: sem `p_next`, a struct não referencia nada além dela mesma.
+            std::mem::transmute::<vk::RenderingAttachmentInfo<'_>, vk::RenderingAttachmentInfo<'static>>(c)
+        };
+        let colors = if info.p_color_attachments.is_null() { Vec::new() } else { std::slice::from_raw_parts(info.p_color_attachments, info.color_attachment_count as usize).iter().map(own).collect() };
+        let depth = (!info.p_depth_attachment.is_null()).then(|| own(&*info.p_depth_attachment));
+        let stencil = (!info.p_stencil_attachment.is_null()).then(|| own(&*info.p_stencil_attachment));
+        // Só dá para partir um passe simples: sem estruturas encadeadas e sem suspender/retomar.
+        let simple = info.p_next.is_null() && !info.flags.intersects(vk::RenderingFlags::SUSPENDING | vk::RenderingFlags::RESUMING);
+        let copy = simple.then(|| super::RenderingCopy { flags: info.flags, render_area: info.render_area, layer_count: info.layer_count, view_mask: info.view_mask, colors, depth, stencil, image });
+        if let Some(state) = data.depth.cmds.lock().unwrap().get_mut(&cmd.as_raw()) {
+            state.rendering = copy;
+        }
+    }
+}
+
+/// Parte o passe de renderização dinâmica em gravação: fecha, copia a profundidade, reabre o mesmo passe sem apagar nada.
+unsafe fn split_rendering(data: &DeviceData, cmd: vk::CommandBuffer, copy: &super::RenderingCopy) -> bool {
+    unsafe {
+        let (Some(end), Some(begin)) = (data.depth.next.cmd_end_rendering, data.depth.next.cmd_begin_rendering) else { return false };
+        let Some(depth) = copy.depth else { return false };
+        end(cmd);
+        snapshot_now(data, cmd, copy.image, depth.image_layout);
+        // Reabre com `LOAD`: o conteúdo (cor e profundidade) segue como estava.
+        let keep = |a: &vk::RenderingAttachmentInfo<'static>| {
+            let mut c = *a;
+            c.load_op = vk::AttachmentLoadOp::LOAD;
+            c
+        };
+        let colors: Vec<vk::RenderingAttachmentInfo<'static>> = copy.colors.iter().map(keep).collect();
+        let depth = keep(&depth);
+        let stencil = copy.stencil.as_ref().map(keep);
+        let mut info = vk::RenderingInfo::default().flags(copy.flags).render_area(copy.render_area).layer_count(copy.layer_count).view_mask(copy.view_mask).color_attachments(&colors).depth_attachment(&depth);
+        if let Some(stencil) = &stencil {
+            info = info.stencil_attachment(stencil);
+        }
+        begin(cmd, &info);
+        true
+    }
+}
+
+unsafe extern "system" fn cmd_clear_attachments(cmd: vk::CommandBuffer, count: u32, p_attachments: *const vk::ClearAttachment, rect_count: u32, p_rects: *const vk::ClearRect) {
+    unsafe {
+        let Some(data) = data_of(cmd.as_raw()) else { return };
+        if data.depth.is_on() && !p_attachments.is_null() && std::slice::from_raw_parts(p_attachments, count as usize).iter().any(|a| a.aspect_mask.intersects(vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL)) {
+            data.depth.frame_clear_attachments.fetch_add(1, Ordering::Relaxed);
+            // A limpeza é dentro do passe em gravação: se é sobre a imagem observada, é uma limpeza dela.
+            let (image, copy) = match data.depth.cmds.lock().unwrap().get(&cmd.as_raw()) {
+                Some(state) => (state.current.map_or(0, |p| p.image), state.rendering.clone()),
+                None => (0, None),
+            };
+            if image != 0 && register_clear_event(&data, image, copy.is_some()) && let Some(copy) = copy {
+                split_rendering(&data, cmd, &copy);
+            }
+        }
+        (data.device.fp_v1_0().cmd_clear_attachments)(cmd, count, p_attachments, rect_count, p_rects);
+    }
+}
+
+unsafe extern "system" fn cmd_clear_depth_stencil_image(
+    cmd: vk::CommandBuffer,
+    image: vk::Image,
+    layout: vk::ImageLayout,
+    p_value: *const vk::ClearDepthStencilValue,
+    count: u32,
+    p_ranges: *const vk::ImageSubresourceRange,
+) {
+    unsafe {
+        let Some(data) = data_of(cmd.as_raw()) else { return };
+        if data.depth.is_on() && data.depth.images.lock().unwrap().contains_key(&image.as_raw()) {
+            data.depth.frame_clear_images.fetch_add(1, Ordering::Relaxed);
+            // Fora de um passe: dá para copiar logo antes.
+            if register_clear_event(&data, image.as_raw(), true) {
+                snapshot_now(&data, cmd, image.as_raw(), layout);
+            }
+        }
+        (data.device.fp_v1_0().cmd_clear_depth_stencil_image)(cmd, image, layout, p_value, count, p_ranges);
+    }
+}
+
 unsafe extern "system" fn cmd_begin_rendering(cmd: vk::CommandBuffer, p_info: *const vk::RenderingInfo<'_>) {
     unsafe {
         let Some(data) = data_of(cmd.as_raw()) else { return };
@@ -471,6 +583,11 @@ unsafe extern "system" fn cmd_begin_rendering(cmd: vk::CommandBuffer, p_info: *c
                     if let Some(state) = data.depth.cmds.lock().unwrap().get_mut(&cmd.as_raw()) {
                         state.current = Some(record);
                     }
+                    // Um passe que recomeça a profundidade (`Clear` ou `DontCare`) é uma limpeza dela; copia antes, fora do passe.
+                    if matches!(load, LoadOp::Clear | LoadOp::DontCare) && register_clear_event(&data, image, true) {
+                        snapshot_now(&data, cmd, image, a.image_layout);
+                    }
+                    remember_rendering(&data, cmd, info, image);
                 }
             }
         }
@@ -495,8 +612,11 @@ fn on_draw(data: &DeviceData, cmd: vk::CommandBuffer, vertices: u64, indirect: b
     }
     data.depth.frame_draws.fetch_add(1, Ordering::Relaxed);
     if let Some(state) = data.depth.cmds.lock().unwrap().get_mut(&cmd.as_raw()) {
-        if state.current.is_some() {
+        if let Some(p) = state.current {
             data.depth.frame_depth_draws.fetch_add(1, Ordering::Relaxed);
+            if p.image == data.depth.watched_image.load(Ordering::Relaxed) {
+                data.depth.draws_since_event.fetch_add(1, Ordering::Relaxed);
+            }
         }
         let compare = state.compare;
         if let Some(s) = state.screen_current.as_mut() {
@@ -762,13 +882,16 @@ fn poll_pick(data: &DeviceData) {
     let Some(id) = crate::status::id() else { return };
     let text = std::fs::read_to_string(ipc::state_dir().join(format!("depth-pick-{id}"))).unwrap_or_default();
     let number = |key: &str| text.lines().find_map(|l| l.strip_prefix(key)?.strip_prefix('=')?.trim().parse::<u32>().ok()).filter(|n| *n > 0);
-    let pick = super::Pick { candidate: number("candidate"), pass: number("pass") };
+    let pick = super::Pick { candidate: number("candidate"), pass: number("pass"), clear: number("clear") };
     let mut current = data.depth.pick.lock().unwrap();
     if *current != pick {
-        log!("pedido para a profundidade: candidata {:?}, passe {:?}", pick.candidate, pick.pass);
+        log!("pedido para a profundidade: candidata {:?}, passe {:?}, limpeza {:?}", pick.candidate, pick.pass, pick.clear);
         *current = pick;
     }
 }
+
+/// Quantos quadros seguidos a limpeza da cena precisa mudar para a escolha automática mudar.
+const AUTO_CLEAR_SWITCH_FRAMES: u32 = 8;
 
 /// Quantos quadros seguidos sem um passe que recomeça a imagem fazem a regra automática largar a foto.
 const AUTO_SCENE_FORGET_FRAMES: u32 = 600;
@@ -779,6 +902,10 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
         return;
     }
     data.depth.pass_counter.store(0, Ordering::Relaxed);
+    data.depth.clear_counter.store(0, Ordering::Relaxed);
+    data.depth.draws_since_event.store(0, Ordering::Relaxed);
+    let clear_events = std::mem::take(&mut *data.depth.frame_clears.lock().unwrap());
+    let clear_count = clear_events.len();
     poll_pick(data);
     let (frame_draws, frame_depth_draws) = (data.depth.frame_draws.swap(0, Ordering::Relaxed), data.depth.frame_depth_draws.swap(0, Ordering::Relaxed));
     let (frame_clear_attachments, frame_clear_images) = (data.depth.frame_clear_attachments.swap(0, Ordering::Relaxed), data.depth.frame_clear_images.swap(0, Ordering::Relaxed));
@@ -813,9 +940,42 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
     };
     let mut chosen = None;
     data.depth.snapshot_pass.store(0, Ordering::Relaxed);
+    data.depth.snapshot_clear.store(0, Ordering::Relaxed);
     if let Some(c) = &active {
-        // Sem pedido: se a imagem é recomeçada no meio do quadro (um passe que começa com `DontCare` ou `Clear`), a cena é a foto do
-        // passe anterior; sem foto possível, vale a original.
+        // A regra automática da limpeza (como o "copiar antes de limpar" do ReShade): entre as limpezas da profundidade do
+        // quadro, a que apaga mais desenhos é a da cena. O número da limpeza é estável de um quadro para o outro (o de
+        // passes não é: o DXVK os divide como quer), e a escolha só muda depois de vários quadros discordando.
+        let auto_clear = || {
+            let mut state = data.depth.auto_clear.lock().unwrap();
+            if state.0 != c.image {
+                *state = (c.image, 0, 0, 0);
+            }
+            let best = clear_events.iter().enumerate().filter(|(_, e)| e.splittable).max_by_key(|(i, e)| (e.draws_before, *i)).map_or(0, |(i, _)| i as u32 + 1);
+            if best == 0 {
+                // Sem limpezas neste quadro: só esquece a escolha depois de muito tempo.
+                state.3 += 1;
+                if state.3 >= AUTO_SCENE_FORGET_FRAMES {
+                    *state = (c.image, 0, 0, 0);
+                }
+            } else if state.1 == 0 {
+                *state = (c.image, best, best, 0);
+            } else if best == state.1 {
+                state.2 = best;
+                state.3 = 0;
+            } else if best == state.2 {
+                state.3 += 1;
+                if state.3 >= AUTO_CLEAR_SWITCH_FRAMES {
+                    *state = (c.image, best, best, 0);
+                }
+            } else {
+                state.2 = best;
+                state.3 = 1;
+            }
+            (state.1 > 0).then_some(state.1)
+        };
+        // Um pedido da pessoa (passe ou limpeza) manda; senão a regra da limpeza; senão a do passe (jogos sem limpezas que se
+        // possa partir, como os de passes de renderização clássicos).
+        let wanted_clear = if pick.pass.is_some() { None } else { pick.clear.or_else(auto_clear) };
         let auto_pass = || {
             // Com histerese: depois de usar a foto de um passe, só volta à imagem original se o jogo ficar muito tempo sem
             // recomeçar a imagem; o número do passe acompanha o último visto. Sem isso, a escolha trocava entre foto e
@@ -836,15 +996,15 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
             }
             state.1
         };
-        let wanted = pick.pass.or_else(auto_pass);
-        let snapshot = wanted.and_then(|pass| {
-            // A foto depois do passe N: precisa da imagem da foto, e a imagem original precisa ter TRANSFER_SRC (armado).
-            let image = unsafe { super::snapshot::ensure(data, vk::Format::from_raw(c.format), c.width, c.height) }?;
-            Some((pass, image))
+        let wanted_pass = if wanted_clear.is_some() { None } else { pick.pass.or_else(auto_pass) };
+        let snapshot = (wanted_pass.is_some() || wanted_clear.is_some()).then_some(()).and_then(|()| {
+            // A foto: precisa da imagem da foto, e a imagem original precisa ter TRANSFER_SRC (armado).
+            unsafe { super::snapshot::ensure(data, vk::Format::from_raw(c.format), c.width, c.height) }
         });
         match snapshot {
-            Some((pass, image)) => {
-                data.depth.snapshot_pass.store(pass, Ordering::Relaxed);
+            Some(image) => {
+                data.depth.snapshot_pass.store(wanted_pass.unwrap_or(0), Ordering::Relaxed);
+                data.depth.snapshot_clear.store(wanted_clear.unwrap_or(0), Ordering::Relaxed);
                 // Antes da primeira foto a imagem não tem layout: os efeitos só a recebem depois.
                 if data.depth.snapshot_written.load(Ordering::Relaxed) {
                     chosen = Some(super::Chosen { image: image.as_raw(), format: c.format, layout: vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL.as_raw(), width: c.width, height: c.height, linear: linear(c.format) });
@@ -878,13 +1038,15 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
             let mut diag = data.depth.diag.lock().unwrap();
             if data.depth.diag_frames.fetch_add(1, Ordering::Relaxed) % 90 == 0 || diag.is_empty() {
                 *diag = format!(
-                    "trocas da imagem: {}, reconstruções da cadeia: {}; um quadro: {} desenhos ({} em passes com profundidade), limpezas de profundidade fora de passe: {} de anexos e {} de imagens; última mudança que reconstruiu: {}",
+                    "trocas da imagem: {}, reconstruções da cadeia: {}; um quadro: {} desenhos ({} em passes com profundidade), limpezas de profundidade fora de passe: {} de anexos e {} de imagens; limpeza escolhida: {} de {}; última mudança que reconstruiu: {}",
                     data.depth.image_changes.load(Ordering::Relaxed),
                     data.depth.chain_rebuilds.load(Ordering::Relaxed),
                     frame_draws,
                     frame_depth_draws,
                     frame_clear_attachments,
                     frame_clear_images,
+                    data.depth.snapshot_clear.load(Ordering::Relaxed),
+                    clear_count,
                     data.depth.last_key_change.lock().unwrap(),
                 );
             }
@@ -996,32 +1158,5 @@ unsafe extern "system" fn cmd_clear_color_image(cmd: vk::CommandBuffer, image: v
         let Some(data) = data_of(cmd.as_raw()) else { return };
         screen_event(&data, cmd, image, super::screen::Kind::Clear);
         (data.device.fp_v1_0().cmd_clear_color_image)(cmd, image, layout, p_color, count, p_ranges);
-    }
-}
-
-unsafe extern "system" fn cmd_clear_attachments(cmd: vk::CommandBuffer, count: u32, p_attachments: *const vk::ClearAttachment, rect_count: u32, p_rects: *const vk::ClearRect) {
-    unsafe {
-        let Some(data) = data_of(cmd.as_raw()) else { return };
-        if data.depth.is_on() && !p_attachments.is_null() && std::slice::from_raw_parts(p_attachments, count as usize).iter().any(|a| a.aspect_mask.intersects(vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL)) {
-            data.depth.frame_clear_attachments.fetch_add(1, Ordering::Relaxed);
-        }
-        (data.device.fp_v1_0().cmd_clear_attachments)(cmd, count, p_attachments, rect_count, p_rects);
-    }
-}
-
-unsafe extern "system" fn cmd_clear_depth_stencil_image(
-    cmd: vk::CommandBuffer,
-    image: vk::Image,
-    layout: vk::ImageLayout,
-    p_value: *const vk::ClearDepthStencilValue,
-    count: u32,
-    p_ranges: *const vk::ImageSubresourceRange,
-) {
-    unsafe {
-        let Some(data) = data_of(cmd.as_raw()) else { return };
-        if data.depth.is_on() && data.depth.images.lock().unwrap().contains_key(&image.as_raw()) {
-            data.depth.frame_clear_images.fetch_add(1, Ordering::Relaxed);
-        }
-        (data.device.fp_v1_0().cmd_clear_depth_stencil_image)(cmd, image, layout, p_value, count, p_ranges);
     }
 }

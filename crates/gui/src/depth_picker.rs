@@ -65,6 +65,9 @@ impl DepthPicker {
             self.list.append(&option(&text, pick == DepthPick::Candidate(c.number), Some(&first), DepthPick::Candidate(c.number), &weak));
         }
 
+        // A profundidade antes de uma limpeza específica (como o ReShade): o número é estável entre quadros.
+        self.list.append(&numbered_option("Antes da limpeza", matches!(pick, DepthPick::Clear(_)), match pick { DepthPick::Clear(n) => n, _ => 1 }, &first, &weak, DepthPick::Clear));
+
         // A profundidade depois de um passe específico (avançado).
         let line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         let current_pass = if let DepthPick::Pass(n) = pick { n } else { 1 };
@@ -132,4 +135,36 @@ fn option(text: &str, active: bool, group: Option<&gtk::CheckButton>, pick: Dept
         }
     });
     b
+}
+
+/// Uma opção com um número ("Antes da limpeza [2] Usar").
+fn numbered_option(label: &str, active: bool, current: u32, group: &gtk::CheckButton, weak: &Weak<DepthPicker>, make: fn(u32) -> DepthPick) -> gtk::Box {
+    let line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let option = gtk::CheckButton::with_label(label);
+    option.set_group(Some(group));
+    option.set_active(active);
+    let spin = gtk::SpinButton::with_range(1.0, 200.0, 1.0);
+    spin.set_value(f64::from(current));
+    let apply = {
+        let (weak, spin) = (weak.clone(), spin.clone());
+        move || {
+            if let Some(me) = weak.upgrade() {
+                me.emit(make(spin.value() as u32));
+            }
+        }
+    };
+    option.connect_toggled({
+        let apply = apply.clone();
+        move |c| {
+            if c.is_active() {
+                apply();
+            }
+        }
+    });
+    let use_button = gtk::Button::with_label("Usar");
+    use_button.connect_clicked(move |_| apply());
+    line.append(&option);
+    line.append(&spin);
+    line.append(&use_button);
+    line
 }

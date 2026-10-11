@@ -14,3 +14,6 @@ vk-layer = { path = "../vk-layer" }
 ipc = { path = "../ipc" }
 postfx = { path = "../postfx" }
 fx-bundle = { path = "../fx-bundle" }
+
+[dev-dependencies]
+ash = { workspace = true, features = ["loaded", "debug"] }

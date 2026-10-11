@@ -100,6 +100,16 @@ Teste ao vivo com `lrctl depth pick pass N` (foto da profundidade depois do N-é
   câmera (os personagens da criação) no mesmo alvo. O painel (botão "Profundidade…") mostrou isso e "depois do passe 1" deu a
   profundidade certa. A regra automática agora também recomeça em `Clear` (como o "copiar antes de limpar" do ReShade):
   `observe::scene_pass`.
+- **Escolha por limpeza (2026-10-11, inspirada no "copiar antes de limpar" do ReShade):** no ATLYSS (DXVK) o ReShade lista
+  `CLEAR 1/2/3` com 4, 1399 e 1 desenhos; o número de passes de renderização muda de quadro para quadro (o DXVK os divide como
+  quer), o de limpezas não. A layer agora conta as limpezas da profundidade observada (`vkCmdBeginRendering` que recomeça a
+  imagem com `Clear` ou `DontCare`, `vkCmdClearAttachments` com profundidade dentro do passe, `vkCmdClearDepthStencilImage`),
+  guarda quantos desenhos cada uma apaga e copia a profundidade **logo antes** da que apaga mais (com histerese de 8 quadros).
+  Uma limpeza dentro de um passe de renderização dinâmica é partida: `vkCmdEndRendering`, cópia, `vkCmdBeginRendering` com
+  `LOAD`. Só vale para passes sem estruturas encadeadas e sem suspender/retomar; sem isso a limpeza não é "partível" e a
+  regra antiga (passe) continua. Pedido manual: `lrctl depth pick clear N` ou "Antes da limpeza" no painel.
+  Testado com `smoke-dynamic` (app headless com limpezas dentro do passe, validation layer limpa na lavapipe); **não** com o
+  jogo ainda.
 - Falha achada no teste: uma cadeia que falhava por falta de profundidade nunca era tentada de novo (corrigido).
 
 ## Passos (cada um verificável e commitado)

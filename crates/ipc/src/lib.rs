@@ -154,6 +154,8 @@ pub enum DepthPick {
     Candidate(u32),
     /// A profundidade logo depois do N-ésimo passe (de 1) que a desenha: a layer faz uma cópia nesse ponto.
     Pass(u32),
+    /// A profundidade logo antes da N-ésima limpeza (de 1) dela no quadro, como o "copiar antes de limpar" do ReShade.
+    Clear(u32),
 }
 
 impl DepthPick {
@@ -163,6 +165,7 @@ impl DepthPick {
             DepthPick::Auto => None,
             DepthPick::Candidate(n) => Some(format!("candidate:{n}")),
             DepthPick::Pass(n) => Some(format!("pass:{n}")),
+            DepthPick::Clear(n) => Some(format!("clear:{n}")),
         }
     }
 
@@ -172,6 +175,7 @@ impl DepthPick {
         match kind.trim() {
             "candidate" => Some(DepthPick::Candidate(n)),
             "pass" => Some(DepthPick::Pass(n)),
+            "clear" => Some(DepthPick::Clear(n)),
             _ => None,
         }
     }
@@ -196,6 +200,10 @@ pub fn set_depth_pick_in(dir: &std::path::Path, layer_id: &str, pick: DepthPick)
             ensure_private_dir(dir)?;
             fs::write(path, format!("pass={n}\n"))
         }
+        DepthPick::Clear(n) => {
+            ensure_private_dir(dir)?;
+            fs::write(path, format!("clear={n}\n"))
+        }
     }
 }
 
@@ -211,6 +219,7 @@ pub fn depth_pick_in(dir: &std::path::Path, layer_id: &str) -> DepthPick {
         match line.split_once('=') {
             Some(("candidate", n)) => return n.trim().parse().map_or(DepthPick::Auto, DepthPick::Candidate),
             Some(("pass", n)) => return n.trim().parse().map_or(DepthPick::Auto, DepthPick::Pass),
+            Some(("clear", n)) => return n.trim().parse().map_or(DepthPick::Auto, DepthPick::Clear),
             _ => {}
         }
     }
@@ -482,7 +491,7 @@ mod tests {
     #[test]
     fn the_depth_pick_text_round_trips_and_rejects_garbage() {
         use super::*;
-        for pick in [DepthPick::Candidate(3), DepthPick::Pass(2)] {
+        for pick in [DepthPick::Candidate(3), DepthPick::Pass(2), DepthPick::Clear(2)] {
             assert_eq!(DepthPick::parse(&pick.text().unwrap()), Some(pick));
         }
         assert_eq!(DepthPick::Auto.text(), None);

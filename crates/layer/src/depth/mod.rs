@@ -43,7 +43,7 @@ pub(crate) struct RenderPassInfo {
 }
 
 /// O que se gravou num command buffer.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub(crate) struct CmdState {
     pub passes: Vec<PassRecord>,
     pub current: Option<PassRecord>,
@@ -52,6 +52,8 @@ pub(crate) struct CmdState {
     pub layouts: Vec<(u64, i32)>,
     /// O passe em gravação que desenha na imagem do swapchain, e os que já terminaram.
     pub screen_current: Option<screen::ScreenPass>,
+    /// O passe de renderização dinâmica em gravação sobre a imagem de profundidade observada (para poder parti-lo).
+    pub rendering: Option<RenderingCopy>,
     pub screen_passes: Vec<screen::ScreenPass>,
 }
 
@@ -90,6 +92,31 @@ pub struct Pick {
     pub candidate: Option<u32>,
     /// Usa o estado da profundidade logo depois do N-ésimo passe (de 1) que a usa: uma cópia é feita nesse ponto.
     pub pass: Option<u32>,
+    /// Usa o estado da profundidade logo antes da N-ésima limpeza (de 1) dela no quadro, como o ReShade ("copiar antes de limpar").
+    pub clear: Option<u32>,
+}
+
+/// Uma limpeza (ou recomeço) da profundidade observada no quadro, na ordem da gravação.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ClearEvent {
+    /// Desenhos na imagem desde a limpeza anterior: o conteúdo que a limpeza vai apagar.
+    pub draws_before: u32,
+    /// Dá para copiar a profundidade antes dela (renderização dinâmica sem estruturas extras, ou fora de um passe).
+    pub splittable: bool,
+}
+
+/// Uma cópia do `VkRenderingInfo` do passe em gravação, para reabri-lo depois de uma cópia no meio dele.
+#[derive(Clone)]
+pub(crate) struct RenderingCopy {
+    pub flags: vk::RenderingFlags,
+    pub render_area: vk::Rect2D,
+    pub layer_count: u32,
+    pub view_mask: u32,
+    pub colors: Vec<vk::RenderingAttachmentInfo<'static>>,
+    pub depth: Option<vk::RenderingAttachmentInfo<'static>>,
+    pub stencil: Option<vk::RenderingAttachmentInfo<'static>>,
+    /// A imagem de profundidade do passe.
+    pub image: u64,
 }
 
 /// A imagem própria da layer onde se guarda a cópia da profundidade de um passe.
@@ -152,6 +179,13 @@ pub struct Depth {
     /// passes (`vkCmdClearAttachments` e `vkCmdClearDepthStencilImage`).
     /// A regra automática do passe da cena, com histerese: `(imagem, passe, quadros seguidos sem passe)`. Trocar entre a foto e a
     /// imagem original a cada poucos quadros reconstruía a cadeia sem parar.
+    /// Limpezas de profundidade da imagem observada: o número pedido (0 = nenhum), a contagem do quadro, os desenhos desde a
+    /// última e a lista do quadro; e a escolha automática com histerese `(imagem, escolhida, candidata, quadros seguidos)`.
+    pub(crate) snapshot_clear: AtomicU32,
+    pub(crate) clear_counter: AtomicU32,
+    pub(crate) draws_since_event: AtomicU32,
+    pub(crate) frame_clears: Mutex<Vec<ClearEvent>>,
+    pub(crate) auto_clear: Mutex<(u64, u32, u32, u32)>,
     pub(crate) auto_scene: Mutex<(u64, Option<u32>, u32)>,
     pub(crate) diag: Mutex<String>,
     /// A última mudança da profundidade que reconstruiu a cadeia (diagnóstico).
@@ -225,6 +259,11 @@ impl Depth {
             image_changes: AtomicU32::new(0),
             chain_rebuilds: AtomicU32::new(0),
             last_image: AtomicU64::new(0),
+            snapshot_clear: AtomicU32::new(0),
+            clear_counter: AtomicU32::new(0),
+            draws_since_event: AtomicU32::new(0),
+            frame_clears: Mutex::new(Vec::new()),
+            auto_clear: Mutex::new((0, 0, 0, 0)),
             auto_scene: Mutex::new((0, None, 0)),
             diag: Mutex::new(String::new()),
             last_key_change: Mutex::new(String::new()),

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Utilitário de desenvolvimento. Idempotente; serve para trocar de máquina sem esforço.
-# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|smoke-preset|smoke-depth|smoke-depth-effect|smoke-compute|daemon|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-survey|fx-golden|placement|logs> [args]
+# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|smoke-preset|smoke-depth|smoke-depth-effect|smoke-compute|smoke-dynamic|daemon|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-survey|fx-golden|placement|logs> [args]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -501,6 +501,22 @@ cmd_smoke_compute() {
   [ "$ok" = 1 ] && say "smoke (compute): passou" || { warn "smoke (compute): falhou ($tmp, $LOG_FILE)"; "$lrctl" layers; grep -E "pulada|cadeia" "$LOG_FILE" | tail -8; exit 1; }
 }
 
+# Teste da escolha por limpeza de profundidade: um app de renderização dinâmica (como o DXVK) com limpezas DENTRO do passe, numa
+# superfície headless, com a validation layer. Confere a foto gravada antes da limpeza escolhida e nenhum erro de validação.
+cmd_smoke_dynamic() {
+  say "smoke (renderização dinâmica): roda um app headless de 150 quadros na GPU de software"
+  cmd_install
+  cargo build --release -p linux-reshade-layer --example dynamic_clear >/dev/null 2>&1 || { warn "não compilei o exemplo"; exit 1; }
+  local tmp out; tmp="$(mktemp -d)"
+  out="$(LINUX_RESHADE=1 LINUX_RESHADE_DEPTH=1 LINUX_RESHADE_STATE_DIR="$tmp" LINUX_RESHADE_LOG="$tmp/log.txt" VK_LOADER_LAYERS_ENABLE='*validation*' timeout 120 "$ROOT/target/release/examples/dynamic_clear" 2>&1)"
+  local ok=1
+  check() { if eval "$2"; then printf '  ok     %s\n' "$1"; else printf '  FALHOU %s\n' "$1"; ok=0; fi; }
+  check "o app terminou os quadros" 'grep -q "dynamic_clear: 150 quadros" <<<"$out"'
+  check "a foto da profundidade foi gravada antes da limpeza 2 (a que apaga mais desenhos)" 'grep -q "foto da profundidade gravada antes da limpeza 2" "$tmp/log.txt"'
+  check "a validation layer não reclamou de nada" '! grep -q "VUID" <<<"$out"'
+  [ "$ok" = 1 ] && say "smoke (renderização dinâmica): passou" || { warn "smoke (renderização dinâmica): falhou ($tmp)"; echo "$out" | head -10; exit 1; }
+}
+
 # Um daemon antigo (o binário foi recompilado depois de ele subir) continua executando o código velho: ele precisa ser
 # trocado. Devolve sucesso se havia algum desatualizado e o matou.
 kill_stale_daemons() {
@@ -688,6 +704,7 @@ case "${1:-}" in
   smoke-depth) cmd_smoke_depth ;;
   smoke-depth-effect) cmd_smoke_depth_effect ;;
   smoke-compute) cmd_smoke_compute ;;
+  smoke-dynamic) cmd_smoke_dynamic ;;
   daemon)    cmd_daemon ;;
   panel)     shift; cmd_panel "$@" ;;
   panel-smoke) cmd_panel_smoke ;;

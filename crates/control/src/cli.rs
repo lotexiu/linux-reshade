@@ -21,6 +21,7 @@ uso: lrctl <comando> [opções]
   depth pick candidate <N>        escolhe a N-ésima candidata de profundidade da lista de 'lrctl layers' (de 1); com
                                   --layer <jogo> vale só para ele
   depth pick pass <N>             usa a profundidade logo depois do N-ésimo passe que a desenha (de 1), por cópia
+  depth pick clear <N>            usa a profundidade logo antes da N-ésima limpeza dela no quadro (como o ReShade), por cópia
   depth pick auto                 volta à escolha automática
 
   config                          mostra onde estão os efeitos, texturas, presets e cache
@@ -89,6 +90,7 @@ pub enum Command {
 pub enum DepthPick {
     Candidate(u32),
     Pass(u32),
+    Clear(u32),
     Auto,
 }
 
@@ -172,6 +174,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
             let pick = match tail.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
                 ["pick", "candidate", n] => DepthPick::Candidate(number(n)?),
                 ["pick", "pass", n] => DepthPick::Pass(number(n)?),
+                ["pick", "clear", n] => DepthPick::Clear(number(n)?),
                 ["pick", "auto"] => DepthPick::Auto,
                 _ => return Err("uso: lrctl depth pick candidate <N> | pass <N> | auto  (--layer <jogo> opcional)".into()),
             };
