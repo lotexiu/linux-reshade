@@ -25,7 +25,12 @@ struct Published {
     effects: Vec<(String, Defines)>,
     /// A profundidade invertida que valia quando o plano foi montado; mudou, remonta (a macro dos efeitos de profundidade muda).
     reversed: Option<bool>,
+    /// A mudança de inversão vista e há quantos ticks seguidos: só vale depois de `REVERSED_TICKS` (a candidata escolhida pode
+    /// piscar entre imagens de sentidos diferentes, e cada remontagem do plano refazia a cadeia do jogo).
+    pending: (Option<bool>, u32),
 }
+
+const REVERSED_TICKS: u32 = 25;
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Report {
@@ -174,7 +179,22 @@ impl Games {
         let resolutions = resolutions(layer);
         let Some(&(width, height)) = resolutions.first() else { return }; // ainda sem swapchain: a próxima olhada
         let stamp = modified(&found.path);
-        let reversed = layer.status.depth.iter().find(|d| d.chosen).and_then(|d| d.reversed);
+        let seen = layer.status.depth.iter().find(|d| d.chosen).and_then(|d| d.reversed);
+        let reversed = match self.published.get_mut(&layer.id) {
+            Some(p) if p.reversed.is_some() && seen != p.reversed => {
+                if seen.is_none() {
+                    p.reversed
+                } else {
+                    p.pending = if p.pending.0 == seen { (seen, p.pending.1 + 1) } else { (seen, 1) };
+                    if p.pending.1 >= REVERSED_TICKS { seen } else { p.reversed }
+                }
+            }
+            Some(p) => {
+                p.pending = (None, 0);
+                seen
+            }
+            None => seen,
+        };
         let changed = self.published.get(&layer.id).is_none_or(|p| p.file != found.path || p.modified != stamp || p.reversed != reversed);
 
         let mut republish = false;
@@ -190,7 +210,7 @@ impl Games {
             let built = game_plan::build(compiler, &Preset::parse(&text), &self.global_macros, &game_plan::auto_depth_macros(reversed), width, height);
             report.warnings.extend(built.warnings.into_iter().map(|w| (game.to_string(), w)));
             let effects = built.variants.clone();
-            self.published.insert(layer.id.clone(), Published { file: found.path.clone(), modified: stamp, effects, reversed });
+            self.published.insert(layer.id.clone(), Published { file: found.path.clone(), modified: stamp, effects, reversed, pending: (None, 0) });
             plan = Some(built.plan);
             republish = true;
         }
