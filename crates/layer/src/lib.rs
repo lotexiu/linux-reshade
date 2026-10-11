@@ -5,6 +5,7 @@
 //! - [`effect`]: ciclo de vida do efeito (postfx) de cada swapchain; [`bundle`]: o bundle executado
 //! - [`state`]: dados por instance/device; [`control`]: estado escrito pelo app de controle
 
+mod crash;
 mod bundle;
 mod control;
 mod depth;

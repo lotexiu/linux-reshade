@@ -890,6 +890,9 @@ fn poll_pick(data: &DeviceData) {
     }
 }
 
+/// Quantos quadros seguidos o desafiante precisa vencer para a candidata de profundidade em uso mudar.
+const STICKY_SWITCH_FRAMES: u32 = 120;
+
 /// Quantos quadros seguidos a limpeza da cena precisa mudar para a escolha automática mudar.
 const AUTO_CLEAR_SWITCH_FRAMES: u32 = 8;
 
@@ -924,6 +927,30 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
     {
         for (i, c) in candidates.iter_mut().enumerate() {
             c.chosen = i + 1 == n as usize;
+        }
+    }
+    // Histerese: a imagem em uso só perde o lugar depois de o desafiante vencer vários quadros seguidos (não vale para um pedido).
+    if pick.candidate.is_none() {
+        let winner = candidates.iter().find(|c| c.chosen).map_or(0, |c| c.image);
+        let mut sticky = data.depth.sticky.lock().unwrap();
+        let keeps = sticky.0 != 0 && sticky.0 != winner && candidates.iter().any(|c| c.image == sticky.0 && c.unusable.is_none());
+        if keeps {
+            if sticky.1 == winner {
+                sticky.2 += 1;
+            } else {
+                sticky.1 = winner;
+                sticky.2 = 1;
+            }
+            if sticky.2 >= STICKY_SWITCH_FRAMES {
+                *sticky = (winner, 0, 0);
+            } else {
+                let current = sticky.0;
+                for c in candidates.iter_mut() {
+                    c.chosen = c.image == current;
+                }
+            }
+        } else {
+            *sticky = (winner, 0, 0);
         }
     }
     let active = candidates.iter().find(|c| c.chosen).cloned();

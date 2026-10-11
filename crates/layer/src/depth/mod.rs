@@ -183,6 +183,9 @@ pub struct Depth {
     /// imagem original a cada poucos quadros reconstruía a cadeia sem parar.
     /// Limpezas de profundidade da imagem observada: o número pedido (0 = nenhum), a contagem do quadro, os desenhos desde a
     /// última e a lista do quadro; e a escolha automática com histerese `(imagem, escolhida, candidata, quadros seguidos)`.
+    /// A candidata em uso com histerese: `(imagem em uso, desafiante, quadros seguidos em que o desafiante vence)`. Alguns jogos
+    /// (o Roblox) têm várias imagens de profundidade de contagens parecidas e a vencedora trocava de um quadro para outro.
+    pub(crate) sticky: Mutex<(u64, u64, u32)>,
     pub(crate) snapshot_clear: AtomicU32,
     pub(crate) clear_counter: AtomicU32,
     pub(crate) draws_since_event: AtomicU32,
@@ -262,6 +265,7 @@ impl Depth {
             image_changes: AtomicU32::new(0),
             chain_rebuilds: AtomicU32::new(0),
             last_image: AtomicU64::new(0),
+            sticky: Mutex::new((0, 0, 0)),
             snapshot_clear: AtomicU32::new(0),
             clear_counter: AtomicU32::new(0),
             draws_since_event: AtomicU32::new(0),
