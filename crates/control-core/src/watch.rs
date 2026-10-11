@@ -13,7 +13,7 @@ use std::time::{Duration, SystemTime};
 
 /// Intervalo entre duas olhadas nas layers. Olhar é barato (listar um diretório e ler alguns bytes), e
 /// quanto menor, mais cedo o efeito aparece depois de uma mudança de tamanho de janela.
-pub const INTERVAL: Duration = Duration::from_millis(200);
+pub const INTERVAL: Duration = Duration::from_millis(60);
 /// A poda do cache roda no máximo com esta frequência.
 const PRUNE_EVERY: Duration = Duration::from_secs(30);
 /// Quantos bundles recentes de cada efeito ficam no cache (fora os que um jogo aberto usa).

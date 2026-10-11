@@ -109,7 +109,7 @@ pub fn kind_of(u: &Uniform) -> Option<Kind> {
             match (min, max) {
                 // Com faixa, um slider; passo: o do autor, ou 1 para inteiros, ou 1/100 da faixa.
                 (Some(min), Some(max)) if max > min => {
-                    Some(Kind::Slider { min, max, step: step.unwrap_or(if integer { 1.0 } else { (max - min) / 100.0 }) })
+                    Some(Kind::Slider { min, max, step: if integer { step.unwrap_or(1.0) } else { fine_step(min, max, step) } })
                 }
                 _ => Some(Kind::Number { min, max, step: step.unwrap_or(if integer { 1.0 } else { 0.01 }) }),
             }
@@ -143,6 +143,14 @@ pub fn controls_of(bundle: &Bundle, block: &[u8]) -> Vec<Control> {
         .collect()
 }
 
+/// O passo de um slider decimal: o do autor do efeito costuma ser grosso demais para se ajustar com a mão (o ReShade
+/// arrasta de forma contínua). Vale o menor entre o dele e 1/1000 da faixa, arredondado para uma potência de dez.
+fn fine_step(min: f64, max: f64, author: Option<f64>) -> f64 {
+    let range = (max - min).abs().max(1e-9);
+    let wanted = author.unwrap_or(range / 100.0).min(range / 1000.0);
+    10f64.powf(wanted.log10().floor())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,18 +180,18 @@ mod tests {
     #[test]
     fn a_number_with_a_range_is_a_slider_with_a_sensible_step() {
         let float = kind_of(&uniform("float", 1, r#"{"ui_type":"slider","ui_min":0.0,"ui_max":2.0}"#));
-        assert_eq!(float, Some(Kind::Slider { min: 0.0, max: 2.0, step: 0.02 }));
+        assert_eq!(float, Some(Kind::Slider { min: 0.0, max: 2.0, step: 0.001 }));
         let int = kind_of(&uniform("int", 1, r#"{"ui_min":1,"ui_max":10}"#));
         assert_eq!(int, Some(Kind::Slider { min: 1.0, max: 10.0, step: 1.0 }), "sem ui_type, mas com faixa");
         let custom = kind_of(&uniform("float", 1, r#"{"ui_min":0,"ui_max":1,"ui_step":0.25}"#));
-        assert_eq!(custom, Some(Kind::Slider { min: 0.0, max: 1.0, step: 0.25 }), "o passo do autor vale");
+        assert_eq!(custom, Some(Kind::Slider { min: 0.0, max: 1.0, step: 0.001 }), "o passo do autor, grosso demais, é afinado");
     }
 
     #[test]
     fn numbers_written_by_the_author_come_back_as_written() {
         // Como o fx2spv os grava: floats de 32 bits em 9 dígitos.
         let k = kind_of(&uniform("float", 1, r#"{"ui_min":0.100000001,"ui_max":1,"ui_step":0.00999999978}"#));
-        assert_eq!(k, Some(Kind::Slider { min: 0.1, max: 1.0, step: 0.01 }));
+        assert_eq!(k, Some(Kind::Slider { min: 0.1, max: 1.0, step: 0.0001 }));
         assert_eq!(clean(0.699999988), 0.7);
         assert_eq!(clean(8.0), 8.0);
         assert_eq!(clean(-1.0), -1.0);
@@ -229,7 +237,7 @@ mod tests {
         assert_eq!(controls.len(), 1);
         let c = &controls[0];
         assert_eq!((c.name.as_str(), c.label.as_str(), c.type_name.as_str()), ("Strength", "Intensidade", "float"));
-        assert_eq!(c.kind, Kind::Slider { min: 0.0, max: 1.0, step: 0.01 });
+        assert_eq!(c.kind, Kind::Slider { min: 0.0, max: 1.0, step: 0.001 });
         assert_eq!((c.value.clone(), c.default.clone(), c.is_default()), (vec![1.0], vec![1.0], true));
 
         // O valor atual vem do bloco, e o padrão continua o do manifesto.

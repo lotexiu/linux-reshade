@@ -100,6 +100,10 @@ mensagens.
 
 ## Pendências e dívidas conhecidas
 
+- **A confirmar no jogo (pedido do dono, 2026-10-10):** sliders decimais agora têm passo fino (1/1000 da faixa) e o
+  vigia olha o preset a cada 60 ms (era 200 ms); conferir se mexer nos parâmetros de um efeito (ex.: `HeightFog`) fica
+  suave e sem atraso perceptível. Se ainda houver degrau, o próximo passo é interpolar os uniforms na layer.
+
 - **Interface gráfica:** só mexe na escolha e nos valores de *todos* os jogos; selecionar um jogo é a F5. O dono relatou
   duas coisas ao testar o `lrpanel`: (a) o painel aberto antes do jogo não listava o jogo novo: **não consegui reproduzir**
   (com um teste real o `vkcube` aparece em ~5 s); se voltar, perguntar como o painel foi aberto, se havia mais de um
