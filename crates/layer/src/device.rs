@@ -31,8 +31,24 @@ pub unsafe extern "system" fn create_device(
         let next_gdpa = (*layer_info).pfn_next_get_device_proc_addr;
         (*link).u.p_layer_info = (*layer_info).p_next;
 
+        // Os efeitos pedem alguns recursos opcionais (gather com offset, imagens de armazenamento de formatos estendidos e
+        // sem formato); a layer os liga se a GPU os tem e o jogo não ligou.
+        let supported = instance.instance.get_physical_device_features(physical_device);
+        let mut patched = *p_create_info;
+        let mut features = vk::PhysicalDeviceFeatures::default();
+        if let Some(f2) = features2_in_chain(p_create_info) {
+            // O jogo usa `VkPhysicalDeviceFeatures2`: acrescenta na própria struct dele (memória dele, válida e gravável).
+            enable_extra_features(&mut (*f2).features, &supported);
+        } else {
+            if !(*p_create_info).p_enabled_features.is_null() {
+                features = *(*p_create_info).p_enabled_features;
+            }
+            enable_extra_features(&mut features, &supported);
+            patched.p_enabled_features = &features;
+        }
+
         // `vkCreateDevice` do próximo elo, carregado junto com o Instance.
-        let result = (instance.instance.fp_v1_0().create_device)(physical_device, p_create_info, p_allocator, p_device);
+        let result = (instance.instance.fp_v1_0().create_device)(physical_device, &patched, p_allocator, p_device);
         if result != vk::Result::SUCCESS {
             return result;
         }
@@ -108,4 +124,31 @@ pub unsafe extern "system" fn get_device_queue2(
             data.queues.lock().unwrap().insert((*p_queue).as_raw(), (*p_queue_info).queue_family_index);
         }
     }
+}
+
+/// A `VkPhysicalDeviceFeatures2` da cadeia `pNext` do jogo, se houver.
+unsafe fn features2_in_chain(info: *const vk::DeviceCreateInfo<'_>) -> Option<*mut vk::PhysicalDeviceFeatures2<'static>> {
+    unsafe {
+        let mut next = (*info).p_next as *const vk::BaseInStructure<'_>;
+        while !next.is_null() {
+            if (*next).s_type == vk::StructureType::PHYSICAL_DEVICE_FEATURES_2 {
+                return Some(next as *mut vk::PhysicalDeviceFeatures2<'static>);
+            }
+            next = (*next).p_next;
+        }
+        None
+    }
+}
+
+/// Liga o que os efeitos usam e o jogo não pediu, só se a GPU suporta.
+fn enable_extra_features(wanted: &mut vk::PhysicalDeviceFeatures, supported: &vk::PhysicalDeviceFeatures) {
+    let on = |have: &mut vk::Bool32, can: vk::Bool32| {
+        if can == vk::TRUE {
+            *have = vk::TRUE;
+        }
+    };
+    on(&mut wanted.shader_image_gather_extended, supported.shader_image_gather_extended);
+    on(&mut wanted.shader_storage_image_extended_formats, supported.shader_storage_image_extended_formats);
+    on(&mut wanted.shader_storage_image_read_without_format, supported.shader_storage_image_read_without_format);
+    on(&mut wanted.shader_storage_image_write_without_format, supported.shader_storage_image_write_without_format);
 }

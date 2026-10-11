@@ -46,6 +46,8 @@ fn every_compiled_bundle_either_runs_or_is_refused_explicitly() {
             }
             Err(e) => panic!("{name}: o leitor recusou um bundle do próprio compilador: {e}"),
         };
+        for technique in 0..bundle.manifest.techniques.len() {
+        let name = if technique == 0 { name.clone() } else { format!("{name}#{}", bundle.manifest.techniques[technique].name) };
         unsafe {
             let targets = gpu.targets(2, input);
             let target = Target {
@@ -57,12 +59,12 @@ fn every_compiled_bundle_either_runs_or_is_refused_explicitly() {
                 init_command_buffer: None,
                 depth: None,
             };
-            let mut created = Effect::new(&gpu.device, &gpu.memory, &bundle, 0, &target, gpu.queue);
+            let mut created = Effect::new(&gpu.device, &gpu.memory, &bundle, technique, &target, gpu.queue);
             // Pede profundidade: dá uma imagem de profundidade como a de um jogo (cheia de 0,5).
             let depth_image = if matches!(&created, Err(Error::Unsupported(why)) if why.contains("profundidade")) {
                 let depth = depth_image(&gpu, W, H, 0.5);
                 let input = DepthInput { image: depth.image, format: DEPTH_FORMAT, layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL, extent: vk::Extent2D { width: W, height: H }, linear_filter: true };
-                created = Effect::new(&gpu.device, &gpu.memory, &bundle, 0, &Target { depth: Some(input), ..target }, gpu.queue);
+                created = Effect::new(&gpu.device, &gpu.memory, &bundle, technique, &Target { depth: Some(input), ..target }, gpu.queue);
                 Some(depth)
             } else {
                 None
@@ -98,6 +100,7 @@ fn every_compiled_bundle_either_runs_or_is_refused_explicitly() {
                 gpu.device.free_memory(d.memory, None);
             }
             gpu.destroy_targets(targets);
+        }
         }
     }
     eprintln!("\n{} efeitos executados: {}", ran.len(), ran.join(", "));

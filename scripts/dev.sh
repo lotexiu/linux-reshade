@@ -297,8 +297,8 @@ cmd_smoke_layer() {
   # state_of <pid> <texto>: o jogo <pid> mostra <texto> em `lrctl layers`
   state_of() { "$lrctl" layers | awk -v p="$1" '$2==p' | grep -q "$2"; }
   wait_state() { for _ in $(seq 1 200); do state_of "$1" "$2" && return 0; sleep 0.1; done; return 1; }
-  for _ in $(seq 1 150); do [ "$("$lrctl" layers | awk 'NR>1' | wc -l)" -ge 2 ] && break; sleep 0.1; done
-  local pids; pids=($("$lrctl" layers | awk 'NR>1{print $2}' | sort -n))
+  for _ in $(seq 1 150); do [ "$("$lrctl" layers | awk 'NR>1 && $2 ~ /^[0-9]+$/' | wc -l)" -ge 2 ] && break; sleep 0.1; done
+  local pids; pids=($("$lrctl" layers | awk 'NR>1 && $2 ~ /^[0-9]+$/ {print $2}' | sort -n))
   local A=${pids[0]:-0} B=${pids[1]:-0}
   check "dois jogos com a layer (pids $A e $B)" '[ "$A" != 0 ] && [ "$B" != 0 ] && [ "$A" != "$B" ]'
   "$lrctl" on >/dev/null
