@@ -770,6 +770,9 @@ fn poll_pick(data: &DeviceData) {
     }
 }
 
+/// Quantos quadros seguidos sem um passe que recomeça a imagem fazem a regra automática largar a foto.
+const AUTO_SCENE_FORGET_FRAMES: u32 = 600;
+
 /// Fim de um quadro (chamado no present): escolhe a candidata e publica a lista para o app de controle.
 pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
     if !data.depth.is_on() {
@@ -813,7 +816,26 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
     if let Some(c) = &active {
         // Sem pedido: se a imagem é recomeçada no meio do quadro (um passe que começa com `DontCare` ou `Clear`), a cena é a foto do
         // passe anterior; sem foto possível, vale a original.
-        let auto_pass = || super::observe::scene_pass(stats.passes_of(c.image));
+        let auto_pass = || {
+            // Com histerese: depois de usar a foto de um passe, só volta à imagem original se o jogo ficar muito tempo sem
+            // recomeçar a imagem; o número do passe acompanha o último visto. Sem isso, a escolha trocava entre foto e
+            // original a cada poucos quadros e a cadeia era reconstruída toda vez.
+            let mut state = data.depth.auto_scene.lock().unwrap();
+            if state.0 != c.image {
+                *state = (c.image, None, 0);
+            }
+            match (state.1, super::observe::scene_pass(stats.passes_of(c.image))) {
+                (_, Some(p)) => *state = (c.image, Some(p), 0),
+                (Some(_), None) => {
+                    state.2 += 1;
+                    if state.2 >= AUTO_SCENE_FORGET_FRAMES {
+                        *state = (c.image, None, 0);
+                    }
+                }
+                (None, None) => {}
+            }
+            state.1
+        };
         let wanted = pick.pass.or_else(auto_pass);
         let snapshot = wanted.and_then(|pass| {
             // A foto depois do passe N: precisa da imagem da foto, e a imagem original precisa ter TRANSFER_SRC (armado).

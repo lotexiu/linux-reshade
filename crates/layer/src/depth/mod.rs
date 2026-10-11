@@ -150,6 +150,9 @@ pub struct Depth {
     pub(crate) last_image: AtomicU64,
     /// Diagnóstico por quadro: desenhos vistos, os que caíram num passe com profundidade, e limpezas de profundidade fora de
     /// passes (`vkCmdClearAttachments` e `vkCmdClearDepthStencilImage`).
+    /// A regra automática do passe da cena, com histerese: `(imagem, passe, quadros seguidos sem passe)`. Trocar entre a foto e a
+    /// imagem original a cada poucos quadros reconstruía a cadeia sem parar.
+    pub(crate) auto_scene: Mutex<(u64, Option<u32>, u32)>,
     pub(crate) diag: Mutex<String>,
     /// A última mudança da profundidade que reconstruiu a cadeia (diagnóstico).
     pub(crate) last_key_change: Mutex<String>,
@@ -222,6 +225,7 @@ impl Depth {
             image_changes: AtomicU32::new(0),
             chain_rebuilds: AtomicU32::new(0),
             last_image: AtomicU64::new(0),
+            auto_scene: Mutex::new((0, None, 0)),
             diag: Mutex::new(String::new()),
             last_key_change: Mutex::new(String::new()),
             diag_frames: AtomicU32::new(0),
