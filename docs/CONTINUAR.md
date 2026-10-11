@@ -27,6 +27,7 @@ cadeia. Commits de referência: `smoke-preset` (`f5eae79`), `lrctl preset` (`7ae
 | F7 o resto do inventário (atalhos por técnica, capturas, OSD, mouse/teclado) | a fazer |
 | D2 profundidade amostrada (original ou foto de um passe) | **feita**; regra automática do `DontCare` validada no Haste (2026-10-10); `docs/depth.md` |
 | D3 profundidade por jogo | parcial: marcador `depth-arm-<jogo>` arma o jogo sozinho; o painel mostra o estado da profundidade e as macros (`UPSIDE_DOWN` à mão, no preset); falta escolher candidata/passe no painel |
+| Compute e texturas 1D/3D | **feitos** (2026-10-10): 119 de 152 efeitos executam na lavapipe; `smoke-compute` passa na GPU real (vkcube); falta testar os efeitos do Marty num jogo; `docs/levantamento.md` |
 | Efeito antes da UI | adiado: no Haste a UI já está na imagem de render (`docs/antes-da-ui.md`) |
 
 Também feito nesta etapa: sRGB (8 bits), mipmaps, texturas de arquivo (PNG), o remendo de `#include` do Windows

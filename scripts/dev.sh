@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Utilitário de desenvolvimento. Idempotente; serve para trocar de máquina sem esforço.
-# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|smoke-preset|smoke-depth|smoke-depth-effect|daemon|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-survey|fx-golden|placement|logs> [args]
+# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|smoke-preset|smoke-depth|smoke-depth-effect|smoke-compute|daemon|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-survey|fx-golden|placement|logs> [args]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -203,6 +203,8 @@ smoke_isolate() { # smoke_isolate <pasta temporária>
   local legacy="$ROOT/third_party/reshade-shaders-legacy/Shaders" slim="$ROOT/third_party/reshade-shaders-slim/Shaders"
   [ -d "$legacy" ] || cmd_fx_tool
   mkdir -p "$1/Presets"
+  # Estado compartilhado só deste teste: o daemon do usuário (se estiver rodando) não enxerga nem mexe nos jogos dele.
+  export LINUX_RESHADE_STATE_DIR="$1/state"
   export LINUX_RESHADE_CACHE="$1/cache" LINUX_RESHADE_PRESETS="$1/Presets"
   export LINUX_RESHADE_EFFECTS="$ROOT/effects:$legacy" LINUX_RESHADE_INCLUDES="$slim:$legacy"
 }
@@ -468,6 +470,37 @@ cmd_smoke_depth_effect() {
   [ "$ok" = 1 ] && say "smoke (efeito de profundidade): passou" || { warn "smoke (efeito de profundidade): falhou ($tmp, $LOG_FILE)"; "$lrctl" layers; grep -E "pulada|profundidade|cadeia" "$LOG_FILE" | tail -8; exit 1; }
 }
 
+cmd_smoke_compute() {
+  say "smoke (compute): abre um vkcube (400x300) por ~25 s; evite mexer em janelas até terminar"
+  cmd_install
+  cmd_build -p linux-reshade-control
+  local lrctl="$ROOT/target/release/lrctl" tmp; tmp="$(mktemp -d)"
+  smoke_isolate "$tmp"
+  mkdir -p "$tmp/Presets/vkcube"
+  printf 'preset=Compute.ini\n' >"$tmp/Presets/vkcube/game.ini"
+  printf 'Techniques=ComputeInvert@ComputeInvert.fx\n' >"$tmp/Presets/vkcube/Compute.ini"
+  SMOKE_PIDS=()
+  trap smoke_auto_cleanup EXIT
+  "$lrctl" off >/dev/null; "$lrctl" use none >/dev/null
+  : >"$LOG_FILE"
+  "$lrctl" watch >"$tmp/watch.log" 2>&1 &
+  SMOKE_PIDS+=($!)
+  env -u LINUX_RESHADE_BUNDLE "$ENABLE_VAR=1" LINUX_RESHADE_LOG="$LOG_FILE" \
+    VK_LOADER_LAYERS_ENABLE='*validation*' timeout 60 vkcube --wsi wayland --width 400 --height 300 --c 1500 >"$tmp/vkcube.txt" 2>&1 &
+  SMOKE_PIDS+=($!)
+  local ok=1
+  check() { if eval "$2"; then printf '  ok     %s\n' "$1"; else printf '  FALHOU %s\n' "$1"; ok=0; fi; }
+  waitfor() { for _ in $(seq 1 250); do eval "$1" && return 0; sleep 0.1; done; return 1; }
+  "$lrctl" on >/dev/null
+  check "a técnica de compute foi aplicada" 'waitfor "\"$lrctl\" layers | grep -q \"ComputeInvert  aplicada\""'
+  check "a cadeia de compute foi construída" 'grep -q "cadeia de 1 etapa(s) criada" "$LOG_FILE"'
+  sleep 3
+  "$lrctl" off >/dev/null
+  wait "${SMOKE_PIDS[1]}" 2>/dev/null || true
+  check "a validation layer não reclamou de nada" '! grep -q "VUID" "$tmp/vkcube.txt"'
+  [ "$ok" = 1 ] && say "smoke (compute): passou" || { warn "smoke (compute): falhou ($tmp, $LOG_FILE)"; "$lrctl" layers; grep -E "pulada|cadeia" "$LOG_FILE" | tail -8; exit 1; }
+}
+
 # Um daemon antigo (o binário foi recompilado depois de ele subir) continua executando o código velho: ele precisa ser
 # trocado. Devolve sucesso se havia algum desatualizado e o matou.
 kill_stale_daemons() {
@@ -654,6 +687,7 @@ case "${1:-}" in
   smoke-preset) cmd_smoke_preset ;;
   smoke-depth) cmd_smoke_depth ;;
   smoke-depth-effect) cmd_smoke_depth_effect ;;
+  smoke-compute) cmd_smoke_compute ;;
   daemon)    cmd_daemon ;;
   panel)     shift; cmd_panel "$@" ;;
   panel-smoke) cmd_panel_smoke ;;

@@ -102,8 +102,12 @@ pub fn state_path() -> PathBuf {
     state_dir().join("state")
 }
 
-/// O diretório do estado: `/dev/shm/linux-reshade-<uid>`.
+/// O diretório do estado: `/dev/shm/linux-reshade-<uid>`, ou o de `LINUX_RESHADE_STATE_DIR` (os testes de ponta a ponta o usam
+/// para não se misturarem com o daemon do usuário).
 pub fn state_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("LINUX_RESHADE_STATE_DIR").filter(|d| !d.is_empty()) {
+        return PathBuf::from(dir);
+    }
     let uid = rustix::process::getuid().as_raw();
     PathBuf::from(format!("/dev/shm/linux-reshade-{uid}"))
 }
