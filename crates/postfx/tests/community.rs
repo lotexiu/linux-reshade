@@ -119,7 +119,9 @@ fn every_compiled_bundle_either_runs_or_is_refused_explicitly() {
 
 /// Executa uma cadeia de bundles já compilados (`LINUX_RESHADE_CHAIN_BUNDLES=dir1:dir2:...`, na ordem), com uma imagem de
 /// profundidade falsa: o que o app de controle compilou para um jogo, para ver o que o driver da GPU aceita (com
-/// `LINUX_RESHADE_TEST_HARDWARE=1`). Sem a variável, não faz nada.
+/// `LINUX_RESHADE_TEST_HARDWARE=1`). `LINUX_RESHADE_CHAIN_SIZE=1920x1080` muda o tamanho do alvo (padrão 8x4),
+/// `LINUX_RESHADE_CHAIN_SET=NOME=valor,...` escreve uniforms (inteiros ou decimais) em todas as etapas que os têm e
+/// `LINUX_RESHADE_CHAIN_PNG=arquivo.ppm` grava o último quadro. Sem a primeira variável, não faz nada.
 #[test]
 fn a_chain_of_compiled_bundles_runs() {
     let Some(list) = std::env::var_os("LINUX_RESHADE_CHAIN_BUNDLES") else { return };
@@ -127,33 +129,107 @@ fn a_chain_of_compiled_bundles_runs() {
         eprintln!("sem dispositivo Vulkan; teste ignorado");
         return;
     };
+    let (w, h) = std::env::var("LINUX_RESHADE_CHAIN_SIZE")
+        .ok()
+        .and_then(|s| s.split_once('x').and_then(|(a, b)| Some((a.parse::<u32>().ok()?, b.parse::<u32>().ok()?))))
+        .unwrap_or((W, H));
     let bundles: Vec<Bundle> = std::env::split_paths(&list).map(|p| Bundle::load(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))).collect();
     let steps: Vec<postfx::Step<'_>> = bundles.iter().map(|b| postfx::Step { bundle: b, technique: 0 }).collect();
     unsafe {
-        let targets = gpu.targets(2, input);
-        let depth = depth_image(&gpu, W, H, 0.5);
-        let input_depth = DepthInput { image: depth.image, format: DEPTH_FORMAT, layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL, extent: vk::Extent2D { width: W, height: H }, linear_filter: true };
-        let target = Target { images: &targets.images, format: FORMAT, extent: vk::Extent2D { width: W, height: H }, rest_layout: REST, queue_family: gpu.family, init_command_buffer: None, depth: Some(input_depth) };
+        // Quadro de entrada: um degradê colorido com xadrez (algo para os efeitos enxergarem).
+        let (image, image_mem) = gpu.target_sized(w, h, |x, y| [(x * 255 / w) as u8, (y * 255 / h) as u8, if (x / 64 + y / 64) % 2 == 0 { 200 } else { 60 }, 255]);
+        let images = [image];
+        let depth = depth_image(&gpu, w, h, 0.5);
+        let input_depth = DepthInput { image: depth.image, format: DEPTH_FORMAT, layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL, extent: vk::Extent2D { width: w, height: h }, linear_filter: true };
+        let target = Target { images: &images, format: FORMAT, extent: vk::Extent2D { width: w, height: h }, rest_layout: REST, queue_family: gpu.family, init_command_buffer: None, depth: Some(input_depth) };
         match postfx::Chain::new_lenient(&gpu.device, &gpu.memory, &steps, &target, gpu.queue) {
             Ok((mut chain, skipped)) => {
                 eprintln!("cadeia criada: {} etapa(s), {} pulada(s)", chain.len(), skipped.len());
                 for s in &skipped {
                     eprintln!("  pulada: etapa {}: {}", s.step, s.why);
                 }
-                let frame = FrameInfo { time_ms: 10_000.0, frame_time_ms: 16.6, frame_count: 600, date: [2026.0, 10.0, 9.0, 43_200.0] };
-                for _ in 0..3 {
-                    for i in 0..targets.images.len() {
-                        chain.update_sources(i, &frame);
-                        gpu.submit_all(&chain.command_buffers(i));
+                // Uniforms pedidos.
+                if let Ok(sets) = std::env::var("LINUX_RESHADE_CHAIN_SET") {
+                    for item in sets.split(',').filter(|i| !i.is_empty()) {
+                        let Some((name, value)) = item.split_once('=') else { continue };
+                        for pos in 0..chain.len() {
+                            let Some(origin) = chain.origin(pos) else { continue };
+                            let m = &bundles[origin].manifest;
+                            let Some(u) = m.uniforms.iter().find(|u| u.name == name) else { continue };
+                            let bytes = match u.ty.base {
+                                fx_bundle::manifest::ScalarBase::Float => value.parse::<f32>().unwrap().to_le_bytes().to_vec(),
+                                fx_bundle::manifest::ScalarBase::Int => value.parse::<i32>().unwrap().to_le_bytes().to_vec(),
+                                _ => value.parse::<u32>().unwrap().to_le_bytes().to_vec(),
+                            };
+                            chain.write_uniforms(pos, 0, u.offset as usize, &bytes);
+                            eprintln!("  uniforme {name}={value} na etapa {pos}");
+                        }
                     }
                 }
-                eprintln!("3 quadros executados");
+                let frame = FrameInfo { time_ms: 10_000.0, frame_time_ms: 16.6, frame_count: 600, date: [2026.0, 10.0, 9.0, 43_200.0] };
+                for n in 0..4 {
+                    chain.update_sources(0, &FrameInfo { frame_count: 600 + n, ..frame });
+                    gpu.submit_all(&chain.command_buffers(0));
+                }
+                eprintln!("4 quadros executados");
+                // Diagnóstico: o que há em cada textura compartilhada pedida (`LINUX_RESHADE_CHAIN_DUMP=nome1,nome2`).
+                if let Ok(names) = std::env::var("LINUX_RESHADE_CHAIN_DUMP") {
+                    for name in names.split(',').filter(|n| !n.is_empty()) {
+                        let Some(img) = chain.shared_image(name) else {
+                            eprintln!("  {name}: não é uma textura compartilhada");
+                            continue;
+                        };
+                        let tex = bundles.iter().flat_map(|b| b.manifest.textures.iter()).find(|t| t.unique_name == name).unwrap();
+                        let (bytes_per, channels) = match tex.format {
+                            fx_bundle::manifest::TextureFormat::Rgba16f => (8usize, 4usize),
+                            fx_bundle::manifest::TextureFormat::Rg16f | fx_bundle::manifest::TextureFormat::Rg16 => (4, 2),
+                            fx_bundle::manifest::TextureFormat::Rgba8 => (4, 4),
+                            other => {
+                                eprintln!("  {name}: formato {other:?} sem decodificador");
+                                continue;
+                            }
+                        };
+                        let raw = gpu.read_image_raw(img, tex.width, tex.height, bytes_per);
+                        let half = |lo: u8, hi: u8| {
+                            let v = u16::from_le_bytes([lo, hi]);
+                            let (sign, exp, man) = ((v >> 15) & 1, ((v >> 10) & 0x1f) as i32, (v & 0x3ff) as f32);
+                            let f = if exp == 0 { man / 1024.0 * 2f32.powi(-14) } else if exp == 31 { f32::INFINITY } else { (1.0 + man / 1024.0) * 2f32.powi(exp - 15) };
+                            if sign == 1 { -f } else { f }
+                        };
+                        let (mut min, mut max, mut nonzero) = (f32::MAX, f32::MIN, 0usize);
+                        for px in raw.chunks_exact(bytes_per) {
+                            for c in 0..channels {
+                                let v = match (tex.format, bytes_per / channels) {
+                                    (fx_bundle::manifest::TextureFormat::Rg16, 2) => u16::from_le_bytes([px[c * 2], px[c * 2 + 1]]) as f32 / 65535.0,
+                                    (fx_bundle::manifest::TextureFormat::Rgba8, 1) => px[c] as f32 / 255.0,
+                                    _ => half(px[c * 2], px[c * 2 + 1]),
+                                };
+                                min = min.min(v);
+                                max = max.max(v);
+                                if v != 0.0 {
+                                    nonzero += 1;
+                                }
+                            }
+                        }
+                        eprintln!("  {name} ({}x{} {:?}): min {min:.4} max {max:.4}, {nonzero} de {} valores não zero", tex.width, tex.height, tex.format, raw.len() / (bytes_per / channels));
+                    }
+                }
+                if let Ok(path) = std::env::var("LINUX_RESHADE_CHAIN_PNG") {
+                    let pixels = gpu.read_sized(image, w, h);
+                    let mut out = format!("P6\n{w} {h}\n255\n").into_bytes();
+                    for p in &pixels {
+                        out.extend_from_slice(&p[..3]);
+                    }
+                    std::fs::write(&path, out).unwrap();
+                    eprintln!("quadro gravado em {path}");
+                }
                 chain.destroy(&gpu.device);
             }
             Err(e) => eprintln!("a cadeia falhou: {e}"),
         }
         gpu.device.destroy_image(depth.image, None);
         gpu.device.free_memory(depth.memory, None);
-        gpu.destroy_targets(targets);
+        gpu.device.destroy_image(image, None);
+        gpu.device.free_memory(image_mem, None);
     }
 }

@@ -332,8 +332,10 @@ impl Compiler {
     pub fn is_current(&self, name: &str, width: u32, height: u32) -> bool {
         let Ok(source) = self.source(name) else { return false };
         let dir = self.bundle_dir(name, width, height);
+        // Um compilador mais novo que o bundle (o formato ganhou campos, um defeito foi corrigido) invalida o cache.
+        let tool = modified(&self.fx2spv);
         match (modified(&dir.join("manifest.json")), modified(&source)) {
-            (Some(compiled), Some(edited)) => compiled >= edited && images_up_to_date(&dir, compiled),
+            (Some(compiled), Some(edited)) => compiled >= edited && tool.is_none_or(|t| compiled >= t) && images_up_to_date(&dir, compiled),
             _ => false,
         }
     }

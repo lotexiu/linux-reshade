@@ -573,7 +573,7 @@ impl Effect {
             if output == Output::Textures {
                 for name in &some {
                     let (t, image) = (&m.textures[tex_index[*name]], &self.textures[tex_index[*name]]);
-                    if image.levels > 1 {
+                    if image.levels > 1 && pass.generate_mipmaps {
                         let linear = !matches!(t.format, TextureFormat::R32f | TextureFormat::Rg32f | TextureFormat::Rgba32f);
                         res.mips.push(MipChain { image: image.image, extent: vk::Extent2D { width: t.width, height: t.height }, levels: image.levels, linear });
                     }
@@ -817,10 +817,6 @@ impl Effect {
             unsafe { device.update_descriptor_sets(&[write], &[]) };
             if !written.contains(&image.image) {
                 written.push(image.image);
-                if image.levels > 1 {
-                    let linear = !matches!(tex.format, TextureFormat::R32f | TextureFormat::Rg32f | TextureFormat::Rgba32f);
-                    self.passes[k].mips.push(MipChain { image: image.image, extent: vk::Extent2D { width: tex.width, height: tex.height }, levels: image.levels, linear });
-                }
             }
         }
         if let Some(c) = self.passes[k].compute.as_mut() {

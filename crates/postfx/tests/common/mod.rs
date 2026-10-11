@@ -300,3 +300,97 @@ pub unsafe fn depth_image(gpu: &Gpu, width: u32, height: u32, value: f32) -> Dep
     }
 }
 
+
+impl Gpu {
+    /// Uma imagem alvo `w`x`h` (no formato `FORMAT`, layout `REST`) preenchida por `pixel`.
+    pub unsafe fn target_sized(&self, w: u32, h: u32, pixel: impl Fn(u32, u32) -> [u8; 4]) -> (vk::Image, vk::DeviceMemory) {
+        let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST;
+        let size = (w * h * 4) as u64;
+        unsafe {
+            let (staging, staging_mem) = self.host_buffer(size);
+            let ptr = self.device.map_memory(staging_mem, 0, size, vk::MemoryMapFlags::empty()).unwrap() as *mut u8;
+            for y in 0..h {
+                for x in 0..w {
+                    ptr.add(((y * w + x) * 4) as usize).copy_from_nonoverlapping(pixel(x, y).as_ptr(), 4);
+                }
+            }
+            self.device.unmap_memory(staging_mem);
+            let info = vk::ImageCreateInfo::default()
+                .image_type(vk::ImageType::TYPE_2D)
+                .format(FORMAT)
+                .extent(vk::Extent3D { width: w, height: h, depth: 1 })
+                .mip_levels(1)
+                .array_layers(1)
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .tiling(vk::ImageTiling::OPTIMAL)
+                .usage(usage)
+                .initial_layout(vk::ImageLayout::UNDEFINED);
+            let image = self.device.create_image(&info, None).unwrap();
+            let req = self.device.get_image_memory_requirements(image);
+            let mem = self
+                .device
+                .allocate_memory(&vk::MemoryAllocateInfo::default().allocation_size(req.size).memory_type_index(self.memory_type(req.memory_type_bits, vk::MemoryPropertyFlags::empty())), None)
+                .unwrap();
+            self.device.bind_image_memory(image, mem, 0).unwrap();
+            let region = vk::BufferImageCopy::default().image_subresource(layers()).image_extent(vk::Extent3D { width: w, height: h, depth: 1 });
+            self.run(|cb| {
+                self.transition(cb, image, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
+                self.device.cmd_copy_buffer_to_image(cb, staging, image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[region]);
+                self.transition(cb, image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, REST);
+            });
+            self.device.destroy_buffer(staging, None);
+            self.device.free_memory(staging_mem, None);
+            (image, mem)
+        }
+    }
+
+    /// Lê os pixels RGBA de uma imagem `w`x`h` (layout `REST`).
+    pub unsafe fn read_sized(&self, image: vk::Image, w: u32, h: u32) -> Vec<[u8; 4]> {
+        let size = (w * h * 4) as u64;
+        unsafe {
+            let (buffer, mem) = self.host_buffer(size);
+            let region = vk::BufferImageCopy::default().image_subresource(layers()).image_extent(vk::Extent3D { width: w, height: h, depth: 1 });
+            self.run(|cb| self.device.cmd_copy_image_to_buffer(cb, image, REST, buffer, &[region]));
+            let ptr = self.device.map_memory(mem, 0, size, vk::MemoryMapFlags::empty()).unwrap() as *const u8;
+            let pixels = (0..(w * h) as usize).map(|i| [*ptr.add(i * 4), *ptr.add(i * 4 + 1), *ptr.add(i * 4 + 2), *ptr.add(i * 4 + 3)]).collect();
+            self.device.unmap_memory(mem);
+            self.device.destroy_buffer(buffer, None);
+            self.device.free_memory(mem, None);
+            pixels
+        }
+    }
+}
+
+impl Gpu {
+    /// Os bytes crus de uma imagem `w`x`h` com `bytes_per` por pixel, a partir do layout de leitura de shader.
+    pub unsafe fn read_image_raw(&self, image: vk::Image, w: u32, h: u32, bytes_per: usize) -> Vec<u8> {
+        let size = (w as usize * h as usize * bytes_per) as u64;
+        unsafe {
+            let (buffer, mem) = self.host_buffer(size);
+            let region = vk::BufferImageCopy::default().image_subresource(layers()).image_extent(vk::Extent3D { width: w, height: h, depth: 1 });
+            self.run(|cb| {
+                let to = |old, new| {
+                    vk::ImageMemoryBarrier::default()
+                        .image(image)
+                        .old_layout(old)
+                        .new_layout(new)
+                        .src_access_mask(vk::AccessFlags::MEMORY_WRITE)
+                        .dst_access_mask(vk::AccessFlags::MEMORY_READ)
+                        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                        .subresource_range(range())
+                };
+                let all = vk::PipelineStageFlags::ALL_COMMANDS;
+                self.device.cmd_pipeline_barrier(cb, all, all, vk::DependencyFlags::empty(), &[], &[], &[to(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL, vk::ImageLayout::TRANSFER_SRC_OPTIMAL)]);
+                self.device.cmd_copy_image_to_buffer(cb, image, vk::ImageLayout::TRANSFER_SRC_OPTIMAL, buffer, &[region]);
+                self.device.cmd_pipeline_barrier(cb, all, all, vk::DependencyFlags::empty(), &[], &[], &[to(vk::ImageLayout::TRANSFER_SRC_OPTIMAL, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)]);
+            });
+            let ptr = self.device.map_memory(mem, 0, size, vk::MemoryMapFlags::empty()).unwrap() as *const u8;
+            let bytes = std::slice::from_raw_parts(ptr, size as usize).to_vec();
+            self.device.unmap_memory(mem);
+            self.device.destroy_buffer(buffer, None);
+            self.device.free_memory(mem, None);
+            bytes
+        }
+    }
+}

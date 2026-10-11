@@ -280,3 +280,45 @@ fn compute_writes_3d_and_1d_storage_textures_that_a_later_pass_samples() {
         gpu.destroy_targets(targets);
     }
 }
+
+#[test]
+fn a_point_pass_with_a_write_mask_makes_a_request_the_next_frame_reads() {
+    let gpu = gpu_or_skip!();
+    unsafe {
+        let targets = gpu.targets(1, input);
+        let mut effect = Effect::new(&gpu.device, &gpu.memory, &bundle("Ipc"), 0, &target(&targets.images, &gpu), gpu.queue).expect("criar o efeito");
+        // Quadro 1: o pedido ainda não existe quando o passe de leitura roda (a textura começa zerada): frame intacto.
+        gpu.submit(effect.command_buffer(0));
+        for (n, got) in gpu.read(targets.images[0]).into_iter().enumerate() {
+            let (x, y) = (n as u32 % W, n as u32 / W);
+            assert_pixel(got, input(x, y), 1, &format!("quadro 1 pixel ({x},{y})"));
+        }
+        // Quadro 2: o pedido do quadro anterior (R e B ligados, G não) já está lá: tudo azul.
+        gpu.submit(effect.command_buffer(0));
+        for (n, got) in gpu.read(targets.images[0]).into_iter().enumerate() {
+            assert_pixel(got, [0, 0, 255, 255], 1, &format!("quadro 2 pixel {n}"));
+        }
+        effect.destroy(&gpu.device);
+        gpu.destroy_targets(targets);
+    }
+}
+
+#[test]
+fn a_vertex_shader_reads_the_request_and_throws_its_triangle_away_when_nothing_was_asked() {
+    let gpu = gpu_or_skip!();
+    unsafe {
+        let targets = gpu.targets(1, input);
+        let mut effect = Effect::new(&gpu.device, &gpu.memory, &bundle("Ipc2"), 0, &target(&targets.images, &gpu), gpu.queue).expect("criar o efeito");
+        gpu.submit(effect.command_buffer(0));
+        for (n, got) in gpu.read(targets.images[0]).into_iter().enumerate() {
+            let (x, y) = (n as u32 % W, n as u32 / W);
+            assert_pixel(got, input(x, y), 1, &format!("quadro 1 pixel ({x},{y})"));
+        }
+        gpu.submit(effect.command_buffer(0));
+        for (n, got) in gpu.read(targets.images[0]).into_iter().enumerate() {
+            assert_pixel(got, [0, 255, 0, 255], 1, &format!("quadro 2 pixel {n}"));
+        }
+        effect.destroy(&gpu.device);
+        gpu.destroy_targets(targets);
+    }
+}

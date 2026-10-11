@@ -288,12 +288,19 @@ pub struct Pass {
     pub render_targets: Vec<Option<String>>,
     pub samplers: Vec<SamplerBinding>,
     pub clear: bool,
+    /// Gera os mipmaps das texturas de saída depois do passe (`GenerateMipMaps`, verdadeiro por padrão).
+    #[serde(default = "default_true")]
+    pub generate_mipmaps: bool,
     pub srgb_write: bool,
     pub blend: Vec<Blend>,
     pub topology: Topology,
     pub num_vertices: u32,
     /// `[0, 0]` = tamanho do alvo.
     pub viewport: [u32; 2],
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Manifest {

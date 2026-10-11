@@ -75,6 +75,11 @@ impl Shared {
         alias
     }
 
+    /// A imagem guardada sob este nome (diagnóstico).
+    pub(crate) fn image(&self, name: &str) -> Option<ash::vk::Image> {
+        self.entries.get(name).map(|(_, image)| image.image)
+    }
+
     /// # Safety
     /// A GPU não pode estar usando as imagens, e os efeitos que as apelidam já foram destruídos.
     pub unsafe fn destroy(&mut self, device: &ash::Device) {

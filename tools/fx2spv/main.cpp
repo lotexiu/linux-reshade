@@ -506,6 +506,7 @@ int main(int argc, char **argv)
 			}
 			j.end();
 			j.field("clear", ps.clear_render_targets);
+			j.field("generate_mipmaps", ps.generate_mipmaps);
 			j.field("srgb_write", ps.srgb_write_enable);
 			j.key("blend").array();
 			for (size_t k = 0; k < (rt_count ? rt_count : 1); ++k)

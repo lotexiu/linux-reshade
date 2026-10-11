@@ -95,10 +95,10 @@ impl Chain {
         target: &Target<'_>,
         queue: vk::Queue,
     ) -> Result<(Self, Vec<Skipped>), Error> {
-        let mut chain = Self::default();
+        let mut chain = Self { shared: Shared::scan(steps), ..Self::default() };
         let mut skipped = Vec::new();
         for (n, step) in steps.iter().enumerate() {
-            match unsafe { Effect::new(device, memory, step.bundle, step.technique, target, queue) } {
+            match unsafe { Effect::new_shared(device, memory, step.bundle, step.technique, target, queue, Some(&mut chain.shared)) } {
                 Ok(effect) => {
                     chain.effects.push(effect);
                     chain.origin.push(n);
@@ -150,6 +150,11 @@ impl Chain {
         for effect in &mut self.effects {
             unsafe { effect.update_sources(index, frame) };
         }
+    }
+
+    /// A imagem de uma textura compartilhada pelo nome (`unique_name` do manifesto): para diagnóstico.
+    pub fn shared_image(&self, name: &str) -> Option<vk::Image> {
+        self.shared.image(name)
     }
 
     /// Uniforms sem fonte no runtime, por etapa (para o log).

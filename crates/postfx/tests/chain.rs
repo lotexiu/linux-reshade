@@ -172,7 +172,9 @@ fn two_effects_share_a_texture_with_the_same_name_and_properties() {
     unsafe {
         let targets = gpu.targets(1, input);
         let steps = [Step { bundle: &producer, technique: 0 }, Step { bundle: &consumer, technique: 0 }];
-        let mut chain = Chain::new(&gpu.device, &gpu.memory, &steps, &target(&targets.images, &gpu), gpu.queue).expect("criar a cadeia");
+        // `new_lenient` é o que a layer usa: também compartilha.
+        let (mut chain, skipped) = Chain::new_lenient(&gpu.device, &gpu.memory, &steps, &target(&targets.images, &gpu), gpu.queue).expect("criar a cadeia");
+        assert!(skipped.is_empty());
         gpu.submit_all(&chain.command_buffers(0));
         // O produtor escreve (0,25; 0,5; 0,75) na textura e o consumidor, que só a declara, a desenha no frame.
         for (n, got) in gpu.read(targets.images[0]).into_iter().enumerate() {
