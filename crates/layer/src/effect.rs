@@ -322,10 +322,12 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
         if needs_depth && let Fx::Ready(built) = &fx.fx {
             let now = data.depth.chosen().map(|d| (d.image, d.layout));
             if built.depth_key != now {
+                let old = built.depth_key;
                 let _ = data.device.device_wait_idle();
                 SwapchainFx::destroy_fx(&mut fx.fx, &data.device);
                 fx.fx = Fx::Unbuilt;
                 data.depth.chain_rebuilds.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                *data.depth.last_key_change.lock().unwrap() = format!("{old:x?} -> {now:x?}");
                 log!("profundidade para os efeitos mudou: cadeia será reconstruída");
             }
         }

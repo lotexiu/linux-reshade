@@ -151,6 +151,8 @@ pub struct Depth {
     /// Diagnóstico por quadro: desenhos vistos, os que caíram num passe com profundidade, e limpezas de profundidade fora de
     /// passes (`vkCmdClearAttachments` e `vkCmdClearDepthStencilImage`).
     pub(crate) diag: Mutex<String>,
+    /// A última mudança da profundidade que reconstruiu a cadeia (diagnóstico).
+    pub(crate) last_key_change: Mutex<String>,
     pub(crate) diag_frames: AtomicU32,
     pub(crate) frame_draws: AtomicU32,
     pub(crate) frame_depth_draws: AtomicU32,
@@ -221,6 +223,7 @@ impl Depth {
             chain_rebuilds: AtomicU32::new(0),
             last_image: AtomicU64::new(0),
             diag: Mutex::new(String::new()),
+            last_key_change: Mutex::new(String::new()),
             diag_frames: AtomicU32::new(0),
             frame_draws: AtomicU32::new(0),
             frame_depth_draws: AtomicU32::new(0),

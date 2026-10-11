@@ -856,13 +856,14 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
             let mut diag = data.depth.diag.lock().unwrap();
             if data.depth.diag_frames.fetch_add(1, Ordering::Relaxed) % 90 == 0 || diag.is_empty() {
                 *diag = format!(
-                    "trocas da imagem: {}, reconstruções da cadeia: {}; um quadro: {} desenhos ({} em passes com profundidade), limpezas de profundidade fora de passe: {} de anexos e {} de imagens",
+                    "trocas da imagem: {}, reconstruções da cadeia: {}; um quadro: {} desenhos ({} em passes com profundidade), limpezas de profundidade fora de passe: {} de anexos e {} de imagens; última mudança que reconstruiu: {}",
                     data.depth.image_changes.load(Ordering::Relaxed),
                     data.depth.chain_rebuilds.load(Ordering::Relaxed),
                     frame_draws,
                     frame_depth_draws,
                     frame_clear_attachments,
                     frame_clear_images,
+                    data.depth.last_key_change.lock().unwrap(),
                 );
             }
             passes_summary = format!("{} | {passes_summary}", *diag);
