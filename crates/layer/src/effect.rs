@@ -78,6 +78,8 @@ struct Job {
     signature: Vec<(u64, usize)>,
     /// A imagem de profundidade do jogo de que a cadeia tem uma view (se usa profundidade).
     depth_image: Option<u64>,
+    /// A profundidade (imagem e layout) que a criação recebeu: uma falha só se repete com outra (ver `failed_depth`).
+    depth_key: Option<(u64, i32)>,
     started: Instant,
 }
 
@@ -406,7 +408,7 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
             match std::thread::Builder::new().name("lr-build".into()).spawn(move || build_chain(args).map(SendBuilt)) {
                 Ok(thread) => {
                     log!("criação da cadeia iniciada noutra thread ({} etapa(s))", fx.steps.len());
-                    fx.fx = Fx::Building(Job { thread: Some(thread), signature, depth_image: depth.map(|d| d.image), started: Instant::now() });
+                    fx.fx = Fx::Building(Job { thread: Some(thread), signature, depth_image: depth.map(|d| d.image), depth_key: depth.map(|d| (d.image, d.layout)), started: Instant::now() });
                 }
                 Err(e) => {
                     log!("não consegui criar a thread da cadeia: {e}");
@@ -421,6 +423,7 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
                 return None; // ainda criando: o quadro passa sem o efeito
             }
             let started = job.started;
+            let built_with = job.depth_key;
             let result = job.thread.take().map(|t| t.join()).unwrap_or(Err(Box::new("sem thread")));
             fx.fx = match result {
                 Ok(Ok(SendBuilt(mut built))) => {
@@ -453,7 +456,7 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
                             log!("efeito indisponível no swapchain {:#x}: {why}", swapchain.as_raw());
                             let mut dead = Fx::Ready(built);
                             SwapchainFx::destroy_fx(&mut dead, &data.device);
-                            fx.failed_depth = data.depth.chosen().map(|d| (d.image, d.layout));
+                            fx.failed_depth = built_with;
                             fx.set_state(EffectState::Failed(why.clone()));
                             Fx::Failed(why)
                         }
@@ -461,7 +464,7 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
                 }
                 Ok(Err(why)) => {
                     log!("efeito indisponível no swapchain {:#x}: {why}", swapchain.as_raw());
-                    fx.failed_depth = data.depth.chosen().map(|d| (d.image, d.layout));
+                    fx.failed_depth = built_with;
                     fx.set_state(EffectState::Failed(why.clone()));
                     Fx::Failed(why)
                 }
