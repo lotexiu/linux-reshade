@@ -83,7 +83,7 @@ fn signature(steps: &[ResolvedStep]) -> Vec<(u64, usize)> {
 }
 
 /// Quanto esperar a execução anterior de uma imagem antes de desistir de aplicar o efeito neste frame.
-const FENCE_TIMEOUT_NS: u64 = 1_000_000_000;
+const FENCE_TIMEOUT_NS: u64 = 250_000_000;
 
 /// Uma criação de cadeia rodando numa thread própria (a compilação dos shaders pelo driver leva segundos e não pode parar o
 /// jogo). O resultado só é instalado no present seguinte ao fim dela, na thread que usa a fila.
