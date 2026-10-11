@@ -54,10 +54,24 @@ fn sixteen_bits_become_eight() {
 
 #[test]
 fn other_formats_and_garbage_are_refused_with_a_reason() {
-    assert!(matches!(decode("foto.jpg", b"\xFF\xD8\xFF\xE0jpeg"), Err(Error::Unsupported(m)) if m.contains("jpg")));
+    assert!(matches!(decode("lut.dds", b"DDS \x7c\0\0\0"), Err(Error::Unsupported(m)) if m.contains("dds")));
     assert!(matches!(decode("x", b""), Err(Error::Unsupported(_))));
     let mut png = encode(1, 1, png::ColorType::Rgba, png::BitDepth::Eight, &[1, 2, 3, 4], None);
     png.truncate(png.len() - 20);
     assert!(matches!(decode("cortado.png", &png), Err(Error::Decode(_))));
     assert!(matches!(decode("lixo.png", b"\x89PNG\r\n\x1a\nlixo lixo lixo"), Err(Error::Decode(_))));
+}
+
+#[test]
+fn jpeg_is_decoded_to_rgba() {
+    let img = decode("t.jpg", include_bytes!("test_red.jpg")).unwrap();
+    assert_eq!((img.width, img.height), (8, 8));
+    let p = &img.pixels[..4];
+    assert!((i32::from(p[0]) - 200).abs() < 6 && (i32::from(p[1]) - 40).abs() < 6 && (i32::from(p[2]) - 40).abs() < 6 && p[3] == 255, "{p:?}");
+}
+
+#[test]
+fn truncated_jpeg_is_an_error_not_a_panic() {
+    let bytes = include_bytes!("test_red.jpg");
+    assert!(decode("t.jpg", &bytes[..40]).is_err());
 }

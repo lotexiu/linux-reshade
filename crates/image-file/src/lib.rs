@@ -1,8 +1,8 @@
 //! Decodifica o arquivo de imagem de uma textura (`texture T < source = "lut.png"; >`) para pixels RGBA de
 //! 8 bits, a forma que a layer carrega sem precisar de nenhuma biblioteca de imagem dentro do jogo.
 //!
-//! Só PNG por enquanto (é o formato das texturas do `reshade-shaders`); JPEG e DDS ficam para quando algum
-//! efeito usado precisar. O decodificador (`png`) mora apenas neste crate, do lado do app de controle.
+//! PNG e JPEG (os formatos das texturas do `reshade-shaders`); DDS fica para quando algum efeito usado precisar.
+//! Os decodificadores (`png`, `jpeg-decoder`) moram apenas neste crate, do lado do app de controle.
 
 use std::fmt;
 use std::io::Cursor;
@@ -37,12 +37,16 @@ impl std::error::Error for Error {}
 pub const MAX_SIDE: u32 = 16384;
 
 const PNG_MAGIC: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+const JPEG_MAGIC: &[u8; 3] = b"\xff\xd8\xff";
 
 /// Decodifica `bytes` (o conteúdo de `file_name`, que só serve para a mensagem de erro).
 pub fn decode(file_name: &str, bytes: &[u8]) -> Result<Rgba8, Error> {
+    if bytes.starts_with(JPEG_MAGIC) {
+        return decode_jpeg(file_name, bytes);
+    }
     if !bytes.starts_with(PNG_MAGIC) {
         let ext = file_name.rsplit_once('.').map_or("sem extensão", |(_, e)| e);
-        return Err(Error::Unsupported(format!("{file_name} ({ext}); só PNG por enquanto")));
+        return Err(Error::Unsupported(format!("{file_name} ({ext}); só PNG e JPEG por enquanto")));
     }
     let mut decoder = png::Decoder::new(Cursor::new(bytes));
     // Paleta e tons de cinza viram RGB(A), 16 bits viram 8.
@@ -67,6 +71,25 @@ pub fn decode(file_name: &str, bytes: &[u8]) -> Result<Rgba8, Error> {
         return Err(Error::Decode(format!("{file_name}: tamanho dos dados não confere")));
     }
     Ok(Rgba8 { width: frame.width, height: frame.height, pixels })
+}
+
+fn decode_jpeg(file_name: &str, bytes: &[u8]) -> Result<Rgba8, Error> {
+    let mut decoder = jpeg_decoder::Decoder::new(Cursor::new(bytes));
+    let pixels = decoder.decode().map_err(|e| Error::Decode(format!("{file_name}: {e}")))?;
+    let info = decoder.info().ok_or_else(|| Error::Decode(format!("{file_name}: sem cabeçalho")))?;
+    let (width, height) = (u32::from(info.width), u32::from(info.height));
+    if width == 0 || height == 0 || width > MAX_SIDE || height > MAX_SIDE {
+        return Err(Error::Decode(format!("{file_name}: tamanho {width}x{height} fora do limite")));
+    }
+    let rgba: Vec<u8> = match info.pixel_format {
+        jpeg_decoder::PixelFormat::RGB24 => pixels.chunks_exact(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect(),
+        jpeg_decoder::PixelFormat::L8 => pixels.iter().flat_map(|&g| [g, g, g, 255]).collect(),
+        other => return Err(Error::Unsupported(format!("{file_name} (JPEG {other:?}); só RGB e tons de cinza"))),
+    };
+    if rgba.len() != width as usize * height as usize * 4 {
+        return Err(Error::Decode(format!("{file_name}: tamanho dos dados não confere")));
+    }
+    Ok(Rgba8 { width, height, pixels: rgba })
 }
 
 #[cfg(test)]
