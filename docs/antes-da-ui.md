@@ -43,3 +43,7 @@ buffers prontos por imagem do swapchain), sincronizar os uniforms por quadro em 
 `STORAGE`) à imagem de render na criação (modo armado), e lidar com formato HDR (efeitos do ReShade supõem LDR) e com a
 resolução de render menor que a tela. É um passo grande e específico por jogo; fica **adiado** até a profundidade por
 jogo (D3) e a base de efeitos estarem firmes. O observador da tela (`depth/screen.rs`) continua útil para diagnosticar.
+
+Pista do dono (a verificar): num efeito de raytracing do Marty com visualização de depuração, mexer nos parâmetros mostra
+a diferença exatamente onde a UI do jogo está; pode indicar que a UI entra na imagem que o efeito lê. Testar com um
+efeito de profundidade e um jogo aberto antes de investir na injeção no fluxo.
