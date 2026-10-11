@@ -96,6 +96,10 @@ Teste ao vivo com `lrctl depth pick pass N` (foto da profundidade depois do N-é
   ainda não suportado). O DOF borra também o texto da UI do jogo: falta o modo "antes da UI". `smoke-depth` e
   `smoke-depth-effect` passaram depois da regra.
 
+- ATLYSS (Proton, 2026-10-11): a candidata automática tinha 2 passes; o 1º é a cena e o 2º, com `Clear`, desenha outra
+  câmera (os personagens da criação) no mesmo alvo. O painel (botão "Profundidade…") mostrou isso e "depois do passe 1" deu a
+  profundidade certa. A regra automática agora também recomeça em `Clear` (como o "copiar antes de limpar" do ReShade):
+  `observe::scene_pass`.
 - Falha achada no teste: uma cadeia que falhava por falta de profundidade nunca era tentada de novo (corrigido).
 
 ## Passos (cada um verificável e commitado)

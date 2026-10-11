@@ -803,13 +803,9 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
     let mut chosen = None;
     data.depth.snapshot_pass.store(0, Ordering::Relaxed);
     if let Some(c) = &active {
-        // Sem pedido: um passe que começa com DontCare depois do primeiro recomeça a imagem (outra câmera ou camada no
-        // mesmo alvo), então a cena é a foto do passe anterior; sem foto possível, vale a original.
-        let auto_pass = || {
-            let passes = stats.passes_of(c.image);
-            let first = passes.iter().skip(1).position(|p| p.load == super::observe::LoadOp::DontCare)?;
-            u32::try_from(first + 1).ok()
-        };
+        // Sem pedido: se a imagem é recomeçada no meio do quadro (um passe que começa com `DontCare` ou `Clear`), a cena é a foto do
+        // passe anterior; sem foto possível, vale a original.
+        let auto_pass = || super::observe::scene_pass(stats.passes_of(c.image));
         let wanted = pick.pass.or_else(auto_pass);
         let snapshot = wanted.and_then(|pass| {
             // A foto depois do passe N: precisa da imagem da foto, e a imagem original precisa ter TRANSFER_SRC (armado).

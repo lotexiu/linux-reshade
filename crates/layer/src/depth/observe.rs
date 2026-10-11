@@ -238,6 +238,15 @@ pub fn similar_aspect(width: u32, height: u32, frame_width: u32, frame_height: u
     ((fw / fh) - (w / h)).abs() <= 0.1 && (0.5..=1.85).contains(&w_ratio) && (0.5..=1.85).contains(&h_ratio)
 }
 
+/// Em que ponto a profundidade é a "da cena": o número (de 1) do último passe antes de a imagem ser recomeçada. Um passe
+/// (depois do primeiro) que começa com `DontCare` ou `Clear` descarta o conteúdo: é outra câmera ou camada no mesmo alvo
+/// (o personagem de um menu, a arma de um jogo em primeira pessoa), e a cena é o que existia antes dele. `None` se a imagem
+/// não é recomeçada (vale a imagem inteira).
+pub fn scene_pass(passes: &[PassRecord]) -> Option<u32> {
+    let first = passes.iter().skip(1).position(|p| matches!(p.load, LoadOp::DontCare | LoadOp::Clear))?;
+    u32::try_from(first + 1).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -351,5 +360,17 @@ mod tests {
         assert!(!similar_aspect(2048, 2048, 1920, 1080), "quadrada");
         assert!(!similar_aspect(512, 288, 1920, 1080), "mesma proporção, mas pequena demais");
         assert!(similar_aspect(0, 0, 1920, 1080), "sem tamanho conhecido");
+    }
+
+    #[test]
+    fn the_scene_is_what_existed_before_the_image_was_started_over() {
+        let p = |load| PassRecord { load, ..pass(7, 1, 3) };
+        assert_eq!(scene_pass(&[p(LoadOp::Clear), p(LoadOp::Load), p(LoadOp::Load)]), None);
+        assert_eq!(scene_pass(&[p(LoadOp::Clear), p(LoadOp::Load), p(LoadOp::DontCare), p(LoadOp::Load)]), Some(2));
+        // Uma câmera por cima (o personagem de um menu) começa limpando a profundidade.
+        assert_eq!(scene_pass(&[p(LoadOp::Clear), p(LoadOp::Clear)]), Some(1));
+        // O primeiro passe sempre recomeça a imagem: não conta.
+        assert_eq!(scene_pass(&[p(LoadOp::DontCare)]), None);
+        assert_eq!(scene_pass(&[]), None);
     }
 }
