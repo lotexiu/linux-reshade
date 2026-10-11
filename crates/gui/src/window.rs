@@ -904,10 +904,17 @@ impl Ui {
             macros.set_text(&g.macros);
             macros.button.set_halign(gtk::Align::Start);
             macros.connect_changed({
-                let (weak, file, original) = (weak.clone(), file.clone(), g.macros.clone());
+                let (weak, file) = (weak.clone(), file.clone());
                 move |text| {
-                    if text != original && let Some(ui) = weak.upgrade() && !ui.updating.get() {
-                        ui.act(|h| h.set_effect_macros(&file, &text));
+                    if let Some(ui) = weak.upgrade()
+                        && !ui.updating.get()
+                    {
+                        // Compara com o que o modelo tem AGORA (não com o que havia quando a lista foi desenhada): senão voltar ao
+                        // valor antigo, ou mudar duas vezes, não aplicava.
+                        let current = ui.home.borrow().snapshot().groups.iter().find(|g| g.file == file).map(|g| g.macros.clone()).unwrap_or_default();
+                        if text != current {
+                            ui.act(|h| h.set_effect_macros(&file, &text));
+                        }
                     }
                 }
             });

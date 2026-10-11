@@ -66,6 +66,28 @@ pub struct Target<'a> {
     pub depth: Option<DepthInput>,
 }
 
+/// A inicialização das texturas já gravada (e os buffers de origem dos pixels), à espera de ir para a fila.
+pub(crate) struct PendingInit {
+    cb: vk::CommandBuffer,
+    staging: Vec<resources::UniformBuffer>,
+}
+
+impl PendingInit {
+    unsafe fn submit(self, device: &ash::Device, pool: vk::CommandPool, queue: vk::Queue) -> Result<(), Error> {
+        let mut me = self;
+        let result = unsafe {
+            let cbs = [me.cb];
+            let sent = device.queue_submit(queue, &[vk::SubmitInfo::default().command_buffers(&cbs)], vk::Fence::null()).and_then(|()| device.queue_wait_idle(queue));
+            device.free_command_buffers(pool, &cbs);
+            sent
+        };
+        for mut buffer in me.staging.drain(..) {
+            unsafe { buffer.destroy(device) };
+        }
+        result.map_err(Error::from)
+    }
+}
+
 /// Recursos de um passe.
 #[derive(Default)]
 pub(crate) struct PassRes {
@@ -125,6 +147,8 @@ pub struct Effect {
     /// Paralelo a `manifest.textures`; só as texturas intermediárias (render targets, de armazenamento ou só lidas) têm imagem.
     /// As compartilhadas são apelidos: quem as libera é a cadeia.
     textures: Vec<GpuImage>,
+    /// A inicialização das texturas, se a criação não usou fila (ver [`Effect::finish_init`]).
+    pending_init: Option<PendingInit>,
     /// Paralelo a `textures`: esta etapa criou a imagem (e a inicializa); falso se veio de outra etapa.
     init_here: Vec<bool>,
     samplers: Vec<vk::Sampler>,
@@ -217,10 +241,11 @@ impl Effect {
         target: &Target<'_>,
         queue: vk::Queue,
     ) -> Result<Self, Error> {
-        unsafe { Self::new_shared(device, memory, bundle, technique, target, queue, None) }
+        unsafe { Self::new_shared(device, memory, bundle, technique, target, Some(queue), None) }
     }
 
-    /// Como [`Effect::new`], com as texturas compartilhadas da cadeia: uma textura que outra etapa já criou com o mesmo
+    /// Como [`Effect::new`], com as texturas compartilhadas da cadeia (e, com `queue` `None`, sem usar nenhuma fila: a
+    /// inicialização das texturas fica pendente para [`Effect::finish_init`], e a criação pode rodar fora da thread do jogo): uma textura que outra etapa já criou com o mesmo
     /// nome e propriedades é a mesma imagem, e as que esta etapa cria ficam à disposição das seguintes.
     ///
     /// # Safety
@@ -231,7 +256,7 @@ impl Effect {
         bundle: &Bundle,
         technique: usize,
         target: &Target<'_>,
-        queue: vk::Queue,
+        queue: Option<vk::Queue>,
         shared: Option<&mut Shared>,
     ) -> Result<Self, Error> {
         let mut effect = Self::default();
@@ -288,7 +313,7 @@ impl Effect {
         bundle: &Bundle,
         technique: usize,
         target: &Target<'_>,
-        queue: vk::Queue,
+        queue: Option<vk::Queue>,
         mut shared: Option<&mut Shared>,
     ) -> Result<(), Error> {
         let m = &bundle.manifest;
@@ -691,7 +716,7 @@ impl Effect {
             }
         }
 
-        unsafe { self.initialize_textures(device, memory, bundle, target, queue)? };
+        self.pending_init = unsafe { self.initialize_textures(device, memory, bundle, target, queue)? };
 
         for (i, &cb) in self.command_buffers.iter().enumerate() {
             let rec = record::Recording {
@@ -836,8 +861,8 @@ impl Effect {
         memory: &vk::PhysicalDeviceMemoryProperties,
         bundle: &Bundle,
         target: &Target<'_>,
-        queue: vk::Queue,
-    ) -> Result<(), Error> {
+        queue: Option<vk::Queue>,
+    ) -> Result<Option<PendingInit>, Error> {
         let m = &bundle.manifest;
         let mut clear: Vec<vk::Image> = Vec::new();
         let mut upload: Vec<usize> = Vec::new();
@@ -855,14 +880,36 @@ impl Effect {
             }
         }
         if clear.is_empty() && upload.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
         let mut staging: Vec<resources::UniformBuffer> = Vec::new();
-        let result = unsafe { self.record_texture_init(device, memory, bundle, target, queue, &clear, &upload, &mut staging) };
-        for mut buffer in staging {
-            unsafe { buffer.destroy(device) };
+        let result = unsafe { self.record_texture_init(device, memory, bundle, target, &clear, &upload, &mut staging) };
+        match (result, queue) {
+            (Ok(cb), Some(queue)) => {
+                let pending = PendingInit { cb, staging };
+                unsafe { pending.submit(device, self.command_pool, queue) }?;
+                Ok(None)
+            }
+            (Ok(cb), None) => Ok(Some(PendingInit { cb, staging })),
+            (Err(e), _) => {
+                for mut buffer in staging {
+                    unsafe { buffer.destroy(device) };
+                }
+                Err(e)
+            }
         }
-        result
+    }
+
+    /// Envia à fila a inicialização das texturas que a criação deixou pendente (se deixou) e espera terminar. Para efeitos
+    /// criados sem fila; precisa rodar na thread que usa a fila.
+    ///
+    /// # Safety
+    /// `queue` da família do alvo, sem outro uso concorrente durante a chamada; a GPU não executa este efeito.
+    pub unsafe fn finish_init(&mut self, device: &ash::Device, queue: vk::Queue) -> Result<(), Error> {
+        match self.pending_init.take() {
+            Some(pending) => unsafe { pending.submit(device, self.command_pool, queue) },
+            None => Ok(()),
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -872,11 +919,10 @@ impl Effect {
         memory: &vk::PhysicalDeviceMemoryProperties,
         bundle: &Bundle,
         target: &Target<'_>,
-        queue: vk::Queue,
         clear: &[vk::Image],
         upload: &[usize],
         staging: &mut Vec<resources::UniformBuffer>,
-    ) -> Result<(), Error> {
+    ) -> Result<vk::CommandBuffer, Error> {
         let barrier = |image: vk::Image, range, old, new, src: vk::AccessFlags, dst: vk::AccessFlags| {
             vk::ImageMemoryBarrier::default()
                 .image(image)
@@ -947,12 +993,8 @@ impl Effect {
                 record::generate_mips(device, cb, chain);
             }
             device.end_command_buffer(cb)?;
-            let cbs = [cb];
-            device.queue_submit(queue, &[vk::SubmitInfo::default().command_buffers(&cbs)], vk::Fence::null())?;
-            device.queue_wait_idle(queue)?;
-            device.free_command_buffers(self.command_pool, &cbs);
+            Ok(cb)
         }
-        Ok(())
     }
 
     /// Libera tudo. Pode ser chamado mais de uma vez.
@@ -965,6 +1007,11 @@ impl Effect {
                 device.destroy_command_pool(std::mem::take(&mut self.command_pool), None); // libera os command buffers
             }
             self.command_buffers.clear();
+            if let Some(mut pending) = self.pending_init.take() {
+                for mut buffer in pending.staging.drain(..) {
+                    buffer.destroy(device);
+                }
+            }
             for mut pass in self.passes.drain(..) {
                 for f in pass.framebuffers.drain(..) {
                     device.destroy_framebuffer(f, None);

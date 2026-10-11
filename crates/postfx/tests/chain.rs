@@ -184,3 +184,24 @@ fn two_effects_share_a_texture_with_the_same_name_and_properties() {
         gpu.destroy_targets(targets);
     }
 }
+
+#[test]
+fn a_chain_built_without_a_queue_finishes_its_texture_setup_later() {
+    let gpu = gpu_or_skip!();
+    let (producer, consumer) = (bundle("ShareProducer"), bundle("ShareConsumer"));
+    unsafe {
+        let targets = gpu.targets(1, input);
+        let steps = [Step { bundle: &producer, technique: 0 }, Step { bundle: &consumer, technique: 0 }];
+        // Criada "noutra thread": sem fila. A inicialização das texturas fica pendente e termina na thread da fila.
+        let (mut chain, skipped) = Chain::new_lenient_with(&gpu.device, &gpu.memory, &steps, &target(&targets.images, &gpu), None).expect("criar a cadeia");
+        assert!(skipped.is_empty());
+        chain.finish_init(&gpu.device, gpu.queue).expect("terminar a inicialização");
+        chain.finish_init(&gpu.device, gpu.queue).expect("idempotente");
+        gpu.submit_all(&chain.command_buffers(0));
+        for (n, got) in gpu.read(targets.images[0]).into_iter().enumerate() {
+            assert_pixel(got, [64, 128, 191, 255], 1, &format!("pixel {n}"));
+        }
+        chain.destroy(&gpu.device);
+        gpu.destroy_targets(targets);
+    }
+}

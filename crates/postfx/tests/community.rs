@@ -142,7 +142,10 @@ fn a_chain_of_compiled_bundles_runs() {
         let depth = depth_image(&gpu, w, h, 0.5);
         let input_depth = DepthInput { image: depth.image, format: DEPTH_FORMAT, layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL, extent: vk::Extent2D { width: w, height: h }, linear_filter: true };
         let target = Target { images: &images, format: FORMAT, extent: vk::Extent2D { width: w, height: h }, rest_layout: REST, queue_family: gpu.family, init_command_buffer: None, depth: Some(input_depth) };
-        match postfx::Chain::new_lenient(&gpu.device, &gpu.memory, &steps, &target, gpu.queue) {
+        let started = std::time::Instant::now();
+        let built = postfx::Chain::new_lenient(&gpu.device, &gpu.memory, &steps, &target, gpu.queue);
+        eprintln!("cadeia construída em {:.0} ms", started.elapsed().as_secs_f64() * 1000.0);
+        match built {
             Ok((mut chain, skipped)) => {
                 eprintln!("cadeia criada: {} etapa(s), {} pulada(s)", chain.len(), skipped.len());
                 for s in &skipped {

@@ -6,7 +6,7 @@
 
 use super::Snapshot;
 use crate::state::DeviceData;
-use ash::vk;
+use ash::vk::{self, Handle};
 
 fn aspect(format: vk::Format) -> vk::ImageAspectFlags {
     if postfx::effect::depth_has_stencil(format) { vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL } else { vk::ImageAspectFlags::DEPTH }
@@ -14,6 +14,32 @@ fn aspect(format: vk::Format) -> vk::ImageAspectFlags {
 
 fn memory_type(data: &DeviceData, bits: u32) -> Option<u32> {
     (0..data.memory.memory_type_count).find(|&i| bits & (1 << i) != 0 && data.memory.memory_types[i as usize].property_flags.contains(vk::MemoryPropertyFlags::DEVICE_LOCAL))
+}
+
+/// Quantos quadros uma foto substituída continua viva antes de ser destruída.
+const RETIRED_FRAMES: u32 = 300;
+
+/// Conta um quadro para as fotos substituídas e destrói as que já passaram do prazo.
+///
+/// # Safety
+/// `data.device` válido.
+pub(super) unsafe fn reap_retired(data: &DeviceData) {
+    let mut retired = data.depth.retired.lock().unwrap();
+    if retired.is_empty() {
+        return;
+    }
+    for (_, frames) in retired.iter_mut() {
+        *frames = frames.saturating_sub(1);
+    }
+    let (expired, alive): (Vec<_>, Vec<_>) = std::mem::take(&mut *retired).into_iter().partition(|(_, frames)| *frames == 0);
+    *retired = alive;
+    drop(retired);
+    for (old, _) in expired {
+        unsafe {
+            data.device.destroy_image(old.image, None);
+            data.device.free_memory(old.memory, None);
+        }
+    }
 }
 
 /// Garante a imagem de destino (mesmo formato e tamanho da fonte) e devolve o handle. Recria se mudou.
@@ -28,9 +54,10 @@ pub(super) unsafe fn ensure(data: &DeviceData, format: vk::Format, width: u32, h
     unsafe {
         data.depth.snapshot_written.store(false, std::sync::atomic::Ordering::Relaxed);
         if let Some(old) = slot.take() {
-            let _ = data.device.device_wait_idle();
-            data.device.destroy_image(old.image, None);
-            data.device.free_memory(old.memory, None);
+            // Os efeitos construídos com a foto antiga têm uma view dela: saem antes (o `device_wait_idle` é deles). Command buffers
+            // do jogo já gravados com a foto antiga ainda podem ir à fila: ela só é destruída bem depois (`retire`).
+            crate::effect::on_depth_image_destroyed(data, old.image.as_raw());
+            data.depth.retired.lock().unwrap().push((old, RETIRED_FRAMES));
         }
         let info = vk::ImageCreateInfo::default()
             .image_type(vk::ImageType::TYPE_2D)
@@ -119,6 +146,12 @@ pub(super) unsafe fn record_copy(data: &DeviceData, cmd: vk::CommandBuffer, src:
 /// # Safety
 /// A GPU não pode estar usando a imagem.
 pub(super) unsafe fn destroy(data: &DeviceData) {
+    for (old, _) in data.depth.retired.lock().unwrap().drain(..) {
+        unsafe {
+            data.device.destroy_image(old.image, None);
+            data.device.free_memory(old.memory, None);
+        }
+    }
     if let Some(s) = data.depth.snapshot.lock().unwrap().take() {
         unsafe {
             data.device.destroy_image(s.image, None);

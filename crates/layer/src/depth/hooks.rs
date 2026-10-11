@@ -901,6 +901,7 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
     if !data.depth.is_on() {
         return;
     }
+    unsafe { super::snapshot::reap_retired(data) };
     data.depth.pass_counter.store(0, Ordering::Relaxed);
     data.depth.clear_counter.store(0, Ordering::Relaxed);
     data.depth.draws_since_event.store(0, Ordering::Relaxed);

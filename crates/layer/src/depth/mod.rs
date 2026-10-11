@@ -162,6 +162,8 @@ pub struct Depth {
     /// Quantos passes da imagem observada já terminaram de ser gravados neste quadro.
     pub(crate) pass_counter: AtomicU32,
     pub(crate) snapshot: Mutex<Option<Snapshot>>,
+    /// Fotos substituídas, ainda vivas por um tempo: command buffers já gravados (e ainda não executados) podem referenciá-las.
+    pub(crate) retired: Mutex<Vec<(Snapshot, u32)>>,
     /// A foto já foi gravada ao menos uma vez (antes disso a imagem está sem layout e não pode ser lida).
     pub(crate) snapshot_written: AtomicBool,
     /// Quadros desde a última leitura do arquivo do pedido.
@@ -252,6 +254,7 @@ impl Depth {
             snapshot_pass: AtomicU32::new(0),
             pass_counter: AtomicU32::new(0),
             snapshot: Mutex::new(None),
+            retired: Mutex::new(Vec::new()),
             snapshot_written: AtomicBool::new(false),
             frames: AtomicU32::new(0),
             pipelines_logged: Mutex::new((usize::MAX, 0, 0)),

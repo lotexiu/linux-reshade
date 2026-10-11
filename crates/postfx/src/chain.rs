@@ -64,7 +64,7 @@ impl Chain {
     ) -> Result<Self, Error> {
         let mut chain = Self { shared: Shared::scan(steps), ..Self::default() };
         for (n, step) in steps.iter().enumerate() {
-            match unsafe { Effect::new_shared(device, memory, step.bundle, step.technique, target, queue, Some(&mut chain.shared)) } {
+            match unsafe { Effect::new_shared(device, memory, step.bundle, step.technique, target, Some(queue), Some(&mut chain.shared)) } {
                 Ok(effect) => {
                     chain.effects.push(effect);
                     chain.origin.push(n);
@@ -95,6 +95,21 @@ impl Chain {
         target: &Target<'_>,
         queue: vk::Queue,
     ) -> Result<(Self, Vec<Skipped>), Error> {
+        unsafe { Self::new_lenient_with(device, memory, steps, target, Some(queue)) }
+    }
+
+    /// Como [`Chain::new_lenient`], sem usar fila (`queue` `None`): serve para criar a cadeia numa thread própria, sem mexer na
+    /// fila do jogo; depois, na thread que usa a fila, [`Chain::finish_init`] termina a inicialização das texturas.
+    ///
+    /// # Safety
+    /// As mesmas de [`Effect::new`].
+    pub unsafe fn new_lenient_with(
+        device: &ash::Device,
+        memory: &vk::PhysicalDeviceMemoryProperties,
+        steps: &[Step<'_>],
+        target: &Target<'_>,
+        queue: Option<vk::Queue>,
+    ) -> Result<(Self, Vec<Skipped>), Error> {
         let mut chain = Self { shared: Shared::scan(steps), ..Self::default() };
         let mut skipped = Vec::new();
         for (n, step) in steps.iter().enumerate() {
@@ -111,6 +126,17 @@ impl Chain {
             }
         }
         Ok((chain, skipped))
+    }
+
+    /// Termina a inicialização das texturas das etapas criadas sem fila (ver [`Chain::new_lenient_with`]).
+    ///
+    /// # Safety
+    /// `queue` da família do alvo, sem outro uso concorrente durante a chamada; a GPU não executa esta cadeia.
+    pub unsafe fn finish_init(&mut self, device: &ash::Device, queue: vk::Queue) -> Result<(), Error> {
+        for effect in &mut self.effects {
+            unsafe { effect.finish_init(device, queue) }?;
+        }
+        Ok(())
     }
 
     /// De qual etapa da lista original vem o efeito `position` da cadeia.

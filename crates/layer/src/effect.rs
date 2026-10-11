@@ -70,8 +70,27 @@ fn signature(steps: &[ResolvedStep]) -> Vec<(u64, usize)> {
 /// Quanto esperar a execução anterior de uma imagem antes de desistir de aplicar o efeito neste frame.
 const FENCE_TIMEOUT_NS: u64 = 1_000_000_000;
 
+/// Uma criação de cadeia rodando numa thread própria (a compilação dos shaders pelo driver leva segundos e não pode parar o
+/// jogo). O resultado só é instalado no present seguinte ao fim dela, na thread que usa a fila.
+struct Job {
+    thread: Option<std::thread::JoinHandle<Result<SendBuilt, String>>>,
+    /// O que está sendo construído (bundle e técnica de cada etapa).
+    signature: Vec<(u64, usize)>,
+    /// A imagem de profundidade do jogo de que a cadeia tem uma view (se usa profundidade).
+    depth_image: Option<u64>,
+    started: Instant,
+}
+
+/// O que a thread devolve. Os handles do Vulkan são só inteiros e o `Chain` não é compartilhado enquanto a thread corre.
+struct SendBuilt(Built);
+
+// SAFETY: o `Built` é construído numa thread e só depois entregue, inteiro, à thread do present; nada o acessa entre as duas.
+unsafe impl Send for SendBuilt {}
+
 enum Fx {
     Unbuilt,
+    /// Sendo criada numa thread.
+    Building(Job),
     Ready(Built),
     /// A criação falhou com este motivo; não tenta de novo até o bundle mudar (evita falhar a cada frame).
     Failed(String),
@@ -165,6 +184,13 @@ impl SwapchainFx {
                 }
             }
         }
+        if let Fx::Building(job) = &self.fx
+            && job.signature != new_signature
+        {
+            log!("criação da cadeia descartada: a escolha mudou");
+            unsafe { Self::destroy_fx(&mut self.fx, &data.device) };
+            self.fx = Fx::Unbuilt;
+        }
         // Uma falha anterior era da cadeia antiga: com outra vale tentar de novo.
         if matches!(self.fx, Fx::Failed(_)) && signature(&self.steps) != new_signature {
             self.fx = Fx::Unbuilt;
@@ -188,7 +214,13 @@ impl SwapchainFx {
     }
 
     unsafe fn destroy_fx(fx: &mut Fx, device: &ash::Device) {
-        if let Fx::Ready(mut built) = std::mem::replace(fx, Fx::Unbuilt) {
+        let built = match std::mem::replace(fx, Fx::Unbuilt) {
+            Fx::Ready(built) => Some(built),
+            // Uma criação em andamento: espera a thread terminar e descarta o resultado (nada o usou).
+            Fx::Building(mut job) => job.thread.take().and_then(|t| t.join().ok()).and_then(Result::ok).map(|b| b.0),
+            _ => None,
+        };
+        if let Some(mut built) = built {
             unsafe {
                 built.chain.destroy(device);
                 for s in built.semaphores.drain(..) {
@@ -201,87 +233,102 @@ impl SwapchainFx {
         }
     }
 
-    unsafe fn build(&mut self, data: &DeviceData, steps: &[ResolvedStep], queue: vk::Queue, queue_family: u32) -> Result<Built, String> {
-        for (n, step) in steps.iter().enumerate() {
-            let t = step.bundle.manifest.target;
-            if (t.width, t.height) != (self.extent.width, self.extent.height) {
-                return Err(format!(
-                    "etapa {n}: o bundle foi compilado para {}x{} e o swapchain é {}x{}",
-                    t.width, t.height, self.extent.width, self.extent.height
-                ));
-            }
+}
+
+/// Tudo o que a criação da cadeia precisa, copiado para poder rodar noutra thread.
+struct BuildArgs {
+    device: ash::Device,
+    memory: vk::PhysicalDeviceMemoryProperties,
+    images: Vec<vk::Image>,
+    format: vk::Format,
+    extent: vk::Extent2D,
+    steps: Vec<ResolvedStep>,
+    depth: Option<crate::depth::Chosen>,
+    queue_family: u32,
+    set_loader_data: vk_layer::abi::PfnSetDeviceLoaderData,
+}
+
+/// Cria a cadeia (sem usar nenhuma fila: a inicialização das texturas termina depois, na thread do present).
+fn build_chain(a: BuildArgs) -> Result<Built, String> {
+    for (n, step) in a.steps.iter().enumerate() {
+        let t = step.bundle.manifest.target;
+        if (t.width, t.height) != (a.extent.width, a.extent.height) {
+            return Err(format!("etapa {n}: o bundle foi compilado para {}x{} e o swapchain é {}x{}", t.width, t.height, a.extent.width, a.extent.height));
         }
-        // A profundidade do jogo, só se alguma etapa a usa (e já foi achada).
-        let depth = if steps_need_depth(steps) { data.depth.chosen() } else { None };
-        let target = Target {
-            images: &self.images,
-            format: self.format,
-            extent: self.extent,
-            rest_layout: vk::ImageLayout::PRESENT_SRC_KHR,
-            queue_family,
-            // O command buffer nasce sem o ponteiro de dispatch do loader; as layers abaixo precisam dele.
-            init_command_buffer: Some(&|cb| {
-                let result = unsafe { (data.set_loader_data)(data.device.handle(), cb.as_raw() as *mut std::ffi::c_void) };
-                if result == vk::Result::SUCCESS { Ok(()) } else { Err(result) }
-            }),
-            depth: depth.map(|d| DepthInput {
-                image: vk::Image::from_raw(d.image),
-                format: vk::Format::from_raw(d.format),
-                layout: vk::ImageLayout::from_raw(d.layout),
-                extent: vk::Extent2D { width: d.width, height: d.height },
-                linear_filter: d.linear,
-            }),
-        };
-        let chain_steps: Vec<Step<'_>> = steps.iter().map(|s| Step { bundle: &s.bundle, technique: s.technique }).collect();
-        unsafe {
-            let (chain, skipped) = Chain::new_lenient(&data.device, &data.memory, &chain_steps, &target, queue).map_err(|e| e.to_string())?;
-            for s in &skipped {
-                log!("etapa {} pulada: {}", s.step, s.why);
-            }
-            if chain.is_empty() && !steps.is_empty() {
-                return Err(format!("nenhuma etapa é suportada ({})", skipped.iter().map(|s| format!("etapa {}: {}", s.step, s.why)).collect::<Vec<_>>().join("; ")));
-            }
-            // Os parâmetros seguem as etapas que ficaram na cadeia (as puladas não têm efeito a alimentar).
-            let origin: Vec<usize> = (0..chain.len()).filter_map(|i| chain.origin(i)).collect();
-            let params = origin
-                .iter()
-                .map(|&i| &steps[i])
-                .map(|s| StepRuntime {
-                    params_id: s.bundle.params_id(),
-                    source: match &s.params {
-                        StepParams::Legacy => StepSource::Published(ParamState::new(fx_bundle::uniforms::default_block(&s.bundle.manifest))),
-                        StepParams::Plan(bytes) => StepSource::Plan(bytes.clone()),
-                    },
-                })
-                .collect();
-            let skipped = skipped.iter().map(|s| (s.step, s.why.clone())).collect();
-            let mut built = Built { chain, signature: signature(steps), origin, skipped, depth_key: depth.map(|d| (d.image, d.layout)), params, semaphores: Vec::new(), fences: Vec::new() };
-            for _ in &self.images {
-                let semaphore = data.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None);
-                // Nasce sinalizada: a primeira espera por ela não bloqueia.
-                let fence = data.device.create_fence(&vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED), None);
-                match (semaphore, fence) {
-                    (Ok(s), Ok(f)) => {
-                        built.semaphores.push(s);
-                        built.fences.push(f);
+    }
+    let device = &a.device;
+    let device_handle = device.handle();
+    let set_loader_data = a.set_loader_data;
+    let depth = a.depth;
+    let target = Target {
+        images: &a.images,
+        format: a.format,
+        extent: a.extent,
+        rest_layout: vk::ImageLayout::PRESENT_SRC_KHR,
+        queue_family: a.queue_family,
+        // O command buffer nasce sem o ponteiro de dispatch do loader; as layers abaixo precisam dele.
+        init_command_buffer: Some(&move |cb| {
+            let result = unsafe { set_loader_data(device_handle, cb.as_raw() as *mut std::ffi::c_void) };
+            if result == vk::Result::SUCCESS { Ok(()) } else { Err(result) }
+        }),
+        depth: depth.map(|d| DepthInput {
+            image: vk::Image::from_raw(d.image),
+            format: vk::Format::from_raw(d.format),
+            layout: vk::ImageLayout::from_raw(d.layout),
+            extent: vk::Extent2D { width: d.width, height: d.height },
+            linear_filter: d.linear,
+        }),
+    };
+    let steps = &a.steps;
+    let chain_steps: Vec<Step<'_>> = steps.iter().map(|s| Step { bundle: &s.bundle, technique: s.technique }).collect();
+    unsafe {
+        let (chain, skipped) = Chain::new_lenient_with(device, &a.memory, &chain_steps, &target, None).map_err(|e| e.to_string())?;
+        for s in &skipped {
+            log!("etapa {} pulada: {}", s.step, s.why);
+        }
+        if chain.is_empty() && !steps.is_empty() {
+            return Err(format!("nenhuma etapa é suportada ({})", skipped.iter().map(|s| format!("etapa {}: {}", s.step, s.why)).collect::<Vec<_>>().join("; ")));
+        }
+        // Os parâmetros seguem as etapas que ficaram na cadeia (as puladas não têm efeito a alimentar).
+        let origin: Vec<usize> = (0..chain.len()).filter_map(|i| chain.origin(i)).collect();
+        let params = origin
+            .iter()
+            .map(|&i| &steps[i])
+            .map(|s| StepRuntime {
+                params_id: s.bundle.params_id(),
+                source: match &s.params {
+                    StepParams::Legacy => StepSource::Published(ParamState::new(fx_bundle::uniforms::default_block(&s.bundle.manifest))),
+                    StepParams::Plan(bytes) => StepSource::Plan(bytes.clone()),
+                },
+            })
+            .collect();
+        let skipped = skipped.iter().map(|s| (s.step, s.why.clone())).collect();
+        let mut built = Built { chain, signature: signature(steps), origin, skipped, depth_key: depth.map(|d| (d.image, d.layout)), params, semaphores: Vec::new(), fences: Vec::new() };
+        for _ in &a.images {
+            let semaphore = device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None);
+            // Nasce sinalizada: a primeira espera por ela não bloqueia.
+            let fence = device.create_fence(&vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED), None);
+            match (semaphore, fence) {
+                (Ok(s), Ok(f)) => {
+                    built.semaphores.push(s);
+                    built.fences.push(f);
+                }
+                (s, f) => {
+                    // Libera o par que deu certo e tudo o que já foi criado.
+                    let error = s.as_ref().err().or(f.as_ref().err()).copied().unwrap_or(vk::Result::ERROR_UNKNOWN);
+                    if let Ok(s) = s {
+                        device.destroy_semaphore(s, None);
                     }
-                    (s, f) => {
-                        // Libera o par que deu certo e tudo o que já foi criado.
-                        let error = s.as_ref().err().or(f.as_ref().err()).copied().unwrap_or(vk::Result::ERROR_UNKNOWN);
-                        if let Ok(s) = s {
-                            data.device.destroy_semaphore(s, None);
-                        }
-                        if let Ok(f) = f {
-                            data.device.destroy_fence(f, None);
-                        }
-                        let mut partial = Fx::Ready(built);
-                        Self::destroy_fx(&mut partial, &data.device);
-                        return Err(format!("falha ao criar semáforo/fence (erro {})", error.as_raw()));
+                    if let Ok(f) = f {
+                        device.destroy_fence(f, None);
                     }
+                    let mut partial = Fx::Ready(built);
+                    SwapchainFx::destroy_fx(&mut partial, device);
+                    return Err(format!("falha ao criar semáforo/fence (erro {})", error.as_raw()));
                 }
             }
-            Ok(built)
         }
+        Ok(built)
     }
 }
 
@@ -340,34 +387,87 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
             if fx.steps.is_empty() {
                 return None; // sem bundle para esta resolução: nada a desenhar
             }
-            let steps = fx.steps.clone();
             let family = *data.queues.lock().unwrap().get(&queue.as_raw())?;
-            fx.fx = match fx.build(data, &steps, queue, family) {
-                Ok(built) => {
-                    log!("efeito criado para o swapchain {:#x} ({} imagens)", swapchain.as_raw(), fx.images.len());
-                    log!("cadeia de {} etapa(s) criada", built.chain.len());
-                    crate::status::set_techniques(
-                        fx.steps
-                            .iter()
-                            .enumerate()
-                            .map(|(i, step)| TechniqueStatus {
-                                name: step.bundle.manifest.techniques.get(step.technique).map(|t| t.name.clone()).unwrap_or_default(),
-                                state: match built.skipped.iter().find(|(s, _)| *s == i) {
-                                    Some((_, why)) => TechniqueState::Skipped(why.clone()),
-                                    None => TechniqueState::Applied,
-                                },
-                            })
-                            .collect(),
-                    );
-                    for (step, ignored) in built.chain.ignored_sources() {
-                        log!("etapa {step}: uniform sem fonte no runtime (fica no valor padrão): {ignored}");
-                    }
-                    fx.set_state(EffectState::Ready);
-                    Fx::Ready(built)
+            // A criação (a compilação dos shaders pelo driver leva segundos) roda noutra thread: o jogo continua sem o efeito
+            // até ela terminar, em vez de parar.
+            let depth = if steps_need_depth(&fx.steps) { data.depth.chosen() } else { None };
+            let args = BuildArgs {
+                device: data.device.clone(),
+                memory: data.memory,
+                images: fx.images.clone(),
+                format: fx.format,
+                extent: fx.extent,
+                steps: fx.steps.clone(),
+                depth,
+                queue_family: family,
+                set_loader_data: data.set_loader_data,
+            };
+            let signature = signature(&fx.steps);
+            match std::thread::Builder::new().name("lr-build".into()).spawn(move || build_chain(args).map(SendBuilt)) {
+                Ok(thread) => {
+                    log!("criação da cadeia iniciada noutra thread ({} etapa(s))", fx.steps.len());
+                    fx.fx = Fx::Building(Job { thread: Some(thread), signature, depth_image: depth.map(|d| d.image), started: Instant::now() });
                 }
-                Err(why) => {
+                Err(e) => {
+                    log!("não consegui criar a thread da cadeia: {e}");
+                    fx.set_state(EffectState::Failed(format!("thread: {e}")));
+                    fx.fx = Fx::Failed(format!("thread: {e}"));
+                }
+            }
+            return None;
+        }
+        if let Fx::Building(job) = &mut fx.fx {
+            if !job.thread.as_ref().is_some_and(|t| t.is_finished()) {
+                return None; // ainda criando: o quadro passa sem o efeito
+            }
+            let started = job.started;
+            let result = job.thread.take().map(|t| t.join()).unwrap_or(Err(Box::new("sem thread")));
+            fx.fx = match result {
+                Ok(Ok(SendBuilt(mut built))) => {
+                    // A inicialização das texturas precisa da fila: aqui, na thread que a usa.
+                    match built.chain.finish_init(&data.device, queue) {
+                        Ok(()) => {
+                            log!("efeito criado para o swapchain {:#x} ({} imagens) em {} ms", swapchain.as_raw(), fx.images.len(), started.elapsed().as_millis());
+                            log!("cadeia de {} etapa(s) criada", built.chain.len());
+                            crate::status::set_techniques(
+                                fx.steps
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, step)| TechniqueStatus {
+                                        name: step.bundle.manifest.techniques.get(step.technique).map(|t| t.name.clone()).unwrap_or_default(),
+                                        state: match built.skipped.iter().find(|(s, _)| *s == i) {
+                                            Some((_, why)) => TechniqueState::Skipped(why.clone()),
+                                            None => TechniqueState::Applied,
+                                        },
+                                    })
+                                    .collect(),
+                            );
+                            for (step, ignored) in built.chain.ignored_sources() {
+                                log!("etapa {step}: uniform sem fonte no runtime (fica no valor padrão): {ignored}");
+                            }
+                            fx.set_state(EffectState::Ready);
+                            Fx::Ready(built)
+                        }
+                        Err(e) => {
+                            let why = e.to_string();
+                            log!("efeito indisponível no swapchain {:#x}: {why}", swapchain.as_raw());
+                            let mut dead = Fx::Ready(built);
+                            SwapchainFx::destroy_fx(&mut dead, &data.device);
+                            fx.failed_depth = data.depth.chosen().map(|d| (d.image, d.layout));
+                            fx.set_state(EffectState::Failed(why.clone()));
+                            Fx::Failed(why)
+                        }
+                    }
+                }
+                Ok(Err(why)) => {
                     log!("efeito indisponível no swapchain {:#x}: {why}", swapchain.as_raw());
                     fx.failed_depth = data.depth.chosen().map(|d| (d.image, d.layout));
+                    fx.set_state(EffectState::Failed(why.clone()));
+                    Fx::Failed(why)
+                }
+                Err(_) => {
+                    let why = "a thread de criação da cadeia falhou".to_string();
+                    log!("efeito indisponível no swapchain {:#x}: {why}", swapchain.as_raw());
                     fx.set_state(EffectState::Failed(why.clone()));
                     Fx::Failed(why)
                 }
@@ -439,7 +539,7 @@ fn steps_need_depth(steps: &[ResolvedStep]) -> bool {
 pub fn on_depth_image_destroyed(data: &DeviceData, image: u64) {
     let mut swapchains = data.swapchains.lock().unwrap();
     for fx in swapchains.values_mut() {
-        if matches!(&fx.fx, Fx::Ready(b) if b.depth_key.is_some_and(|k| k.0 == image)) {
+        if matches!(&fx.fx, Fx::Ready(b) if b.depth_key.is_some_and(|k| k.0 == image)) || matches!(&fx.fx, Fx::Building(j) if j.depth_image == Some(image)) {
             unsafe {
                 let _ = data.device.device_wait_idle();
                 SwapchainFx::destroy_fx(&mut fx.fx, &data.device);
