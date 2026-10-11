@@ -156,8 +156,8 @@ impl FrameStats {
                 let info = self.infos.get(image)?;
                 let unusable = if a.draws == 0 || (a.vertices <= 3 && a.indirect == 0) {
                     Some("sem desenhos")
-                } else if info.samples > 1 {
-                    Some("MSAA (precisa de resolve de profundidade)")
+                } else if info.samples > 1 && !info.sampled {
+                    Some("MSAA sem uso SAMPLED (reabra o jogo com a observação armada)")
                 } else if !similar_aspect(info.width, info.height, frame.0, frame.1) {
                     Some("proporção diferente da tela")
                 } else {
@@ -279,12 +279,25 @@ mod tests {
     }
 
     #[test]
-    fn unusable_candidates_say_why_and_nothing_is_chosen_without_a_good_one() {
+    fn a_sampleable_msaa_depth_is_a_good_candidate_because_the_layer_resolves_it() {
         let i = infos(&[(1, info(1920, 1080, 4)), (2, info(1920, 1080, 1))]);
+        let mut s = FrameStats::default();
+        s.merge(&[pass(1, 200, 100_000), pass(2, 5, 500)], &i);
+        let c = s.candidates((1920, 1080), &HashMap::new());
+        let msaa = c.iter().find(|c| c.samples == 4).unwrap();
+        assert_eq!(msaa.unusable, None);
+        assert!(msaa.chosen, "a de mais desenhos, mesmo MSAA");
+    }
+
+    #[test]
+    fn unusable_candidates_say_why_and_nothing_is_chosen_without_a_good_one() {
+        let mut msaa = info(1920, 1080, 4);
+        msaa.sampled = false;
+        let i = infos(&[(1, msaa), (2, info(1920, 1080, 1))]);
         let mut s = FrameStats::default();
         s.merge(&[pass(1, 200, 100_000), pass(2, 0, 0)], &i);
         let c = s.candidates((1920, 1080), &HashMap::new());
-        assert_eq!(c.iter().find(|c| c.samples == 4).unwrap().unusable, Some("MSAA (precisa de resolve de profundidade)"));
+        assert!(c.iter().find(|c| c.samples == 4).unwrap().unusable.is_some_and(|why| why.starts_with("MSAA")), "MSAA sem SAMPLED não serve");
         assert_eq!(c.iter().find(|c| c.draws == 0).unwrap().unusable, Some("sem desenhos"));
         assert!(c.iter().all(|c| !c.chosen));
     }

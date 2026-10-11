@@ -73,7 +73,7 @@ unsafe extern "system" fn create_image(
         // Armado: acrescenta `SAMPLED` (sem MSAA, e só se o formato aceita) para os efeitos amostrarem a imagem original.
         let mut patched = *c;
         let mut forward = p_create_info;
-        if is_depth && data.depth.armed && c.samples == vk::SampleCountFlags::TYPE_1 {
+        if is_depth && data.depth.armed && (c.samples == vk::SampleCountFlags::TYPE_1 || msaa_sampleable(&data, c)) {
             // `SAMPLED` para os efeitos lerem a original; `TRANSFER_SRC` para a foto de um passe (cópia). Só o que o formato aceita.
             for (flag, feature) in [(vk::ImageUsageFlags::SAMPLED, vk::FormatFeatureFlags::SAMPLED_IMAGE), (vk::ImageUsageFlags::TRANSFER_SRC, vk::FormatFeatureFlags::TRANSFER_SRC)] {
                 if !c.usage.contains(flag) && format_supports(&data, c.format, c.tiling, feature) {
@@ -97,6 +97,19 @@ unsafe extern "system" fn create_image(
     }
 }
 
+/// Uma imagem de profundidade MSAA que a GPU deixa amostrar (uso `SAMPLED` com essa contagem de amostras): então o resolve da
+/// layer consegue ler as amostras.
+unsafe fn msaa_sampleable(data: &DeviceData, c: &vk::ImageCreateInfo<'_>) -> bool {
+    unsafe {
+        c.tiling == vk::ImageTiling::OPTIMAL
+            && data
+                .instance
+                .instance
+                .get_physical_device_image_format_properties(data.physical_device, c.format, vk::ImageType::TYPE_2D, vk::ImageTiling::OPTIMAL, c.usage | vk::ImageUsageFlags::SAMPLED, c.flags)
+                .is_ok_and(|p| p.sample_counts.contains(c.samples))
+    }
+}
+
 /// O formato tem esta característica com tiling ótimo? (consulta única por formato)
 unsafe fn format_supports(data: &DeviceData, format: vk::Format, tiling: vk::ImageTiling, feature: vk::FormatFeatureFlags) -> bool {
     if tiling != vk::ImageTiling::OPTIMAL {
@@ -114,6 +127,7 @@ unsafe extern "system" fn destroy_image(device: vk::Device, image: vk::Image, p_
         let Some(data) = data_of(device.as_raw()) else { return };
         let tracked = data.depth.images.lock().unwrap().remove(&image.as_raw()).is_some();
         if tracked {
+            super::resolve::forget_image(&data, image.as_raw());
             data.depth.image_layouts.lock().unwrap().remove(&image.as_raw());
             let mut chosen = data.depth.chosen.lock().unwrap();
             if chosen.is_some_and(|c| c.image == image.as_raw()) {
@@ -412,14 +426,13 @@ unsafe fn after_pass(data: &DeviceData, cmd: vk::CommandBuffer, pass: Option<Pas
     if wanted == 0 || pass.image != data.depth.watched_image.load(Ordering::Relaxed) || pass.end_layout == 0 {
         return;
     }
-    // O passe de número `wanted` (de 1) da imagem neste quadro, na ordem de gravação.
-    if data.depth.pass_counter.fetch_add(1, Ordering::Relaxed) + 1 != wanted {
+    // O passe de número `wanted` (de 1) da imagem neste quadro, na ordem de gravação; `ALL_PASSES`: depois de todos (o resultado é o
+    // do último), para uma imagem MSAA, cujo resolve não pode esperar saber qual é o último passe.
+    let counted = data.depth.pass_counter.fetch_add(1, Ordering::Relaxed) + 1;
+    if wanted != ALL_PASSES && counted != wanted {
         return;
     }
-    let Some(info) = data.depth.images.lock().unwrap().get(&pass.image).copied() else { return };
-    let Some((dst, format)) = data.depth.snapshot.lock().unwrap().as_ref().map(|s| (s.image, s.format)) else { return };
-    unsafe { super::snapshot::record_copy(data, cmd, vk::Image::from_raw(pass.image), vk::ImageLayout::from_raw(pass.end_layout), dst, format, info.width, info.height) };
-    data.depth.snapshot_written.store(true, Ordering::Relaxed);
+    unsafe { snapshot_now(data, cmd, pass.image, vk::ImageLayout::from_raw(pass.end_layout)) };
 }
 
 unsafe extern "system" fn cmd_end_render_pass(cmd: vk::CommandBuffer) {
@@ -458,12 +471,27 @@ fn register_clear_event(data: &DeviceData, image: u64, splittable: bool) -> bool
 unsafe fn snapshot_now(data: &DeviceData, cmd: vk::CommandBuffer, image: u64, layout: vk::ImageLayout) {
     let Some(info) = data.depth.images.lock().unwrap().get(&image).copied() else { return };
     let Some((dst, format)) = data.depth.snapshot.lock().unwrap().as_ref().map(|s| (s.image, s.format)) else { return };
-    if layout == vk::ImageLayout::UNDEFINED || format.as_raw() != info.format {
+    if layout == vk::ImageLayout::UNDEFINED {
         return;
     }
-    unsafe { super::snapshot::record_copy(data, cmd, vk::Image::from_raw(image), layout, dst, format, info.width, info.height) };
+    if info.samples > 1 {
+        // MSAA: o resolve desenha a amostra 0 de cada pixel na foto de uma amostra.
+        if format != super::resolve::RESOLVED_FORMAT || !unsafe { super::resolve::record(data, cmd, vk::Image::from_raw(image), layout, vk::Format::from_raw(info.format), info.width, info.height) } {
+            return;
+        }
+    } else {
+        if format.as_raw() != info.format {
+            return;
+        }
+        unsafe { super::snapshot::record_copy(data, cmd, vk::Image::from_raw(image), layout, dst, format, info.width, info.height) };
+    }
     if !data.depth.snapshot_written.swap(true, Ordering::Relaxed) {
-        log!("foto da profundidade gravada antes da limpeza {} (primeira vez)", data.depth.snapshot_clear.load(Ordering::Relaxed));
+        let (clear, pass) = (data.depth.snapshot_clear.load(Ordering::Relaxed), data.depth.snapshot_pass.load(Ordering::Relaxed));
+        if clear > 0 {
+            log!("foto da profundidade gravada antes da limpeza {clear} (primeira vez)");
+        } else {
+            log!("foto da profundidade gravada (primeira vez; passe {})", if pass == ALL_PASSES { "todos".to_string() } else { pass.to_string() });
+        }
     }
 }
 
@@ -890,6 +918,9 @@ fn poll_pick(data: &DeviceData) {
     }
 }
 
+/// `snapshot_pass` com este valor: a foto sai depois de cada passe da imagem (a do último fica).
+const ALL_PASSES: u32 = u32::MAX;
+
 /// Quantos quadros seguidos o desafiante precisa vencer para a candidata de profundidade em uso mudar.
 const STICKY_SWITCH_FRAMES: u32 = 120;
 
@@ -1003,7 +1034,9 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
         };
         // Um pedido da pessoa (passe ou limpeza) manda; senão a regra da limpeza; senão a do passe (jogos sem limpezas que se
         // possa partir, como os de passes de renderização clássicos).
-        let wanted_clear = if pick.pass.is_some() { None } else { pick.clear.or_else(auto_clear) };
+        let msaa = c.samples > 1;
+        // Uma imagem MSAA só serve resolvida: a foto depois de TODOS os passes (o último vale), sem a regra de limpeza.
+        let wanted_clear = if pick.pass.is_some() || msaa { None } else { pick.clear.or_else(auto_clear) };
         let auto_pass = || {
             // Com histerese: depois de usar a foto de um passe, só volta à imagem original se o jogo ficar muito tempo sem
             // recomeçar a imagem; o número do passe acompanha o último visto. Sem isso, a escolha trocava entre foto e
@@ -1024,10 +1057,11 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
             }
             state.1
         };
-        let wanted_pass = if wanted_clear.is_some() { None } else { pick.pass.or_else(auto_pass) };
+        let wanted_pass = if msaa { Some(ALL_PASSES) } else if wanted_clear.is_some() { None } else { pick.pass.or_else(auto_pass) };
         let snapshot = (wanted_pass.is_some() || wanted_clear.is_some()).then_some(()).and_then(|()| {
-            // A foto: precisa da imagem da foto, e a imagem original precisa ter TRANSFER_SRC (armado).
-            unsafe { super::snapshot::ensure(data, vk::Format::from_raw(c.format), c.width, c.height) }
+            // A foto: precisa da imagem da foto, e a imagem original precisa ter TRANSFER_SRC (armado). MSAA: foto de uma amostra.
+            let format = if msaa { super::resolve::RESOLVED_FORMAT } else { vk::Format::from_raw(c.format) };
+            unsafe { super::snapshot::ensure(data, format, c.width, c.height, msaa) }
         });
         match snapshot {
             Some(image) => {

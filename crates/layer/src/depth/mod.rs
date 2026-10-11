@@ -10,6 +10,7 @@
 
 mod hooks;
 pub mod observe;
+mod resolve;
 mod screen;
 mod snapshot;
 
@@ -126,6 +127,8 @@ pub(crate) struct Snapshot {
     pub format: vk::Format,
     pub width: u32,
     pub height: u32,
+    /// Se a foto é o resultado de um resolve de profundidade MSAA: a view e o framebuffer onde o resolve desenha.
+    pub resolve: Option<resolve::ResolveTarget>,
 }
 
 pub struct Depth {
@@ -162,6 +165,8 @@ pub struct Depth {
     /// Quantos passes da imagem observada já terminaram de ser gravados neste quadro.
     pub(crate) pass_counter: AtomicU32,
     pub(crate) snapshot: Mutex<Option<Snapshot>>,
+    /// O passe que resolve a profundidade MSAA (criado quando o jogo usa MSAA).
+    pub(crate) resolver: Mutex<Option<resolve::Resolver>>,
     /// Fotos substituídas, ainda vivas por um tempo: command buffers já gravados (e ainda não executados) podem referenciá-las.
     pub(crate) retired: Mutex<Vec<(Snapshot, u32)>>,
     /// A foto já foi gravada ao menos uma vez (antes disso a imagem está sem layout e não pode ser lida).
@@ -257,6 +262,7 @@ impl Depth {
             snapshot_pass: AtomicU32::new(0),
             pass_counter: AtomicU32::new(0),
             snapshot: Mutex::new(None),
+            resolver: Mutex::new(None),
             retired: Mutex::new(Vec::new()),
             snapshot_written: AtomicBool::new(false),
             frames: AtomicU32::new(0),

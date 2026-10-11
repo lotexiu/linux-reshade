@@ -11,6 +11,16 @@ const DEPTH: vk::Format = vk::Format::D32_SFLOAT_S8_UINT;
 const SIZE: vk::Extent2D = vk::Extent2D { width: 256, height: 256 };
 const FRAMES: usize = 150;
 
+/// `DYN_MSAA=4`: renderiza com MSAA (cor e profundidade com 4 amostras, cor resolvida no swapchain), como um jogo em qualidade máxima.
+fn samples() -> vk::SampleCountFlags {
+    match std::env::var("DYN_MSAA").ok().as_deref() {
+        Some("2") => vk::SampleCountFlags::TYPE_2,
+        Some("4") => vk::SampleCountFlags::TYPE_4,
+        Some("8") => vk::SampleCountFlags::TYPE_8,
+        _ => vk::SampleCountFlags::TYPE_1,
+    }
+}
+
 fn spv(bytes: &[u8]) -> Vec<u32> {
     ash::util::read_spv(&mut std::io::Cursor::new(bytes)).expect("SPIR-V")
 }
@@ -93,7 +103,7 @@ unsafe fn run() {
                     .extent(vk::Extent3D { width: SIZE.width, height: SIZE.height, depth: 1 })
                     .mip_levels(1)
                     .array_layers(1)
-                    .samples(vk::SampleCountFlags::TYPE_1)
+                    .samples(samples())
                     .tiling(vk::ImageTiling::OPTIMAL)
                     .usage(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT)
                     .initial_layout(vk::ImageLayout::UNDEFINED),
@@ -107,6 +117,36 @@ unsafe fn run() {
         let depth_view = device
             .create_image_view(&vk::ImageViewCreateInfo::default().image(depth_image).view_type(vk::ImageViewType::TYPE_2D).format(DEPTH).subresource_range(vk::ImageSubresourceRange { aspect_mask: vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL, level_count: 1, layer_count: 1, ..Default::default() }), None)
             .unwrap();
+
+        // Cor MSAA (só com `DYN_MSAA`): resolve para a imagem do swapchain.
+        let msaa = samples() != vk::SampleCountFlags::TYPE_1;
+        let (msaa_image, msaa_memory, msaa_view) = if msaa {
+            let image = device
+                .create_image(
+                    &vk::ImageCreateInfo::default()
+                        .image_type(vk::ImageType::TYPE_2D)
+                        .format(COLOR)
+                        .extent(vk::Extent3D { width: SIZE.width, height: SIZE.height, depth: 1 })
+                        .mip_levels(1)
+                        .array_layers(1)
+                        .samples(samples())
+                        .tiling(vk::ImageTiling::OPTIMAL)
+                        .usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+                        .initial_layout(vk::ImageLayout::UNDEFINED),
+                    None,
+                )
+                .unwrap();
+            let req = device.get_image_memory_requirements(image);
+            let type_index = (0..memory.memory_type_count).find(|&i| req.memory_type_bits & (1 << i) != 0 && memory.memory_types[i as usize].property_flags.contains(vk::MemoryPropertyFlags::DEVICE_LOCAL)).unwrap_or(0);
+            let mem = device.allocate_memory(&vk::MemoryAllocateInfo::default().allocation_size(req.size).memory_type_index(type_index), None).unwrap();
+            device.bind_image_memory(image, mem, 0).unwrap();
+            let view = device
+                .create_image_view(&vk::ImageViewCreateInfo::default().image(image).view_type(vk::ImageViewType::TYPE_2D).format(COLOR).subresource_range(vk::ImageSubresourceRange { aspect_mask: vk::ImageAspectFlags::COLOR, level_count: 1, layer_count: 1, ..Default::default() }), None)
+                .unwrap();
+            (image, mem, view)
+        } else {
+            (vk::Image::null(), vk::DeviceMemory::null(), vk::ImageView::null())
+        };
 
         // Pipeline.
         let vert = device.create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&spv(include_bytes!("data/tri.vert.spv"))), None).unwrap();
@@ -130,7 +170,7 @@ unsafe fn run() {
                     .input_assembly_state(&vk::PipelineInputAssemblyStateCreateInfo::default().topology(vk::PrimitiveTopology::TRIANGLE_LIST))
                     .viewport_state(&vk::PipelineViewportStateCreateInfo::default().viewport_count(1).scissor_count(1))
                     .rasterization_state(&vk::PipelineRasterizationStateCreateInfo::default().polygon_mode(vk::PolygonMode::FILL).cull_mode(vk::CullModeFlags::NONE).line_width(1.0))
-                    .multisample_state(&vk::PipelineMultisampleStateCreateInfo::default().rasterization_samples(vk::SampleCountFlags::TYPE_1))
+                    .multisample_state(&vk::PipelineMultisampleStateCreateInfo::default().rasterization_samples(samples()))
                     .depth_stencil_state(&vk::PipelineDepthStencilStateCreateInfo::default().depth_test_enable(true).depth_write_enable(true).depth_compare_op(vk::CompareOp::GREATER_OR_EQUAL))
                     .color_blend_state(&vk::PipelineColorBlendStateCreateInfo::default().attachments(&blend_attachments))
                     .dynamic_state(&vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic))
@@ -178,12 +218,20 @@ unsafe fn run() {
                 &[],
                 &[barrier(color, vk::ImageAspectFlags::COLOR, vk::ImageLayout::UNDEFINED, vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL), barrier(depth_image, vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL, depth_old, vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)],
             );
-            let color_attachment = [vk::RenderingAttachmentInfo::default()
-                .image_view(color_views[index as usize])
+            if msaa {
+                let old = if frame == 0 { vk::ImageLayout::UNDEFINED } else { vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL };
+                device.cmd_pipeline_barrier(cb, all, all, vk::DependencyFlags::empty(), &[], &[], &[barrier(msaa_image, vk::ImageAspectFlags::COLOR, old, vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)]);
+            }
+            let mut color_info = vk::RenderingAttachmentInfo::default()
+                .image_view(if msaa { msaa_view } else { color_views[index as usize] })
                 .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
                 .load_op(vk::AttachmentLoadOp::CLEAR)
-                .store_op(vk::AttachmentStoreOp::STORE)
-                .clear_value(vk::ClearValue { color: vk::ClearColorValue { float32: [0.0, 0.0, 0.0, 1.0] } })];
+                .store_op(if msaa { vk::AttachmentStoreOp::DONT_CARE } else { vk::AttachmentStoreOp::STORE })
+                .clear_value(vk::ClearValue { color: vk::ClearColorValue { float32: [0.0, 0.0, 0.0, 1.0] } });
+            if msaa {
+                color_info = color_info.resolve_mode(vk::ResolveModeFlags::AVERAGE).resolve_image_view(color_views[index as usize]).resolve_image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+            }
+            let color_attachment = [color_info];
             let depth_attachment = vk::RenderingAttachmentInfo::default()
                 .image_view(depth_view)
                 .image_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
@@ -234,6 +282,11 @@ unsafe fn run() {
         device.destroy_pipeline_layout(layout, None);
         device.destroy_shader_module(frag, None);
         device.destroy_shader_module(vert, None);
+        if msaa {
+            device.destroy_image_view(msaa_view, None);
+            device.destroy_image(msaa_image, None);
+            device.free_memory(msaa_memory, None);
+        }
         device.destroy_image_view(depth_view, None);
         device.destroy_image(depth_image, None);
         device.free_memory(depth_memory, None);

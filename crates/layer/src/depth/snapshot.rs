@@ -19,6 +19,20 @@ fn memory_type(data: &DeviceData, bits: u32) -> Option<u32> {
 /// Quantos quadros uma foto substituída continua viva antes de ser destruída.
 const RETIRED_FRAMES: u32 = 300;
 
+/// Libera a foto (imagem, memória e o que o resolve criou).
+///
+/// # Safety
+/// A GPU não pode estar usando a foto.
+pub(super) unsafe fn free(device: &ash::Device, old: Snapshot) {
+    unsafe {
+        if let Some(target) = old.resolve {
+            super::resolve::destroy_target(device, target);
+        }
+        device.destroy_image(old.image, None);
+        device.free_memory(old.memory, None);
+    }
+}
+
 /// Conta um quadro para as fotos substituídas e destrói as que já passaram do prazo.
 ///
 /// # Safety
@@ -35,10 +49,7 @@ pub(super) unsafe fn reap_retired(data: &DeviceData) {
     *retired = alive;
     drop(retired);
     for (old, _) in expired {
-        unsafe {
-            data.device.destroy_image(old.image, None);
-            data.device.free_memory(old.memory, None);
-        }
+        unsafe { free(&data.device, old) };
     }
 }
 
@@ -46,9 +57,13 @@ pub(super) unsafe fn reap_retired(data: &DeviceData) {
 ///
 /// # Safety
 /// `data.device` válido; nenhuma GPU executando a imagem antiga (quem chama espera o dispositivo ficar ocioso se for trocar).
-pub(super) unsafe fn ensure(data: &DeviceData, format: vk::Format, width: u32, height: u32) -> Option<vk::Image> {
+pub(super) unsafe fn ensure(data: &DeviceData, format: vk::Format, width: u32, height: u32, msaa: bool) -> Option<vk::Image> {
     let mut slot = data.depth.snapshot.lock().unwrap();
-    if let Some(s) = slot.as_ref().filter(|s| s.format == format && s.width == width && s.height == height) {
+    if let Some(s) = slot.as_mut().filter(|s| s.format == format && s.width == width && s.height == height) {
+        // Para uma fonte MSAA a foto também precisa do passe de resolve.
+        if msaa && !unsafe { super::resolve::ensure_target(data, s) } {
+            return None;
+        }
         return Some(s.image);
     }
     unsafe {
@@ -84,7 +99,12 @@ pub(super) unsafe fn ensure(data: &DeviceData, format: vk::Format, width: u32, h
             data.device.free_memory(memory, None);
             return None;
         }
-        *slot = Some(Snapshot { image, memory, format, width, height });
+        let mut snapshot = Snapshot { image, memory, format, width, height, resolve: None };
+        if msaa && !super::resolve::ensure_target(data, &mut snapshot) {
+            free(&data.device, snapshot);
+            return None;
+        }
+        *slot = Some(snapshot);
         Some(image)
     }
 }
@@ -147,15 +167,10 @@ pub(super) unsafe fn record_copy(data: &DeviceData, cmd: vk::CommandBuffer, src:
 /// A GPU não pode estar usando a imagem.
 pub(super) unsafe fn destroy(data: &DeviceData) {
     for (old, _) in data.depth.retired.lock().unwrap().drain(..) {
-        unsafe {
-            data.device.destroy_image(old.image, None);
-            data.device.free_memory(old.memory, None);
-        }
+        unsafe { free(&data.device, old) };
     }
     if let Some(s) = data.depth.snapshot.lock().unwrap().take() {
-        unsafe {
-            data.device.destroy_image(s.image, None);
-            data.device.free_memory(s.memory, None);
-        }
+        unsafe { free(&data.device, s) };
     }
+    unsafe { super::resolve::destroy_resolver(data) };
 }

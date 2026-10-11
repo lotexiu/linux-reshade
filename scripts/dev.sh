@@ -570,6 +570,12 @@ cmd_smoke_dynamic() {
   check "o app terminou os quadros" 'grep -q "dynamic_clear: 150 quadros" <<<"$out"'
   check "a foto da profundidade foi gravada antes da limpeza 2 (a que apaga mais desenhos)" 'grep -q "foto da profundidade gravada antes da limpeza 2" "$tmp/log.txt"'
   check "a validation layer não reclamou de nada" '! grep -q "VUID" <<<"$out"'
+  # A mesma cena com MSAA de 4 amostras (cor e profundidade): a layer resolve a profundidade numa imagem de uma amostra.
+  local tmp2 out2; tmp2="$(mktemp -d)"
+  out2="$(DYN_MSAA=4 LINUX_RESHADE=1 LINUX_RESHADE_DEPTH=1 LINUX_RESHADE_STATE_DIR="$tmp2" LINUX_RESHADE_LOG="$tmp2/log.txt" VK_LOADER_LAYERS_ENABLE='*validation*' timeout 120 "$ROOT/target/release/examples/dynamic_clear" 2>&1)"
+  check "MSAA: o app terminou os quadros" 'grep -q "dynamic_clear: 150 quadros" <<<"$out2"'
+  check "MSAA: a profundidade resolvida foi gravada" 'grep -q "foto da profundidade gravada" "$tmp2/log.txt"'
+  check "MSAA: a validation layer não reclamou de nada" '! grep -q "VUID" <<<"$out2"'
   [ "$ok" = 1 ] && say "smoke (renderização dinâmica): passou" || { warn "smoke (renderização dinâmica): falhou ($tmp)"; echo "$out" | head -10; exit 1; }
 }
 
