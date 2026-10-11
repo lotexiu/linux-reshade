@@ -960,9 +960,16 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
         match pick.candidate {
             Some(n) => {
                 if picked.0 != n {
-                    *picked = (n, candidates.get(n as usize - 1).map_or(0, |c| c.image));
+                    let c = candidates.get(n as usize - 1);
+                    *picked = (n, c.map_or(0, |c| c.image), c.map_or((0, 0, 0), |c| (c.width, c.height, c.format)));
                 }
-                if picked.1 != 0 && candidates.iter().any(|c| c.image == picked.1) {
+                // O jogo recria imagens (mapas de sombra em cascata, trocas de qualidade): se a escolhida sumiu, a que tem o
+                // mesmo tamanho e formato (a de mais desenhos) herda o pedido. Sem isso a escolha ia e voltava a cada recriação.
+                if picked.1 == 0 || !candidates.iter().any(|c| c.image == picked.1) {
+                    let sig = picked.2;
+                    picked.1 = candidates.iter().filter(|c| (c.width, c.height, c.format) == sig && sig.0 != 0).max_by_key(|c| c.draws).map_or(0, |c| c.image);
+                }
+                if picked.1 != 0 {
                     let image = picked.1;
                     for c in candidates.iter_mut() {
                         c.chosen = c.image == image;
@@ -970,7 +977,7 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
                     picked_by_number = true;
                 }
             }
-            None => *picked = (0, 0),
+            None => *picked = (0, 0, (0, 0, 0)),
         }
     }
     // Histerese: a imagem em uso só perde o lugar depois de o desafiante vencer vários quadros seguidos (não vale para um pedido).
