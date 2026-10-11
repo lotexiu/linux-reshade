@@ -19,7 +19,7 @@ pub use sources::{FrameInfo, utc_date};
 
 use crate::backbuffer::BackbufferCopies;
 use crate::error::{Error, unsupported};
-use crate::image::{ALL_LEVELS, COLOR_RANGE, GpuImage};
+use crate::image::{ALL_LEVELS, COLOR_RANGE, Dims, GpuImage};
 use ash::vk;
 use fx_bundle::Bundle;
 use fx_bundle::manifest::{Texture, TextureFormat};
@@ -372,7 +372,12 @@ impl Effect {
                 if t.levels > 1 {
                     usage |= vk::ImageUsageFlags::TRANSFER_SRC; // os níveis seguintes saem de blits do anterior
                 }
-                self.textures[i] = unsafe { GpuImage::with_levels(device, memory, convert::texture_format(t.format), extent, usage, t.levels)? };
+                let dims = match t.kind {
+                    fx_bundle::manifest::TextureType::D1 => Dims::D1,
+                    fx_bundle::manifest::TextureType::D2 => Dims::D2,
+                    fx_bundle::manifest::TextureType::D3 => Dims::D3(t.depth),
+                };
+                self.textures[i] = unsafe { GpuImage::with_dims(device, memory, convert::texture_format(t.format), dims, extent, usage, t.levels)? };
             }
         }
 
@@ -736,9 +741,14 @@ impl Effect {
             if storage.level >= image.levels {
                 return Err(Error::Invalid(format!("storage {:?}: nível {} de uma textura com {} níveis", storage.name, storage.level, image.levels)));
             }
+            let view_type = match tex.kind {
+                fx_bundle::manifest::TextureType::D1 => vk::ImageViewType::TYPE_1D,
+                fx_bundle::manifest::TextureType::D2 => vk::ImageViewType::TYPE_2D,
+                fx_bundle::manifest::TextureType::D3 => vk::ImageViewType::TYPE_3D,
+            };
             let info = vk::ImageViewCreateInfo::default()
                 .image(image.image)
-                .view_type(vk::ImageViewType::TYPE_2D)
+                .view_type(view_type)
                 .format(convert::texture_format(tex.format))
                 .subresource_range(vk::ImageSubresourceRange { base_mip_level: storage.level, level_count: 1, ..COLOR_RANGE });
             let view = unsafe { device.create_image_view(&info, None)? };

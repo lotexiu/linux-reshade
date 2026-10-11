@@ -264,3 +264,19 @@ fn a_compute_pass_writes_a_storage_image_that_a_later_pass_draws() {
         gpu.destroy_targets(targets);
     }
 }
+
+#[test]
+fn compute_writes_3d_and_1d_storage_textures_that_a_later_pass_samples() {
+    let gpu = gpu_or_skip!();
+    unsafe {
+        let targets = gpu.targets(1, input);
+        let mut effect = Effect::new(&gpu.device, &gpu.memory, &bundle("Volume"), 0, &target(&targets.images, &gpu), gpu.queue).expect("criar o efeito");
+        gpu.submit(effect.command_buffer(0));
+        // Volume na fatia 1, em (x=1, y=0): (1, 0, 1); a linha no texel 2: B = 0,5. Saída: (1, 0 + 1*0,5, 0,5).
+        for (n, got) in gpu.read(targets.images[0]).into_iter().enumerate() {
+            assert_pixel(got, [255, 128, 128, 255], 2, &format!("pixel {n}"));
+        }
+        effect.destroy(&gpu.device);
+        gpu.destroy_targets(targets);
+    }
+}

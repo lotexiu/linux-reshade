@@ -4,6 +4,32 @@
 software (lavapipe), com uma imagem de profundidade falsa para os que a pedem. Não confere pixels: confere que o
 runtime cria, grava, submete e destrói o efeito.
 
+## Depois do compute e das texturas 1D/3D (2026-10-10, mesma máquina)
+
+De 152 efeitos: **119 executam** na GPU de software (todas as técnicas de cada um são criadas e submetidas); **27**
+só ficam de fora do levantamento por faltar a imagem de uma textura (o app de controle as monta no uso, então
+rodariam); **6** são recusados de verdade:
+
+| Efeito | Por quê |
+|---|---|
+| `cBlending`, `cFrameBlending` | escrita sRGB numa textura de render target |
+| `kDatamosh` | leitura sRGB de uma textura de render target |
+| `MartysMods_LUTMANAGER` | semântica própria (`MARTY_LUT_MANAGER`) |
+| `Scatter`, `dh_uber_rt` | um passe amostra a própria textura de saída (realimentação no mesmo passe) |
+
+Dos efeitos de compute (18 antes): todos criam e executam agora (`MartysMods_MXAO`, `REGRADE`, `SMAA`, `INSIGHT`,
+`ColorSort_CS`, `Frequency_CS`, `RealLongExposure`...), e os que precisavam de texturas 1D/3D também
+(`DEPTHOFFIELD`, `FFTBLOOM`, `FILMGRAIN`, `PARALLAX_DOF`, `RTGI_DIFFUSE`, `lilium__hdr_and_sdr_analysis`).
+
+Falta conferir, e **não foi testado em jogo nem em GPU real**: o compute só rodou na lavapipe; a validation layer não
+reclamou do runtime, mas reclamou de três coisas dos shaders (não do runtime): `Offset` fora do gather (a layer agora
+liga `shaderImageGatherExtended` no dispositivo do jogo), memória compartilhada acima de 32 KiB num efeito (a lavapipe
+limita a 32 KiB; as GPUs NVIDIA permitem 48 KiB) e SPIR-V que o `spirv-val` recusa em 6 efeitos
+(`MartysMods_EXPOSUREFUSION`, `FFTBLOOM`, `INSIGHT`, `vort_HDR`, `vort_Motion`, `lilium__hdr_and_sdr_analysis`: um
+`OpFunctionCall` com argumento de tipo diferente do parâmetro, defeito do gerador de SPIR-V do compilador).
+
+## Antes (só o levantamento inicial)
+
 | Resultado | Quantos | O que é |
 |---|---|---|
 | Executam | **107** | inclui os de profundidade (`AdaptiveFog`, `CinematicDOF` não: ver imagens abaixo), `qUINT_*`, `cShade`, `lilium`... |

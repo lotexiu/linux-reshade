@@ -63,8 +63,9 @@ impl Manifest {
             if !textures.insert(t.unique_name.as_str()) {
                 return Err(invalid(format!("textura duplicada: {:?}", t.unique_name)));
             }
-            if t.kind != TextureType::D2 {
-                return Err(unsupported(format!("textura {:?} não é 2D", t.name)));
+            // Texturas 1D e 3D só como amostradas ou de armazenamento: não são alvos de renderização (ver `validate_pass`).
+            if t.kind != TextureType::D2 && (t.render_target || t.semantic.is_some()) {
+                return Err(unsupported(format!("textura {:?} 1D ou 3D usada como alvo ou semântica", t.name)));
             }
             // DEPTH pode ser só declarada: quase todo efeito inclui o ReShade.fxh, que a declara. O que a
             // v1 não executa é um passe que a AMOSTRA (ver `validate_pass`).

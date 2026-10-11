@@ -4,8 +4,44 @@
 use crate::memory::find_memory_type;
 use ash::vk;
 
+/// A dimensão de uma imagem de textura: o ReShade FX tem `texture1D`, `texture2D` e `texture3D`.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub enum Dims {
+    D1,
+    #[default]
+    D2,
+    /// Profundidade (número de fatias).
+    D3(u32),
+}
+
+impl Dims {
+    pub fn image_type(self) -> vk::ImageType {
+        match self {
+            Dims::D1 => vk::ImageType::TYPE_1D,
+            Dims::D2 => vk::ImageType::TYPE_2D,
+            Dims::D3(_) => vk::ImageType::TYPE_3D,
+        }
+    }
+
+    pub fn view_type(self) -> vk::ImageViewType {
+        match self {
+            Dims::D1 => vk::ImageViewType::TYPE_1D,
+            Dims::D2 => vk::ImageViewType::TYPE_2D,
+            Dims::D3(_) => vk::ImageViewType::TYPE_3D,
+        }
+    }
+
+    fn depth(self) -> u32 {
+        match self {
+            Dims::D3(d) => d.max(1),
+            _ => 1,
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct GpuImage {
+    dims: Dims,
     pub image: vk::Image,
     /// View de todos os níveis (para amostrar).
     pub view: vk::ImageView,
@@ -48,7 +84,24 @@ impl GpuImage {
         usage: vk::ImageUsageFlags,
         levels: u32,
     ) -> Result<Self, vk::Result> {
-        let mut gpu = Self { levels: levels.clamp(1, max_levels(extent)), ..Self::default() };
+        unsafe { Self::with_dims(device, memory, format, Dims::D2, extent, usage, levels) }
+    }
+
+    /// Como [`with_levels`](Self::with_levels), para uma textura 1D (altura 1), 2D ou 3D.
+    ///
+    /// # Safety
+    /// As mesmas de [`new`](Self::new).
+    pub unsafe fn with_dims(
+        device: &ash::Device,
+        memory: &vk::PhysicalDeviceMemoryProperties,
+        format: vk::Format,
+        dims: Dims,
+        extent: vk::Extent2D,
+        usage: vk::ImageUsageFlags,
+        levels: u32,
+    ) -> Result<Self, vk::Result> {
+        let extent = if dims == Dims::D1 { vk::Extent2D { width: extent.width, height: 1 } } else { extent };
+        let mut gpu = Self { dims, levels: levels.clamp(1, max_levels(extent)), ..Self::default() };
         if let Err(e) = unsafe { gpu.build(device, memory, format, extent, usage) } {
             unsafe { gpu.destroy(device) };
             return Err(e);
@@ -66,9 +119,9 @@ impl GpuImage {
     ) -> Result<(), vk::Result> {
         unsafe {
             let info = vk::ImageCreateInfo::default()
-                .image_type(vk::ImageType::TYPE_2D)
+                .image_type(self.dims.image_type())
                 .format(format)
-                .extent(vk::Extent3D { width: extent.width, height: extent.height, depth: 1 })
+                .extent(vk::Extent3D { width: extent.width, height: extent.height, depth: self.dims.depth() })
                 .mip_levels(self.levels)
                 .array_layers(1)
                 .samples(vk::SampleCountFlags::TYPE_1)
@@ -87,7 +140,7 @@ impl GpuImage {
 
             let view_info = vk::ImageViewCreateInfo::default()
                 .image(self.image)
-                .view_type(vk::ImageViewType::TYPE_2D)
+                .view_type(self.dims.view_type())
                 .format(format)
                 .subresource_range(vk::ImageSubresourceRange { level_count: self.levels, ..COLOR_RANGE });
             self.view = device.create_image_view(&view_info, None)?;
