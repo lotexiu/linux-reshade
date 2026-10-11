@@ -522,8 +522,8 @@ cmd_flatpak_layer() {
   cp -f "$ROOT/target/release/$LAYER_LIB" "$dir/$LAYER_LIB"
   sed "s|\"library_path\": \"[^\"]*\"|\"library_path\": \"$dir/$LAYER_LIB\"|" "$MANIFEST" >"$dir/$(basename "$MANIFEST")"
   say "layer copiada para $dir (refaça este comando depois de recompilar a layer)"
-  local -a grant=(--device=shm "--filesystem=$dir:ro" "--filesystem=$cache:ro" "--env=VK_ADD_LAYER_PATH=$dir" "--env=$ENABLE_VAR=1" "--env=LINUX_RESHADE_DEPTH=1" "--env=LINUX_RESHADE_LOG=/tmp/linux-reshade-flatpak.log")
-  local -a revoke=(--nodevice=shm "--nofilesystem=$dir" "--nofilesystem=$cache" --unset-env=VK_ADD_LAYER_PATH "--unset-env=$ENABLE_VAR" --unset-env=LINUX_RESHADE_DEPTH --unset-env=LINUX_RESHADE_LOG)
+  local -a grant=(--device=shm "--filesystem=$dir:ro" "--filesystem=$cache:ro" "--env=VK_ADD_IMPLICIT_LAYER_PATH=$dir" "--env=$ENABLE_VAR=1" "--env=LINUX_RESHADE_DEPTH=1" "--env=LINUX_RESHADE_LOG=/tmp/linux-reshade-flatpak.log")
+  local -a revoke=(--nodevice=shm "--nofilesystem=$dir" "--nofilesystem=$cache" --unset-env=VK_ADD_IMPLICIT_LAYER_PATH "--unset-env=$ENABLE_VAR" --unset-env=LINUX_RESHADE_DEPTH --unset-env=LINUX_RESHADE_LOG)
   case "$mode" in
     apply) flatpak override --user "${grant[@]}" "$app" && say "liberado para $app (desfaça com: scripts/dev.sh flatpak-layer $app --undo)" ;;
     undo) flatpak override --user "${revoke[@]}" "$app" && say "removido de $app" ;;
