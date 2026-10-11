@@ -21,7 +21,7 @@ pub enum Feature {
     Mipmaps,
     /// Usa as conversões sRGB de leitura ou escrita.
     Srgb,
-    /// Usa compute shaders: ainda não suportado.
+    /// Usa compute shaders e imagens de armazenamento.
     Compute,
 }
 
@@ -129,8 +129,9 @@ pub fn analyze(name: &str, manifest: &Manifest) -> EffectInfo {
     features.sort();
 
     // Profundidade já é suportada (a layer entrega a imagem do jogo); só precisa do jogo aberto com LINUX_RESHADE_DEPTH=1.
-    if features.contains(&Feature::Compute) {
-        problems.push("usa compute shaders, ainda não suportados".to_string());
+    // Compute e imagens de armazenamento são suportados; texturas 1D e 3D ainda não.
+    if manifest.textures.iter().any(|t| t.kind != fx_bundle::manifest::TextureType::D2) {
+        problems.push("usa texturas 1D ou 3D, ainda não suportadas".to_string());
     }
     EffectInfo { name: name.to_string(), techniques: manifest.techniques.iter().map(|t| t.name.clone()).collect(), features, problems, error: None }
 }
@@ -162,7 +163,7 @@ fn one_line(text: &str) -> String {
 }
 
 /// Versão do formato e das regras da análise: mudou, as guardadas deixam de valer.
-const VERSION: &str = "2";
+const VERSION: &str = "3";
 
 /// Guarda a análise no cache.
 pub fn save(compiler: &Compiler, info: &EffectInfo) -> std::io::Result<()> {
@@ -261,11 +262,13 @@ mod tests {
     }
 
     #[test]
-    fn compute_is_still_a_problem() {
+    fn compute_is_a_feature_and_1d_or_3d_textures_are_a_problem() {
         let mut m = manifest("Sepia");
         m.techniques[0].passes[0].compute_entry = Some("CS".into());
         let info = analyze("Sepia", &m);
-        assert!(!info.compatible() && info.has(Feature::Compute), "{info:?}");
+        assert!(info.compatible() && info.has(Feature::Compute), "{info:?}");
+        m.textures[0].kind = fx_bundle::manifest::TextureType::D3;
+        assert!(!analyze("Sepia", &m).compatible());
     }
 
     #[test]
