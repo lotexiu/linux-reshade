@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Utilitário de desenvolvimento. Idempotente; serve para trocar de máquina sem esforço.
-# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|smoke-preset|smoke-depth|smoke-depth-effect|smoke-compute|smoke-dynamic|flatpak-layer|daemon|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-survey|fx-golden|placement|logs> [args]
+# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|smoke-preset|smoke-depth|smoke-depth-effect|smoke-compute|smoke-dynamic|flatpak-layer|daemon|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-survey|fx-golden|xid|placement|logs> [args]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -720,6 +720,21 @@ cmd_fx_test() { "$ROOT/tools/fx2spv/test.sh" "$@"; }
 # Levantamento: compila todos os efeitos de uma pasta e os executa na GPU de software (ver tools/fx2spv/survey.sh).
 cmd_fx_survey() { "$ROOT/tools/fx2spv/survey.sh" "$@"; }
 
+# Falhas da GPU (Xid da NVIDIA, que derrubam o jogo) com o que a layer registrou nos segundos antes de cada uma.
+# Uso: xid [minutos=60] [log=/tmp/linux-reshade-flatpak.log]
+cmd_xid() {
+  local minutes="${1:-60}" log="${2:-/tmp/linux-reshade-flatpak.log}"
+  journalctl -k --since "-${minutes}min" --no-pager 2>/dev/null | grep -E "NVRM: Xid" | while IFS= read -r line; do
+    printf '%s\n' "$line" | cut -c1-200
+    local stamp; stamp="$(printf '%s' "$line" | grep -oE '[0-9]{2}:[0-9]{2}:[0-9]{2}' | head -1)"
+    [ -n "$stamp" ] && [ -f "$log" ] || continue
+    local hhmm="${stamp%:*}" sec="${stamp##*:}"
+    # as linhas do log da layer com a mesma hora e minuto (e as do minuto anterior), sem as repetitivas
+    local prev; prev="$(date -d "$(date +%F) $stamp 1 minute ago" +%H:%M 2>/dev/null || true)"
+    grep -E "pid=[0-9]+ ($hhmm|$prev):" "$log" | grep -vE "passes da prof|pipelines com|vkQueuePresent|bundle carregado" | tail -12 | cut -c1-220 | sed 's/^/    layer: /'
+  done
+}
+
 # Regenera os bundles de referência (golden) usados pelos testes, a partir dos .fx de origem.
 cmd_fx_golden() {
   [ -x "$ROOT/build/fx2spv/fx2spv" ] || cmd_fx_tool
@@ -782,7 +797,8 @@ case "${1:-}" in
   fx-test)   shift; cmd_fx_test "$@" ;;
   fx-survey) shift; cmd_fx_survey "$@" ;;
   fx-golden) cmd_fx_golden ;;
+  xid)       shift; cmd_xid "$@" ;;
   placement) shift; cmd_placement "$@" ;;
   logs)      shift; cmd_logs "$@" ;;
-  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|smoke-preset|smoke-depth|smoke-depth-effect|daemon|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-survey|fx-golden|placement|logs>" >&2; exit 2 ;;
+  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|smoke-preset|smoke-depth|smoke-depth-effect|daemon|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-survey|fx-golden|xid|placement|logs>" >&2; exit 2 ;;
 esac
