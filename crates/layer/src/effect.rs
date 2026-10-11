@@ -26,6 +26,21 @@ fn frame_info(now: Instant, previous: Option<Instant>, frame_count: u64) -> Fram
     }
 }
 
+/// O controle que a pessoa edita no painel (ver `ipc::overlay`), relido a cada 80 ms: o arquivo é pequeno, mas o present roda
+/// centenas de vezes por segundo.
+fn active_control() -> Option<String> {
+    static CACHE: std::sync::Mutex<Option<(Instant, Option<String>)>> = std::sync::Mutex::new(None);
+    let mut cache = CACHE.lock().unwrap();
+    if let Some((at, value)) = cache.as_ref()
+        && at.elapsed() < std::time::Duration::from_millis(80)
+    {
+        return value.clone();
+    }
+    let value = ipc::overlay(&crate::status::game_id(), std::time::Duration::from_millis(2500)).map(|(_, uniform)| uniform);
+    *cache = Some((Instant::now(), value.clone()));
+    value
+}
+
 /// Recursos que só existem depois do primeiro present com os efeitos ligados.
 struct Built {
     chain: Chain,
@@ -503,6 +518,7 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
             }
         }
         // ...depois os valores do runtime (tempo etc.), que valem mais que qualquer parâmetro.
+        built.chain.set_active_control(active_control().as_deref());
         built.chain.update_sources(index, &frame_info(now, previous, data.presents.load(std::sync::atomic::Ordering::Relaxed)));
 
         let waits = std::slice::from_raw_parts(info.p_wait_semaphores, info.wait_semaphore_count as usize);

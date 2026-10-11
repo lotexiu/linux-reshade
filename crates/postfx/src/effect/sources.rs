@@ -3,7 +3,7 @@
 //! Efeitos FX pedem valores como o tempo, o número do frame ou um número aleatório com a anotação
 //! `source`. Sem alimentá-los o valor fica 0, e um efeito como o NightVision (que multiplica a
 //! imagem por `smoothstep(.., timer)`) sai todo preto. Aqui estão os que não dependem de entrada do
-//! usuário; os de mouse/teclado, `overlay_*`, `bufready_depth` e `screenshot` mantêm o valor padrão
+//! usuário (e `overlay_active`/`overlay_open`, que o painel alimenta); os de mouse/teclado, `bufready_depth` e `screenshot` mantêm o valor padrão
 //! do manifesto (zero), que é a resposta correta para "indisponível", e são listados em
 //! [`Sources::ignored`] para a layer registrá-los.
 
@@ -46,6 +46,10 @@ enum Kind {
     Date,
     Random { min: f32, max: f32 },
     PingPong { min: f32, max: f32, step_min: f32, step_max: f32 },
+    /// O controle (de 1, na ordem do efeito) que a pessoa está editando; 0 se nenhum.
+    OverlayActive,
+    /// A interface de edição está aberta.
+    OverlayOpen,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -64,6 +68,9 @@ pub struct Sources {
     pingpong: Vec<[f32; 2]>,
     rng: u64,
     ignored: Vec<String>,
+    /// Os uniforms editáveis (sem `source`), na ordem do efeito: a posição (de 1) é o valor de `overlay_active`.
+    controls: Vec<String>,
+    active: u32,
 }
 
 fn text<'a>(u: &'a Uniform, key: &str) -> Option<&'a str> {
@@ -94,6 +101,7 @@ impl Sources {
     /// Procura no manifesto os uniforms com a anotação `source`.
     pub fn collect(manifest: &Manifest) -> Self {
         let mut s = Self { rng: 0x9E37_79B9_7F4A_7C15, ..Self::default() };
+        s.controls = manifest.uniforms.iter().filter(|u| text(u, "source").is_none()).map(|u| u.name.clone()).collect();
         for u in &manifest.uniforms {
             let Some(name) = text(u, "source") else { continue };
             let kind = match name {
@@ -101,6 +109,8 @@ impl Sources {
                 "frametime" => Kind::FrameTime,
                 "framecount" => Kind::FrameCount,
                 "date" => Kind::Date,
+                "overlay_active" | "overlay_hovered" => Kind::OverlayActive,
+                "overlay_open" => Kind::OverlayOpen,
                 "random" => Kind::Random { min: number(u, "min", 0.0), max: number(u, "max", 1.0) },
                 "pingpong" => {
                     let step = numbers(u, "step");
@@ -122,6 +132,11 @@ impl Sources {
             s.list.push(Source { offset: u.offset as usize, base: u.ty.base, rows: u.ty.rows as usize, kind });
         }
         s
+    }
+
+    /// Diz qual controle está sendo editado (pelo nome do uniform); um nome que o efeito não tem vale como nenhum.
+    pub fn set_active_control(&mut self, name: Option<&str>) {
+        self.active = name.and_then(|n| self.controls.iter().position(|c| c == n)).map_or(0, |i| i as u32 + 1);
     }
 
     /// Uniforms cujo `source` não é implementado (ficam com o valor padrão do manifesto).
@@ -157,6 +172,8 @@ impl Sources {
                 Kind::FrameTime => vec![frame.frame_time_ms],
                 Kind::FrameCount => vec![frame.frame_count as f32],
                 Kind::Date => frame.date.to_vec(),
+                Kind::OverlayActive => vec![self.active as f32],
+                Kind::OverlayOpen => vec![f32::from(self.active != 0)],
                 Kind::Random { min, max } => {
                     let r = self.next_unit();
                     // int: inclusivo nos dois extremos, como o `rand() % (max-min+1)` do ReShade.
@@ -239,6 +256,23 @@ mod tests {
         assert_eq!((w[0].0, f32_at(&w, 0, 0)), (0, 1234.5));
         assert_eq!((w[1].0, f32_at(&w, 1, 0)), (16, 16.7));
         assert_eq!((w[2].0, u32::from_le_bytes(w[2].1[..4].try_into().unwrap())), (32, 42));
+    }
+
+    #[test]
+    fn overlay_active_is_the_one_based_position_of_the_edited_control() {
+        let m = manifest(&[
+            ("mode", "int", 1, r#"{"ui_type":"combo"}"#),
+            ("range", "float", 1, r#"{"ui_type":"slider"}"#),
+            ("active", "int", 1, r#"{"source":"overlay_active"}"#),
+            ("open", "bool", 1, r#"{"source":"overlay_open"}"#),
+        ]);
+        let mut s = Sources::collect(&m);
+        let read = |s: &mut Sources| s.evaluate(&FrameInfo::default()).iter().map(|(_, b)| u32::from_le_bytes(b[..4].try_into().unwrap())).collect::<Vec<_>>();
+        assert_eq!(read(&mut s), [0, 0], "ninguém editando");
+        s.set_active_control(Some("range"));
+        assert_eq!(read(&mut s), [2, 1], "o segundo controle, e a edição está aberta");
+        s.set_active_control(Some("outro_efeito"));
+        assert_eq!(read(&mut s), [0, 0], "um nome que o efeito não tem vale como nenhum");
     }
 
     #[test]

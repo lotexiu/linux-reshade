@@ -195,6 +195,8 @@ pub struct Depth {
     pub(crate) sticky: Mutex<(u64, u64, u32)>,
     /// A candidata que a pessoa escolheu pelo número, resolvida para a imagem no momento do pedido: `(número pedido, imagem)`. A
     /// lista de candidatas muda de ordem entre quadros (e entre cenas), então o número sozinho trocava de imagem.
+    /// A imagem de um pedido recusado por não servir (só para registrar uma vez no log).
+    pub(crate) refused_pick: AtomicU64,
     pub(crate) picked_image: Mutex<(u32, u64, (u32, u32, i32))>,
     pub(crate) snapshot_clear: AtomicU32,
     pub(crate) clear_counter: AtomicU32,
@@ -278,6 +280,7 @@ impl Depth {
             fx_presents: [AtomicU32::new(0), AtomicU32::new(0)],
             last_image: AtomicU64::new(0),
             sticky: Mutex::new((0, 0, 0)),
+            refused_pick: AtomicU64::new(0),
             picked_image: Mutex::new((0, 0, (0, 0, 0))),
             snapshot_clear: AtomicU32::new(0),
             clear_counter: AtomicU32::new(0),

@@ -14,3 +14,5 @@ ash = { version = "0.38", default-features = false, features = ["std"] }
 [profile.release]
 lto = "thin"
 codegen-units = 1
+# Tabelas de linhas: o log de falhas da layer (SINAL/PÂNICO) mostra funções e linhas.
+debug = "line-tables-only"

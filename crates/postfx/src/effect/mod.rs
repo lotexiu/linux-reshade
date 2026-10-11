@@ -300,6 +300,11 @@ impl Effect {
         }
     }
 
+    /// O controle que a pessoa está editando agora (`overlay_active` dos efeitos que o usam).
+    pub fn set_active_control(&mut self, name: Option<&str>) {
+        self.sources.set_active_control(name);
+    }
+
     /// Uniforms com `source` que o runtime não alimenta (mouse, teclado, overlay...): ficam com o
     /// valor padrão do manifesto. Útil para a layer registrar no log.
     pub fn ignored_sources(&self) -> &[String] {

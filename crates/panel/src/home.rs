@@ -673,6 +673,10 @@ impl Home {
 
     /// Altera um parâmetro de um efeito do preset.
     pub fn set_control(&mut self, file: &str, name: &str, values: &[f64]) {
+        // Os efeitos com auxílio visual de edição (pontos do autofoco...) o mostram enquanto isto se repete.
+        if let Some(game) = &self.game {
+            let _ = ipc::set_overlay(game, file, name);
+        }
         let (file, name, values) = (file.to_string(), name.to_string(), values.to_vec());
         self.edit(move |p, compiler| {
             let compiler = compiler.ok_or("sem compilador de efeitos")?;

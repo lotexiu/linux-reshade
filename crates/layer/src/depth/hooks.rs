@@ -969,7 +969,13 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
                     let sig = picked.2;
                     picked.1 = candidates.iter().filter(|c| (c.width, c.height, c.format) == sig && sig.0 != 0).max_by_key(|c| c.draws).map_or(0, |c| c.image);
                 }
-                if picked.1 != 0 {
+                // Uma candidata que "não serve" (outra proporção, MSAA sem uso...) não alimenta os efeitos: o resultado seria lixo e
+                // já derrubou o jogo (mapa de sombras D16 escolhido à mão). O pedido fica guardado e a heurística decide.
+                if picked.1 != 0 && candidates.iter().any(|c| c.image == picked.1 && c.unusable.is_some()) {
+                    if data.depth.refused_pick.swap(picked.1, Ordering::Relaxed) != picked.1 {
+                        log!("pedido ignorado: a candidata escolhida não serve para os efeitos");
+                    }
+                } else if picked.1 != 0 {
                     let image = picked.1;
                     for c in candidates.iter_mut() {
                         c.chosen = c.image == image;

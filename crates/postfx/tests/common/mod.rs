@@ -260,16 +260,16 @@ pub struct DepthImage {
 /// Uma imagem de profundidade `width`x`height` cheia de `value`, no layout `DEPTH_STENCIL_ATTACHMENT_OPTIMAL`,
 /// como um jogo a deixaria (com `SAMPLED` no uso, que a layer acrescenta).
 pub unsafe fn depth_image(gpu: &Gpu, width: u32, height: u32, value: f32) -> DepthImage {
-    unsafe { depth_image_with(gpu, width, height, value, None) }
+    unsafe { depth_image_with(gpu, DEPTH_FORMAT, width, height, value, None) }
 }
 
 /// Como `depth_image`, mas com um padrão por pixel (`(x, y) -> profundidade`) no lugar do valor único: uma imagem plana
 /// esconde erros que só aparecem quando a profundidade varia (autofoco, ordenação).
-pub unsafe fn depth_image_with(gpu: &Gpu, width: u32, height: u32, value: f32, pattern: Option<&dyn Fn(u32, u32) -> f32>) -> DepthImage {
+pub unsafe fn depth_image_with(gpu: &Gpu, format: vk::Format, width: u32, height: u32, value: f32, pattern: Option<&dyn Fn(u32, u32) -> f32>) -> DepthImage {
     unsafe {
         let info = vk::ImageCreateInfo::default()
             .image_type(vk::ImageType::TYPE_2D)
-            .format(DEPTH_FORMAT)
+            .format(format)
             .extent(vk::Extent3D { width, height, depth: 1 })
             .mip_levels(1)
             .array_layers(1)

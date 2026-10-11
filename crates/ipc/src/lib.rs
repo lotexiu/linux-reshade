@@ -140,6 +140,39 @@ pub fn set_depth_arm_in(dir: &std::path::Path, game: &str, on: bool) -> io::Resu
     }
 }
 
+/// O controle que a pessoa está editando no painel, para os efeitos que mostram um auxílio visual enquanto se edita
+/// (`source = "overlay_active"`, como os pontos do autofoco do Depth of Field). O arquivo guarda o efeito e o uniform; vale
+/// por pouco tempo depois da última edição.
+fn overlay_file(dir: &std::path::Path, game: &str) -> Option<PathBuf> {
+    (!game.is_empty() && !game.starts_with('.') && !game.contains(['/', '\\', '\0'])).then(|| dir.join(format!("overlay-{game}")))
+}
+
+pub fn set_overlay_in(dir: &std::path::Path, game: &str, effect: &str, uniform: &str) -> io::Result<()> {
+    let Some(file) = overlay_file(dir, game) else { return Ok(()) };
+    ensure_private_dir(dir)?;
+    fs::write(file, format!("{effect}\n{uniform}\n"))
+}
+
+pub fn set_overlay(game: &str, effect: &str, uniform: &str) -> io::Result<()> {
+    set_overlay_in(&state_dir(), game, effect, uniform)
+}
+
+/// `(efeito, uniform)` editado nos últimos `max_age`; `None` se faz mais tempo (ou nunca).
+pub fn overlay_in(dir: &std::path::Path, game: &str, max_age: std::time::Duration) -> Option<(String, String)> {
+    let file = overlay_file(dir, game)?;
+    let age = fs::metadata(&file).and_then(|m| m.modified()).ok()?.elapsed().unwrap_or_default();
+    if age > max_age {
+        return None;
+    }
+    let text = fs::read_to_string(file).ok()?;
+    let mut lines = text.lines();
+    Some((lines.next()?.to_string(), lines.next()?.to_string()))
+}
+
+pub fn overlay(game: &str, max_age: std::time::Duration) -> Option<(String, String)> {
+    overlay_in(&state_dir(), game, max_age)
+}
+
 pub fn set_depth_arm(game: &str, on: bool) -> io::Result<()> {
     set_depth_arm_in(&state_dir(), game, on)
 }

@@ -178,6 +178,13 @@ impl Chain {
         }
     }
 
+    /// Avisa os efeitos de qual controle a pessoa está editando (os que têm `overlay_active` mostram o auxílio visual dele).
+    pub fn set_active_control(&mut self, name: Option<&str>) {
+        for effect in &mut self.effects {
+            effect.set_active_control(name);
+        }
+    }
+
     /// A imagem de uma textura compartilhada pelo nome (`unique_name` do manifesto): para diagnóstico.
     pub fn shared_image(&self, name: &str) -> Option<vk::Image> {
         self.shared.image(name)

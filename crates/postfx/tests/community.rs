@@ -121,7 +121,7 @@ fn every_compiled_bundle_either_runs_or_is_refused_explicitly() {
 /// profundidade falsa: o que o app de controle compilou para um jogo, para ver o que o driver da GPU aceita (com
 /// `LINUX_RESHADE_TEST_HARDWARE=1`). `LINUX_RESHADE_CHAIN_SIZE=1920x1080` muda o tamanho do alvo (padrão 8x4),
 /// `LINUX_RESHADE_CHAIN_SET=NOME=valor,...` escreve uniforms (inteiros ou decimais) em todas as etapas que os têm e
-/// `LINUX_RESHADE_CHAIN_FRAMES=300` roda mais quadros (efeitos que convergem no tempo, como o autofoco),
+/// `LINUX_RESHADE_CHAIN_ACTIVE=AUTOFOCUS_RANGE` faz de conta que a pessoa edita esse controle (auxílios visuais), `LINUX_RESHADE_CHAIN_FRAMES=300` roda mais quadros (efeitos que convergem no tempo, como o autofoco),
 /// `LINUX_RESHADE_CHAIN_DEPTH=0.3` muda o valor da profundidade falsa (padrão 0,5) e
 /// `LINUX_RESHADE_CHAIN_PNG=arquivo.ppm` grava o último quadro. Sem a primeira variável, não faz nada.
 #[test]
@@ -144,9 +144,25 @@ fn a_chain_of_compiled_bundles_runs() {
         let base: f32 = std::env::var("LINUX_RESHADE_CHAIN_DEPTH").ok().and_then(|v| v.parse().ok()).unwrap_or(0.5);
         // `LINUX_RESHADE_CHAIN_DEPTH_SPREAD=0.3`: a profundidade varia de `base` a `base + spread` da esquerda para a direita.
         let spread: f32 = std::env::var("LINUX_RESHADE_CHAIN_DEPTH_SPREAD").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0);
-        let gradient = move |x: u32, _y: u32| base + spread * x as f32 / w as f32;
-        let depth = depth_image_with(&gpu, w, h, base, (spread != 0.0).then_some(&gradient));
-        let input_depth = DepthInput { image: depth.image, format: DEPTH_FORMAT, layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL, extent: vk::Extent2D { width: w, height: h }, linear_filter: true };
+        // `LINUX_RESHADE_CHAIN_DEPTH_DISC=0.2`: um disco no centro (raio de 15% da largura) com essa profundidade (um personagem
+        // perto, no meio de um cenário distante).
+        let disc: Option<f32> = std::env::var("LINUX_RESHADE_CHAIN_DEPTH_DISC").ok().and_then(|v| v.parse().ok());
+        let gradient = move |x: u32, y: u32| {
+            let (dx, dy) = (x as f32 - w as f32 / 2.0, y as f32 - h as f32 / 2.0);
+            match disc {
+                Some(d) if (dx * dx + dy * dy).sqrt() < w as f32 * 0.15 => d,
+                _ => base + spread * x as f32 / w as f32,
+            }
+        };
+        // `LINUX_RESHADE_CHAIN_DEPTH_SIZE=1056x1056` e `LINUX_RESHADE_CHAIN_DEPTH_D16=1`: uma profundidade de outro tamanho e
+        // formato que o da tela (a pessoa pode escolher qualquer candidata, até um mapa de sombras).
+        let (dw, dh) = std::env::var("LINUX_RESHADE_CHAIN_DEPTH_SIZE")
+            .ok()
+            .and_then(|s| s.split_once('x').and_then(|(a, b)| Some((a.parse::<u32>().ok()?, b.parse::<u32>().ok()?))))
+            .unwrap_or((w, h));
+        let depth_format = if std::env::var_os("LINUX_RESHADE_CHAIN_DEPTH_D16").is_some() { vk::Format::D16_UNORM } else { DEPTH_FORMAT };
+        let depth = depth_image_with(&gpu, depth_format, dw, dh, base, ((spread != 0.0 || disc.is_some()) && depth_format == DEPTH_FORMAT && (dw, dh) == (w, h)).then_some(&gradient));
+        let input_depth = DepthInput { image: depth.image, format: depth_format, layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL, extent: vk::Extent2D { width: dw, height: dh }, linear_filter: true };
         let target = Target { images: &images, format: FORMAT, extent: vk::Extent2D { width: w, height: h }, rest_layout: REST, queue_family: gpu.family, init_command_buffer: None, depth: Some(input_depth) };
         let started = std::time::Instant::now();
         let built = postfx::Chain::new_lenient(&gpu.device, &gpu.memory, &steps, &target, gpu.queue);
@@ -176,6 +192,9 @@ fn a_chain_of_compiled_bundles_runs() {
                     }
                 }
                 let frame = FrameInfo { time_ms: 10_000.0, frame_time_ms: 16.6, frame_count: 600, date: [2026.0, 10.0, 9.0, 43_200.0] };
+                if let Ok(name) = std::env::var("LINUX_RESHADE_CHAIN_ACTIVE") {
+                    chain.set_active_control(Some(&name));
+                }
                 let frames: u32 = std::env::var("LINUX_RESHADE_CHAIN_FRAMES").ok().and_then(|v| v.parse().ok()).unwrap_or(4);
                 for n in 0..frames {
                     chain.update_sources(0, &FrameInfo { frame_count: 600 + n, ..frame });
