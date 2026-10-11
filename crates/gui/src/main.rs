@@ -5,6 +5,7 @@
 //! `--screenshot <arquivo.png>` grava a janela; `--hold <ms>` a mantém aberta antes de sair; `--wait <ms>` espera antes de agir.
 
 mod controls;
+mod depth_picker;
 mod games;
 mod macros;
 mod settings;

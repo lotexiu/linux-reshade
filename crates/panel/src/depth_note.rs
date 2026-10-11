@@ -34,6 +34,42 @@ pub fn note(uses_depth: bool, layer: Option<&LiveLayer>) -> Option<DepthNote> {
     }
 }
 
+/// Uma candidata de profundidade que a pessoa pode escolher.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DepthChoice {
+    /// A posição na lista da layer (de 1), o que `ipc::DepthPick::Candidate` espera.
+    pub number: u32,
+    pub label: String,
+    /// A layer escolheu esta sozinha.
+    pub automatic: bool,
+    /// Por que não serve (proporção, sem desenhos...), se não serve: ainda dá para escolher, mas avisa.
+    pub unusable: Option<String>,
+}
+
+/// As candidatas do jogo aberto, na ordem da layer.
+pub fn choices(layer: &LiveLayer) -> Vec<DepthChoice> {
+    layer
+        .status
+        .depth
+        .iter()
+        .enumerate()
+        .map(|(i, d)| {
+            let orientation = match d.reversed {
+                Some(true) => ", invertida",
+                Some(false) => ", normal",
+                None => "",
+            };
+            let sample = if d.sampled { "" } else { " (precisa reabrir o jogo)" };
+            DepthChoice {
+                number: i as u32 + 1,
+                label: format!("{}x{} {} · {} desenhos, {} passes{orientation}{sample}", d.width, d.height, depth_format_name(d.format), d.draws, d.passes),
+                automatic: d.chosen,
+                unusable: d.unusable.clone(),
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -45,6 +81,19 @@ mod tests {
 
     fn candidate(sampled: bool, layout: i32) -> DepthStatus {
         DepthStatus { width: 1920, height: 1080, format: 130, samples: 1, draws: 10, vertices: 0, passes: 3, load: "clear".into(), store: "store".into(), reversed: Some(true), last_pass: 3, chosen: true, unusable: None, sampled, layout }
+    }
+
+    #[test]
+    fn choices_follow_the_layers_list_and_mark_the_automatic_one() {
+        let mut second = candidate(false, 0);
+        second.chosen = false;
+        second.unusable = Some("proporção diferente da tela".into());
+        let list = choices(&layer(vec![candidate(true, 3), second]));
+        assert_eq!(list.len(), 2);
+        assert_eq!((list[0].number, list[0].automatic), (1, true));
+        assert_eq!((list[1].number, list[1].automatic), (2, false));
+        assert!(list[0].label.contains("1920x1080") && list[1].label.contains("reabrir"), "{list:?}");
+        assert_eq!(list[1].unusable.as_deref(), Some("proporção diferente da tela"));
     }
 
     #[test]

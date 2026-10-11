@@ -5,6 +5,7 @@
 use crate::controls::ControlsView;
 use crate::games::GamesView;
 use gtk4 as gtk;
+use crate::depth_picker::DepthPicker;
 use crate::macros::MacroEditor;
 use gtk::glib;
 use gtk::prelude::*;
@@ -32,6 +33,7 @@ pub struct Ui {
     preset_names: RefCell<Vec<String>>,
     preset_note: gtk::Label,
     depth_note: gtk::Label,
+    depth_picker: Rc<DepthPicker>,
     new_preset: gtk::MenuButton,
     macros: Rc<MacroEditor>,
     new_name: gtk::Entry,
@@ -146,12 +148,14 @@ impl Ui {
         let macros = MacroEditor::new("Definições…", "Definições de pré-processador do preset, para todos os efeitos (como no ReShade). Mudar recompila os efeitos afetados.");
         let delete_preset = gtk::Button::from_icon_name("user-trash-symbolic");
         delete_preset.set_tooltip_text(Some("Apagar este preset"));
+        let depth_picker = DepthPicker::new();
         let depth_note = gtk::Label::new(None);
         depth_note.set_halign(gtk::Align::Start);
         depth_note.set_xalign(0.0);
         depth_note.set_wrap(true);
         depth_note.add_css_class("caption");
         depth_note.set_visible(false);
+        depth_note.set_hexpand(true);
         let preset_note = gtk::Label::new(None);
         preset_note.set_halign(gtk::Align::Start);
         preset_note.set_wrap(true);
@@ -278,7 +282,10 @@ impl Ui {
         page.append(&line("Jogo", &[game.upcast_ref()]));
         page.append(&line("Preset", &[preset.upcast_ref(), new_preset.upcast_ref(), delete_preset.upcast_ref()]));
         page.append(&preset_note);
-        page.append(&depth_note);
+        let depth_line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        depth_line.append(&depth_note);
+        depth_line.append(&depth_picker.button);
+        page.append(&depth_line);
         macros.button.set_halign(gtk::Align::Start);
         page.append(&line("Macros", &[macros.button.upcast_ref()]));
         let tools = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -316,6 +323,7 @@ impl Ui {
             preset_names: RefCell::new(Vec::new()),
             preset_note,
             depth_note: depth_note.clone(),
+            depth_picker: depth_picker.clone(),
             new_preset: new_preset.clone(),
             macros: macros.clone(),
             new_name: name_entry.clone(),
@@ -420,6 +428,18 @@ impl Ui {
                     let name = row.widget_name().to_string();
                     ui.add_popover.popdown();
                     ui.act(|h| h.add_effect(&name));
+                }
+            }
+        });
+
+        // A profundidade escolhida pela pessoa: grava o pedido que a layer lê.
+        self.depth_picker.connect_changed({
+            let weak = weak.clone();
+            move |pick| {
+                if let Some(ui) = weak.upgrade()
+                    && !ui.updating.get()
+                {
+                    ui.act(|h| h.set_depth_pick(pick));
                 }
             }
         });
@@ -588,6 +608,8 @@ impl Ui {
                 }
                 None => self.depth_note.set_visible(false),
             }
+
+            self.depth_picker.set(&s.depth_choices, s.depth_pick);
 
             // Efeitos que podem ser adicionados.
             if *self.add_effects.borrow() != s.effects {

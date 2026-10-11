@@ -109,6 +109,9 @@ pub struct HomeSnapshot {
     pub layers: Vec<LiveLayer>,
     /// O que dizer sobre a profundidade do jogo escolhido (`None`: nada a dizer).
     pub depth_note: Option<crate::DepthNote>,
+    /// As candidatas de profundidade do jogo aberto e o que a pessoa pediu (vazio: nada a escolher).
+    pub depth_choices: Vec<crate::DepthChoice>,
+    pub depth_pick: ipc::DepthPick,
     /// A última mensagem para o usuário; some na próxima ação.
     pub notice: Option<String>,
 }
@@ -249,6 +252,14 @@ impl Home {
 
     fn update_depth_note(&mut self) {
         self.snapshot.depth_note = None;
+        self.snapshot.depth_choices.clear();
+        self.snapshot.depth_pick = ipc::DepthPick::Auto;
+        if let Some(id) = &self.game
+            && let Some(layer) = self.snapshot.layers.iter().find(|l| l.status.game_id() == id)
+        {
+            self.snapshot.depth_choices = crate::depth_note::choices(layer);
+            self.snapshot.depth_pick = ipc::depth_pick(&layer.id);
+        }
         let Some(id) = self.game.clone() else { return };
         let uses_depth = self.snapshot.techniques.iter().filter(|t| t.enabled).any(|t| self.snapshot.infos.get(effect_name(&t.file)).is_some_and(|i| i.has(Feature::Depth)));
         let layer = self.snapshot.layers.iter().find(|l| l.status.game_id() == id);
@@ -552,6 +563,20 @@ impl Home {
             p.set_macros(&parsed);
             Ok(None)
         });
+    }
+
+    /// Escolhe a profundidade do jogo aberto (a layer lê o pedido em poucos quadros). Vale até o jogo fechar.
+    pub fn set_depth_pick(&mut self, pick: ipc::DepthPick) {
+        let Some(id) = self.game.clone() else { return };
+        let Some(layer) = self.snapshot.layers.iter().find(|l| l.status.game_id() == id) else {
+            self.done(Some("o jogo não está aberto com a layer".into()));
+            return;
+        };
+        let layer_id = layer.id.clone();
+        match ipc::set_depth_pick(&layer_id, pick) {
+            Ok(()) => self.update_depth_note(),
+            Err(e) => self.done(Some(format!("não consegui gravar a escolha da profundidade: {e}"))),
+        }
     }
 
     /// Define as definições de pré-processador só de um efeito (as dele valem mais que as do preset).

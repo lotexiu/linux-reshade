@@ -144,6 +144,62 @@ pub fn set_depth_arm(game: &str, on: bool) -> io::Result<()> {
     set_depth_arm_in(&state_dir(), game, on)
 }
 
+/// O pedido da pessoa para a profundidade de um jogo: a layer lê o arquivo `depth-pick-<id da layer>` (ver `docs/depth.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DepthPick {
+    /// A heurística da layer.
+    #[default]
+    Auto,
+    /// A N-ésima candidata (de 1) da lista que a layer publica.
+    Candidate(u32),
+    /// A profundidade logo depois do N-ésimo passe (de 1) que a desenha: a layer faz uma cópia nesse ponto.
+    Pass(u32),
+}
+
+fn depth_pick_file(dir: &std::path::Path, layer_id: &str) -> Option<PathBuf> {
+    (!layer_id.is_empty() && !layer_id.contains(['/', '\\', '\0'])).then(|| dir.join(format!("depth-pick-{layer_id}")))
+}
+
+pub fn set_depth_pick_in(dir: &std::path::Path, layer_id: &str, pick: DepthPick) -> io::Result<()> {
+    let Some(path) = depth_pick_file(dir, layer_id) else { return Ok(()) };
+    match pick {
+        DepthPick::Auto => match fs::remove_file(&path) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        },
+        DepthPick::Candidate(n) => {
+            ensure_private_dir(dir)?;
+            fs::write(path, format!("candidate={n}\n"))
+        }
+        DepthPick::Pass(n) => {
+            ensure_private_dir(dir)?;
+            fs::write(path, format!("pass={n}\n"))
+        }
+    }
+}
+
+pub fn set_depth_pick(layer_id: &str, pick: DepthPick) -> io::Result<()> {
+    set_depth_pick_in(&state_dir(), layer_id, pick)
+}
+
+/// O que a pessoa pediu (o que o arquivo diz; `Auto` se não há arquivo).
+pub fn depth_pick_in(dir: &std::path::Path, layer_id: &str) -> DepthPick {
+    let Some(path) = depth_pick_file(dir, layer_id) else { return DepthPick::Auto };
+    let text = fs::read_to_string(path).unwrap_or_default();
+    for line in text.lines() {
+        match line.split_once('=') {
+            Some(("candidate", n)) => return n.trim().parse().map_or(DepthPick::Auto, DepthPick::Candidate),
+            Some(("pass", n)) => return n.trim().parse().map_or(DepthPick::Auto, DepthPick::Pass),
+            _ => {}
+        }
+    }
+    DepthPick::Auto
+}
+
+pub fn depth_pick(layer_id: &str) -> DepthPick {
+    depth_pick_in(&state_dir(), layer_id)
+}
+
 /// Cria o diretório do estado (se preciso) e garante que é do usuário atual e privado.
 pub(crate) fn ensure_private_dir(dir: &std::path::Path) -> io::Result<()> {
     fs::create_dir_all(dir)?;
@@ -402,6 +458,22 @@ impl ParamSource for Reader {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_depth_pick_round_trips_through_its_file() {
+        use super::*;
+        let dir = std::env::temp_dir().join(format!("lr-pick-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(depth_pick_in(&dir, "layer-1"), DepthPick::Auto);
+        set_depth_pick_in(&dir, "layer-1", DepthPick::Candidate(2)).unwrap();
+        assert_eq!(depth_pick_in(&dir, "layer-1"), DepthPick::Candidate(2));
+        set_depth_pick_in(&dir, "layer-1", DepthPick::Pass(5)).unwrap();
+        assert_eq!(depth_pick_in(&dir, "layer-1"), DepthPick::Pass(5));
+        set_depth_pick_in(&dir, "layer-1", DepthPick::Auto).unwrap();
+        assert_eq!(depth_pick_in(&dir, "layer-1"), DepthPick::Auto);
+        assert_eq!(depth_pick_in(&dir, "../x"), DepthPick::Auto);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     use super::*;
 
     fn temp_path(name: &str) -> PathBuf {

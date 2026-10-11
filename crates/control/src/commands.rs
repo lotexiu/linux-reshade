@@ -371,19 +371,18 @@ fn depth_pick(pick: DepthPick, layer: Option<String>) -> ExitCode {
         return fail("nenhum jogo com a layer ativa");
     }
     for l in targets {
-        let path = ipc::state_dir().join(format!("depth-pick-{}", l.id));
-        let result = match pick {
-            DepthPick::Auto => std::fs::remove_file(&path).or_else(|e| if e.kind() == std::io::ErrorKind::NotFound { Ok(()) } else { Err(e) }),
-            DepthPick::Candidate(n) => std::fs::write(&path, format!("candidate={n}\n")),
-            DepthPick::Pass(n) => std::fs::write(&path, format!("pass={n}\n")),
+        let wanted = match pick {
+            DepthPick::Auto => ipc::DepthPick::Auto,
+            DepthPick::Candidate(n) => ipc::DepthPick::Candidate(n),
+            DepthPick::Pass(n) => ipc::DepthPick::Pass(n),
         };
-        match result {
+        match ipc::set_depth_pick(&l.id, wanted) {
             Ok(()) => println!("{}: {}", l.status.app, match pick {
                 DepthPick::Auto => "profundidade automática".to_string(),
                 DepthPick::Candidate(n) => format!("candidata {n}"),
                 DepthPick::Pass(n) => format!("profundidade depois do passe {n}"),
             }),
-            Err(e) => return fail(format!("{}: {e}", path.display())),
+            Err(e) => return fail(format!("{}: {e}", l.id)),
         }
     }
     ExitCode::SUCCESS
