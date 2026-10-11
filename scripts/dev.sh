@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Utilitário de desenvolvimento. Idempotente; serve para trocar de máquina sem esforço.
-# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|smoke-preset|smoke-depth|smoke-depth-effect|daemon|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-golden|placement|logs> [args]
+# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|smoke-preset|smoke-depth|smoke-depth-effect|daemon|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-survey|fx-golden|placement|logs> [args]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -602,6 +602,9 @@ cmd_fx_compile() { "$ROOT/tools/fx2spv/compile.sh" "$@"; }
 # Compila efeitos de exemplo (próprios e da comunidade) e valida os módulos SPIR-V.
 cmd_fx_test() { "$ROOT/tools/fx2spv/test.sh" "$@"; }
 
+# Levantamento: compila todos os efeitos de uma pasta e os executa na GPU de software (ver tools/fx2spv/survey.sh).
+cmd_fx_survey() { "$ROOT/tools/fx2spv/survey.sh" "$@"; }
+
 # Regenera os bundles de referência (golden) usados pelos testes, a partir dos .fx de origem.
 cmd_fx_golden() {
   [ -x "$ROOT/build/fx2spv/fx2spv" ] || cmd_fx_tool
@@ -659,8 +662,9 @@ case "${1:-}" in
   game-options) shift; cmd_game_options "$@" ;;
   fx-compile) shift; cmd_fx_compile "$@" ;;
   fx-test)   shift; cmd_fx_test "$@" ;;
+  fx-survey) shift; cmd_fx_survey "$@" ;;
   fx-golden) cmd_fx_golden ;;
   placement) shift; cmd_placement "$@" ;;
   logs)      shift; cmd_logs "$@" ;;
-  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|smoke-preset|smoke-depth|smoke-depth-effect|daemon|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-golden|placement|logs>" >&2; exit 2 ;;
+  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|smoke-preset|smoke-depth|smoke-depth-effect|daemon|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-survey|fx-golden|placement|logs>" >&2; exit 2 ;;
 esac
