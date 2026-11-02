@@ -73,7 +73,7 @@ int CharAt(int line, int i, int value)
 	if (i == 4) return d0;
 	if (i == 5) return 15;
 	if (line == 0) return i == 6 ? 11 : (i == 7 ? 12 : 13);
-	return i == 6 ? 14 : 13;
+	return i == 6 ? 14 : (i == 7 ? 13 : 15);
 }
 
 float4 PS_Draw(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Target
