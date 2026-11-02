@@ -88,3 +88,9 @@ Alguns conceitos da lib TS (`signal`/`derived`, `Mask`, `Parser`/`Language`, `Pa
 são candidatos naturais a versão em Rust. **Não portar especulativamente**: mesma regra do
 CLAUDE.md daquele projeto. Só quando uma necessidade concreta daqui aparecer, e olhando antes se o
 design em Rust pede outra forma (handles por id em vez de closures, escolha de thread-safety etc.).
+
+## Opcional em tempo de execução: SPIRV-Tools (`spirv-opt`, `spirv-val`)
+
+O app de controle passa o SPIR-V de cada efeito compilado pelo `spirv-opt -O` e confere o resultado com o `spirv-val` (se existirem no
+PATH; `LINUX_RESHADE_SPIRV_OPT` aponta outro executável). Sem eles tudo funciona, só uns 5 a 10% mais lento na GPU. Desliga-se com
+`OptimizeShaders=0` em `[GENERAL]` do `config.ini` ou `LINUX_RESHADE_NO_OPT=1`.
