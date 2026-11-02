@@ -151,10 +151,14 @@ pub fn valid_define(name: &str, value: &str) -> bool {
         && !value.contains(['\n', '\r', '\0'])
 }
 
+/// Um nome de efeito: letras, números, `_`, `-`, `.` e espaço (os LUTs `Nome MLUT.fx` têm espaços), `(`, `)` e `+`. Nada de `/`, `\\` nem
+/// ponto no começo: o nome vira um diretório do cache e não pode escapar dele.
 pub fn valid_name(name: &str) -> bool {
     !name.is_empty()
         && !name.starts_with('.')
-        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+        && !name.starts_with(' ')
+        && !name.ends_with(' ')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | ' ' | '(' | ')' | '+'))
 }
 
 /// Executa o comando, repetindo um pouco se o executável estiver "ocupado" (`ETXTBSY`): acontece
@@ -691,10 +695,10 @@ mod tests {
 
     #[test]
     fn names_cannot_escape_the_cache() {
-        for ok in ["Sepia", "Film_Grain-2", "a.b"] {
+        for ok in ["Sepia", "Film_Grain-2", "a.b", "Adventurous MLUT", "Look (2)"] {
             assert!(valid_name(ok), "{ok}");
         }
-        for bad in ["", "../x", "a/b", "/etc/passwd", ".oculto", "a b", "a;b", "é"] {
+        for bad in ["", "../x", "a/b", "/etc/passwd", ".oculto", " a", "a ", "a;b", "a&b", "é", "a\\b"] {
             assert!(!valid_name(bad), "{bad}");
         }
         let f = fake("names", OK_TOOL);

@@ -306,7 +306,9 @@ int main(int argc, char **argv)
 
 	// 1. Pré-processador, com as mesmas macros que o ReShade define no Vulkan.
 	preprocessor pp;
-	pp.add_macro_definition("__RESHADE__", "60000");
+	// A versão do ReShade que os efeitos veem (os que pedem uma mínima, como os do lilium, recusam menos que isto). O código-fonte do
+	// compilador é bem mais novo; os que testam `__RESHADE__` no repositório só olham limiares abaixo de 5.9.
+	pp.add_macro_definition("__RESHADE__", "60800");
 	pp.add_macro_definition("__RESHADE_PERMUTATION__", "0");
 	pp.add_macro_definition("__RESHADE_PERFORMANCE_MODE__", "0");
 	pp.add_macro_definition("__VENDOR__", "0");
