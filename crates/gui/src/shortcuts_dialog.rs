@@ -76,8 +76,8 @@ fn captured(window: &gtk::Window, keyval: gtk::gdk::Key, keycode: u32, state: gt
     Some(trigger::normalize(&parts.join("+")))
 }
 
-pub fn open(parent: &gtk::ApplicationWindow) -> gtk::Window {
-    let window = gtk::Window::builder().title("Atalhos").transient_for(parent).modal(true).default_width(520).build();
+fn shortcuts_page(window: &gtk::Window) -> gtk::Box {
+    let window = window.clone();
     let page = gtk::Box::new(gtk::Orientation::Vertical, 12);
     page.set_margin_top(16);
     page.set_margin_bottom(16);
@@ -183,7 +183,161 @@ pub fn open(parent: &gtk::ApplicationWindow) -> gtk::Window {
         gtk::glib::Propagation::Stop
     });
     window.add_controller(controller);
-    window.set_child(Some(&page));
+    page
+}
+
+fn page_box() -> gtk::Box {
+    let page = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    page.set_margin_top(16);
+    page.set_margin_bottom(16);
+    page.set_margin_start(16);
+    page.set_margin_end(16);
+    page
+}
+
+fn hint(text: &str) -> gtk::Label {
+    let label = gtk::Label::new(Some(text));
+    label.set_wrap(true);
+    label.set_xalign(0.0);
+    label.add_css_class("dim-label");
+    label
+}
+
+/// O `config.ini` que a janela edita (existindo ou não).
+fn config_file() -> Option<std::path::PathBuf> {
+    config::Config::load().config_path()
+}
+
+fn ini_text(section: &str, key: &str, default: &str) -> String {
+    config_file().and_then(|f| ini::Ini::load(&f).ok()).and_then(|i| i.get(section, key).map(String::from)).unwrap_or_else(|| default.to_string())
+}
+
+fn ini_list(section: &str, key: &str, default: &str) -> String {
+    config_file().and_then(|f| ini::Ini::load(&f).ok()).map(|i| i.get_list(section, key)).filter(|l| !l.is_empty()).map_or_else(|| default.to_string(), |l| l.join(", "))
+}
+
+/// Uma linha de pasta: o texto editável, "Escolher…" (ou "Adicionar pasta…" numa lista) e o salvamento.
+fn folder_row(page: &gtk::Box, window: &gtk::Window, label: &str, tip: &str, current: String, list: bool, save: impl Fn(&str) -> Result<(), String> + 'static, status: &gtk::Label) {
+    let title = gtk::Label::new(Some(label));
+    title.set_xalign(0.0);
+    title.add_css_class("heading");
+    page.append(&title);
+    let line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let entry = gtk::Entry::new();
+    entry.set_hexpand(true);
+    entry.set_text(&current);
+    entry.set_tooltip_text(Some(tip));
+    let choose = gtk::Button::with_label(if list { "Adicionar pasta…" } else { "Escolher…" });
+    line.append(&entry);
+    line.append(&choose);
+    page.append(&line);
+    let save = Rc::new(save);
+    let commit = {
+        let (entry, status, save) = (entry.clone(), status.clone(), save.clone());
+        move || match save(entry.text().trim()) {
+            Ok(()) => status.set_text("Salvo. O daemon reinicia sozinho; feche e abra o painel para ele também usar o novo valor."),
+            Err(why) => status.set_text(&why),
+        }
+    };
+    {
+        let commit = commit.clone();
+        entry.connect_activate(move |_| commit());
+    }
+    let focus = gtk::EventControllerFocus::new();
+    {
+        let commit = commit.clone();
+        focus.connect_leave(move |_| commit());
+    }
+    entry.add_controller(focus);
+    let window = window.clone();
+    choose.connect_clicked(move |_| {
+        let (entry, commit, window) = (entry.clone(), commit.clone(), window.clone());
+        gtk::FileDialog::new().select_folder(Some(&window), gtk::gio::Cancellable::NONE, move |result| {
+            let Ok(file) = result else { return };
+            let Some(path) = file.path() else { return };
+            let chosen = path.to_string_lossy().into_owned();
+            if list {
+                let mut text = entry.text().trim().to_string();
+                if !text.is_empty() {
+                    text.push_str(", ");
+                }
+                text.push_str(&format!("{chosen}/**"));
+                entry.set_text(&text);
+            } else {
+                entry.set_text(&chosen);
+            }
+            commit();
+        });
+    });
+}
+
+fn folders_page(window: &gtk::Window) -> gtk::Box {
+    let page = page_box();
+    page.append(&hint("As pastas ficam no config.ini. Uma entrada com /** inclui as subpastas. O que é relativo (./) conta a partir da pasta do config.ini."));
+    let status = gtk::Label::new(None);
+    status.set_xalign(0.0);
+    status.set_wrap(true);
+    let list = |section: &'static str, key: &'static str| {
+        move |text: &str| -> Result<(), String> {
+            let path = config_file().ok_or("sem pasta de dados: rode `lrctl config init`")?;
+            let items: Vec<String> = text.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+            config::set_list(&path, section, key, &items).map_err(|e| format!("{}: {e}", path.display()))
+        }
+    };
+    let single = |section: &'static str, key: &'static str| {
+        move |text: &str| -> Result<(), String> {
+            let path = config_file().ok_or("sem pasta de dados: rode `lrctl config init`")?;
+            config::set_value(&path, section, key, text).map_err(|e| format!("{}: {e}", path.display()))
+        }
+    };
+    folder_row(&page, window, "Efeitos (.fx)", "Pastas onde os efeitos são procurados (a primeira com o nome vence).", ini_list("GENERAL", "EffectSearchPaths", "./Shaders/**"), true, list("GENERAL", "EffectSearchPaths"), &status);
+    folder_row(&page, window, "Texturas dos efeitos", "Pastas das imagens que os efeitos carregam (LUTs, ruído...).", ini_list("GENERAL", "TextureSearchPaths", "./Textures/**"), true, list("GENERAL", "TextureSearchPaths"), &status);
+    folder_row(&page, window, "Presets", "Onde ficam o preset global e a pasta de cada jogo.", ini_text("GENERAL", "PresetsPath", "./Presets"), false, single("GENERAL", "PresetsPath"), &status);
+    folder_row(&page, window, "Efeitos compilados (cache)", "Onde os efeitos compilados ficam guardados; pode ser apagada à vontade.", ini_text("GENERAL", "IntermediateCachePath", &config::Config::load().cache_dir.to_string_lossy()), false, single("GENERAL", "IntermediateCachePath"), &status);
+    page.append(&status);
+    page
+}
+
+fn captures_page(window: &gtk::Window) -> gtk::Box {
+    let page = page_box();
+    page.append(&hint("A tecla de captura fica na aba Atalhos. Cada jogo com a layer aberta grava o quadro dele."));
+    let status = gtk::Label::new(None);
+    status.set_xalign(0.0);
+    status.set_wrap(true);
+    let default = config::Config::load().screenshot_dir.to_string_lossy().into_owned();
+    folder_row(&page, window, "Pasta das capturas", "Cada jogo ganha uma subpasta; os arquivos levam a data e a hora.", ini_text("SCREENSHOT", "SavePath", &default), false, |text| {
+        let path = config_file().ok_or("sem pasta de dados: rode `lrctl config init`")?;
+        config::set_value(&path, "SCREENSHOT", "SavePath", text).map_err(|e| format!("{}: {e}", path.display()))
+    }, &status);
+    let both = gtk::CheckButton::with_label("Guardar também o quadro sem efeitos (para comparar), com o final \"_sem-efeitos\"");
+    both.set_active(config::Config::load().screenshot_before);
+    {
+        let status = status.clone();
+        both.connect_toggled(move |b| {
+            let Some(path) = config_file() else { return };
+            match config::set_value(&path, "SCREENSHOT", "SaveBeforeShot", if b.is_active() { "1" } else { "0" }) {
+                Ok(()) => status.set_text("Salvo."),
+                Err(e) => status.set_text(&format!("{}: {e}", path.display())),
+            }
+        });
+    }
+    page.append(&both);
+    page.append(&status);
+    page
+}
+
+/// A janela de configurações: atalhos, capturas de tela e pastas.
+pub fn open(parent: &gtk::ApplicationWindow) -> gtk::Window {
+    let window = gtk::Window::builder().title("Configurações").transient_for(parent).modal(true).default_width(620).default_height(560).build();
+    let notebook = gtk::Notebook::new();
+    notebook.append_page(&shortcuts_page(&window), Some(&gtk::Label::new(Some("Atalhos"))));
+    notebook.append_page(&captures_page(&window), Some(&gtk::Label::new(Some("Capturas de tela"))));
+    notebook.append_page(&folders_page(&window), Some(&gtk::Label::new(Some("Pastas"))));
+    window.set_child(Some(&notebook));
     window.present();
+    // Só para os testes de captura da tela: abrir direto numa aba.
+    if let Some(tab) = std::env::var("LINUX_RESHADE_SETTINGS_TAB").ok().and_then(|v| v.parse().ok()) {
+        notebook.set_current_page(Some(tab));
+    }
     window
 }
