@@ -160,46 +160,64 @@ pub fn run(compiler: &Compiler, state: &ipc::Writer, presets_dir: Option<std::pa
     let mut games = presets_dir.map(|dir| crate::games::Games::new(dir).with_global_macros(global_macros).with_depth_dir(ipc::state_dir()));
     let mut last_prune = std::time::Instant::now();
     let mut last_arm: Option<std::time::Instant> = None;
+    let mut known: Vec<String> = Vec::new();
+    let mut last_beat = std::time::Instant::now();
     loop {
-        let layers = ipc::live_layers().unwrap_or_default();
-        let report = tick(compiler, state, &layers, &mut failures);
-        let games_report = games.as_mut().map(|g| g.tick(compiler, state, &layers, &mut failures));
-        // Marca os jogos que precisam da profundidade (a layer lê o marcador ao abrir o jogo).
-        if let Some(g) = &games
-            && last_arm.is_none_or(|t| t.elapsed() >= ARM_EVERY)
-        {
-            last_arm = Some(std::time::Instant::now());
-            // Só compila para analisar quando nenhum jogo está esperando o vigia.
-            g.sync_depth_arm(compiler, &ipc::state_dir(), layers.is_empty());
-        }
-        if last_prune.elapsed() >= PRUNE_EVERY {
-            last_prune = std::time::Instant::now();
-            state.prune_channels();
-            let mut used = in_use(compiler, &effective(state, &layers));
-            if let Some(g) = &games {
-                used.extend(g.in_use(&layers));
+        // Um pânico em uma volta do vigia não pode matar o vigia (o painel segue vivo e as mudanças deixam de valer, sem aviso).
+        let round = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let layers = ipc::live_layers().unwrap_or_default();
+            // Quem abre e fecha: o log vira uma linha do tempo (e mostra se o vigia viu o jogo).
+            let now: Vec<String> = layers.iter().map(|l| format!("{} ({})", l.status.game_id(), l.id)).collect();
+            if now != known {
+                crate::logln!("jogos com a layer: {}", if now.is_empty() { "nenhum".to_string() } else { now.join(", ") });
+                known = now;
             }
-            let removed = compiler.prune(&used, KEEP_PER_EFFECT);
-            if removed > 0 {
-                println!("cache: {removed} bundle(s) antigo(s) removido(s)");
+            if last_beat.elapsed() >= std::time::Duration::from_secs(600) {
+                last_beat = std::time::Instant::now();
+                crate::logln!("vigia vivo ({} jogo(s) com a layer)", layers.len());
             }
-        }
-        for job in &report.compiled {
-            println!("compilado {} para {}x{}", job.name, job.width, job.height);
-        }
-        for (job, why) in &report.failed {
-            eprintln!("falhou ao compilar {} para {}x{}: {why}", job.name, job.width, job.height);
-        }
-        if let Some(r) = games_report {
-            for (game, steps) in &r.published {
-                println!("plano de {game} publicado: {steps} etapa(s)");
+            let report = tick(compiler, state, &layers, &mut failures);
+            let games_report = games.as_mut().map(|g| g.tick(compiler, state, &layers, &mut failures));
+            // Marca os jogos que precisam da profundidade (a layer lê o marcador ao abrir o jogo).
+            if let Some(g) = &games
+                && last_arm.is_none_or(|t| t.elapsed() >= ARM_EVERY)
+            {
+                last_arm = Some(std::time::Instant::now());
+                // Só compila para analisar quando nenhum jogo está esperando o vigia.
+                g.sync_depth_arm(compiler, &ipc::state_dir(), layers.is_empty());
             }
-            for job in &r.compiled {
-                println!("compilado {} para {}x{}", job.name, job.width, job.height);
+            if last_prune.elapsed() >= PRUNE_EVERY {
+                last_prune = std::time::Instant::now();
+                state.prune_channels();
+                let mut used = in_use(compiler, &effective(state, &layers));
+                if let Some(g) = &games {
+                    used.extend(g.in_use(&layers));
+                }
+                let removed = compiler.prune(&used, KEEP_PER_EFFECT);
+                if removed > 0 {
+                    crate::logln!("cache: {removed} bundle(s) antigo(s) removido(s)");
+                }
             }
-            for (who, why) in &r.warnings {
-                eprintln!("aviso ({who}): {why}");
+            for job in &report.compiled {
+                crate::logln!("compilado {} para {}x{}", job.name, job.width, job.height);
             }
+            for (job, why) in &report.failed {
+                crate::elogln!("falhou ao compilar {} para {}x{}: {why}", job.name, job.width, job.height);
+            }
+            if let Some(r) = games_report {
+                for (game, steps) in &r.published {
+                    crate::logln!("plano de {game} publicado: {steps} etapa(s)");
+                }
+                for job in &r.compiled {
+                    crate::logln!("compilado {} para {}x{}", job.name, job.width, job.height);
+                }
+                for (who, why) in &r.warnings {
+                    crate::elogln!("aviso ({who}): {why}");
+                }
+            }
+        }));
+        if round.is_err() {
+            crate::elogln!("vigia: uma volta falhou (pânico); seguindo na próxima");
         }
         std::thread::sleep(INTERVAL);
     }

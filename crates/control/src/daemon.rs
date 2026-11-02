@@ -38,14 +38,14 @@ pub fn run(state: &ipc::Writer) -> Result<(), Error> {
     let registered = registered_file(&config);
     let forgotten = forget_changed(&read_registered(&registered), &wanted);
     if forgotten > 0 {
-        println!("{forgotten} atalho(s) com tecla nova ou sem tecla esquecido(s) pelo sistema");
+        control_core::logln!("{forgotten} atalho(s) com tecla nova ou sem tecla esquecido(s) pelo sistema");
     }
     let mut backend = backend::select()?;
-    println!("backend de atalhos: {}", backend.name());
+    control_core::logln!("backend de atalhos: {}", backend.name());
 
     for bound in backend.bind(&dispatcher.global_shortcuts())? {
         // A combinação em vigor pode ser diferente da sugerida: o usuário pode tê-la trocado.
-        println!("atalho {:?}: {}", bound.id, bound.trigger_description);
+        control_core::logln!("atalho {:?}: {}", bound.id, bound.trigger_description);
     }
     // Anota o que foi registrado (sempre: um id que perde a tecla some da lista).
     let mut note = ini::Ini::new();
@@ -61,11 +61,11 @@ pub fn run(state: &ipc::Writer) -> Result<(), Error> {
         // O vigia precisa do fx2spv; sem ele o atalho continua funcionando e só a compilação automática fica de fora.
         match Compiler::from_env() {
             Ok(compiler) => {
-                println!("vigiando os jogos com a layer: compila os efeitos escolhidos por nome para cada resolução");
+                control_core::logln!("vigiando os jogos com a layer: compila os efeitos escolhidos por nome para cada resolução");
                 let config = config::Config::load();
                 scope.spawn(move || watch::run(&compiler, state, config.presets_dir, &config.global_macros));
             }
-            Err(e) => eprintln!("aviso: sem compilação automática de efeitos ({e})"),
+            Err(e) => control_core::elogln!("aviso: sem compilação automática de efeitos ({e})"),
         }
 
         // Ainda não há janela: só atalhos globais valem.
@@ -81,7 +81,7 @@ pub fn run(state: &ipc::Writer) -> Result<(), Error> {
 }
 
 fn report(action: Action, state: &ipc::Writer, presets_dir: Option<&std::path::Path>) {
-    println!("{action:?} -> {}", action.run(state, presets_dir));
+    control_core::logln!("{action:?} -> {}", action.run(state, presets_dir));
 }
 
 /// Olha o `config.ini` a cada 2 s; se as teclas mudaram, o daemon se reexecuta (os atalhos são registrados na partida).
@@ -95,11 +95,11 @@ fn spawn_config_watch(config: &config::Config) {
             continue;
         }
         if keys_now(&config::Config::load()) != start {
-            println!("teclas de atalho mudaram no config.ini: reiniciando o daemon");
+            control_core::logln!("teclas de atalho mudaram no config.ini: reiniciando o daemon");
             let Ok(exe) = std::env::current_exe() else { return };
             use std::os::unix::process::CommandExt;
             let error = std::process::Command::new(exe).args(std::env::args().skip(1)).exec();
-            eprintln!("não consegui reiniciar o daemon: {error}");
+            control_core::elogln!("não consegui reiniciar o daemon: {error}");
             return;
         }
     });

@@ -90,6 +90,8 @@ pub unsafe extern "system" fn destroy_swapchain(
 ) {
     unsafe {
         let Some(data) = DEVICES.get(dispatch_key(device.as_raw())) else { return };
+        // Uma criação descartada em segundo plano guarda views das imagens do swapchain: espera ela acabar.
+        crate::effect::wait_cleanups(std::time::Duration::from_secs(10));
         let removed = data.swapchains.lock().unwrap().remove(&swapchain.as_raw());
         if let Some(mut fx) = removed {
             // Um present anterior pode ainda estar executando o efeito: `destroy` espera as fences da cadeia.

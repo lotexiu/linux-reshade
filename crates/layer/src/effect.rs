@@ -41,6 +41,41 @@ fn active_control() -> Option<String> {
     value
 }
 
+/// Quantas limpezas em segundo plano (ver [`discard_job_in_background`]) ainda correm: o swapchain e o dispositivo esperam por elas.
+static PENDING_CLEANUPS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Espera as limpezas em segundo plano acabarem (até `timeout`). Chamada antes de destruir um swapchain ou o dispositivo: a cadeia
+/// em criação guarda views das imagens dele.
+pub fn wait_cleanups(timeout: std::time::Duration) {
+    let started = Instant::now();
+    while PENDING_CLEANUPS.load(std::sync::atomic::Ordering::Acquire) > 0 && started.elapsed() < timeout {
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+}
+
+/// Descarta uma criação em andamento sem parar o jogo: outra thread espera o fim da criação e destrói o resultado (que a GPU
+/// nunca usou).
+fn discard_job_in_background(fx: &mut Fx, device: &ash::Device) {
+    let Fx::Building(mut job) = std::mem::replace(fx, Fx::Unbuilt) else { return };
+    let Some(thread) = job.thread.take() else { return };
+    let device = device.clone();
+    PENDING_CLEANUPS.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    let spawned = std::thread::Builder::new().name("lr-cleanup".into()).spawn({
+        let device = device.clone();
+        move || {
+            if let Ok(Ok(SendBuilt(built))) = thread.join() {
+                let mut dead = Fx::Ready(built);
+                // SAFETY: a cadeia acabou de ser criada e nunca foi enviada à GPU.
+                unsafe { SwapchainFx::destroy_fx(&mut dead, &device) };
+            }
+            PENDING_CLEANUPS.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+        }
+    });
+    if spawned.is_err() {
+        PENDING_CLEANUPS.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
+}
+
 /// Quantos presents depois de a cadeia sair os semáforos dela são destruídos.
 const SEMAPHORE_RETIRE_PRESENTS: u32 = 8;
 
@@ -151,6 +186,9 @@ pub struct SwapchainFx {
     /// formato é sRGB...). O motivo vai para o app de controle.
     unusable: Option<String>,
     fx: Fx,
+    /// A cadeia anterior, que continua desenhando até a nova ficar pronta (sem isso o efeito some por alguns quadros a cada troca
+    /// de ordem ou de efeito).
+    retiring: Option<Built>,
     /// Época da escolha de efeito (ver `bundle::epoch`) que este swapchain já resolveu.
     seen_epoch: u64,
     /// Profundidade escolhida quando a cadeia falhou: se mudar, vale tentar de novo.
@@ -170,7 +208,7 @@ unsafe impl Send for SwapchainFx {}
 impl SwapchainFx {
     pub fn new(handle: u64, images: Vec<vk::Image>, format: vk::Format, extent: vk::Extent2D, unusable: Option<String>) -> Self {
         let state = unusable.clone().map_or(EffectState::Idle, EffectState::Unavailable);
-        let fx = Self { handle, images, format, extent, unusable, fx: Fx::Unbuilt, seen_epoch: u64::MAX, failed_depth: None, steps: Vec::new(), state, last_present: None };
+        let fx = Self { handle, images, format, extent, unusable, fx: Fx::Unbuilt, retiring: None, seen_epoch: u64::MAX, failed_depth: None, steps: Vec::new(), state, last_present: None };
         crate::status::update(handle, fx.status());
         fx
     }
@@ -215,9 +253,8 @@ impl SwapchainFx {
             if built.signature != new_signature {
                 log!("efeito do swapchain {:#x} descartado: o bundle mudou (a cadeia é outra)", self.handle);
                 crate::status::set_techniques(Vec::new());
-                // `destroy_fx` espera o trabalho da cadeia (as fences dela).
-                unsafe { Self::destroy_fx(&mut self.fx, &data.device) };
-                self.fx = Fx::Unbuilt;
+                // A cadeia velha segue desenhando até a nova ficar pronta.
+                self.retire(&data.device);
             } else if let Some(built) = match &mut self.fx { Fx::Ready(b) => Some(b), _ => None } {
                 // A mesma cadeia: só os uniforms do plano podem ter mudado.
                 for (runtime, &from) in built.params.iter_mut().zip(&built.origin) {
@@ -231,12 +268,16 @@ impl SwapchainFx {
             && job.signature != new_signature
         {
             log!("criação da cadeia descartada: a escolha mudou");
-            unsafe { Self::destroy_fx(&mut self.fx, &data.device) };
-            self.fx = Fx::Unbuilt;
+            // Sem esperar a thread terminar (a primeira compilação leva segundos e parava o jogo): ela se desfaz sozinha.
+            discard_job_in_background(&mut self.fx, &data.device);
         }
         // Uma falha anterior era da cadeia antiga: com outra vale tentar de novo.
         if matches!(self.fx, Fx::Failed(_)) && signature(&self.steps) != new_signature {
             self.fx = Fx::Unbuilt;
+        }
+        if steps.is_empty() {
+            // Nenhum efeito para esta resolução: nada mais a desenhar.
+            unsafe { self.drop_retiring(&data.device) };
         }
         self.steps = steps;
         let state = match &self.fx {
@@ -251,9 +292,31 @@ impl SwapchainFx {
     /// # Safety
     /// A GPU não pode estar executando trabalho deste swapchain (o chamador espera o dispositivo ficar ocioso).
     pub unsafe fn destroy(&mut self, device: &ash::Device) {
-        unsafe { Self::destroy_fx(&mut self.fx, device) };
+        unsafe {
+            self.drop_retiring(device);
+            Self::destroy_fx(&mut self.fx, device);
+        }
         self.fx = Fx::Failed("destruído".into());
         crate::status::remove(self.handle);
+    }
+
+    /// A cadeia em uso sai de cena, mas continua desenhando até a próxima ficar pronta.
+    fn retire(&mut self, device: &ash::Device) {
+        if let Fx::Ready(_) = &self.fx {
+            let old = std::mem::replace(&mut self.fx, Fx::Unbuilt);
+            // Uma cadeia já aposentada que ainda não foi trocada sai de vez (só uma espera).
+            unsafe { self.drop_retiring(device) };
+            if let Fx::Ready(built) = old {
+                self.retiring = Some(built);
+            }
+        }
+    }
+
+    unsafe fn drop_retiring(&mut self, device: &ash::Device) {
+        if let Some(built) = self.retiring.take() {
+            let mut old = Fx::Ready(built);
+            unsafe { Self::destroy_fx(&mut old, device) };
+        }
     }
 
     unsafe fn destroy_fx(fx: &mut Fx, device: &ash::Device) {
@@ -419,8 +482,7 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
             let now = data.depth.chosen().map(|d| (d.image, d.layout));
             if built.depth_key != now {
                 let old = built.depth_key;
-                SwapchainFx::destroy_fx(&mut fx.fx, &data.device);
-                fx.fx = Fx::Unbuilt;
+                fx.retire(&data.device);
                 data.depth.chain_rebuilds.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 *data.depth.last_key_change.lock().unwrap() = format!("{old:x?} -> {now:x?}");
                 log!("profundidade para os efeitos mudou: cadeia será reconstruída");
@@ -464,10 +526,11 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
             }
             return None;
         }
-        if let Fx::Building(job) = &mut fx.fx {
-            if !job.thread.as_ref().is_some_and(|t| t.is_finished()) {
-                return None; // ainda criando: o quadro passa sem o efeito
-            }
+        let build_finished = matches!(&fx.fx, Fx::Building(job) if job.thread.as_ref().is_some_and(|t| t.is_finished()));
+        if matches!(&fx.fx, Fx::Building(_)) && !build_finished && fx.retiring.is_none() {
+            return None; // ainda criando: o quadro passa sem o efeito
+        }
+        if build_finished && let Fx::Building(job) = &mut fx.fx {
             let started = job.started;
             let built_with = job.depth_key;
             let result = job.thread.take().map(|t| t.join()).unwrap_or(Err(Box::new("sem thread")));
@@ -522,9 +585,19 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
                 }
             };
         }
+        // A cadeia nova pronta (ou que falhou) substitui a aposentada.
+        if matches!(fx.fx, Fx::Ready(_) | Fx::Failed(_)) && fx.retiring.is_some() {
+            fx.drop_retiring(&data.device);
+        }
         let now = Instant::now();
         let previous = fx.last_present.replace(now);
-        let Fx::Ready(built) = &mut fx.fx else { return None };
+        let built = match &mut fx.fx {
+            Fx::Ready(built) => built,
+            _ => match fx.retiring.as_mut() {
+                Some(built) => built,
+                None => return None,
+            },
+        };
 
         // A execução anterior desta imagem precisa ter terminado antes de reenviar o mesmo buffer.
         let fence = built.fences[index];
@@ -589,6 +662,9 @@ fn steps_need_depth(steps: &[ResolvedStep]) -> bool {
 pub fn on_depth_image_destroyed(data: &DeviceData, image: u64) {
     let mut swapchains = data.swapchains.lock().unwrap();
     for fx in swapchains.values_mut() {
+        if fx.retiring.as_ref().is_some_and(|b| b.depth_key.is_some_and(|k| k.0 == image)) {
+            unsafe { fx.drop_retiring(&data.device) };
+        }
         if matches!(&fx.fx, Fx::Ready(b) if b.depth_key.is_some_and(|k| k.0 == image)) || matches!(&fx.fx, Fx::Building(j) if j.depth_image == Some(image)) {
             unsafe { SwapchainFx::destroy_fx(&mut fx.fx, &data.device) };
             fx.fx = Fx::Unbuilt;

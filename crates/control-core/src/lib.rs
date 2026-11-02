@@ -25,3 +25,15 @@ pub mod patches;
 pub mod presets;
 pub mod select;
 pub mod watch;
+
+/// `println!` do daemon com a hora local na frente (o log vira uma linha do tempo que se casa com a do jogo e a do sistema).
+#[macro_export]
+macro_rules! logln {
+    ($($arg:tt)*) => { println!("[{}] {}", ipc::clock(), format_args!($($arg)*)) };
+}
+
+/// O mesmo para `eprintln!`.
+#[macro_export]
+macro_rules! elogln {
+    ($($arg:tt)*) => { eprintln!("[{}] {}", ipc::clock(), format_args!($($arg)*)) };
+}

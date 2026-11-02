@@ -88,6 +88,7 @@ pub unsafe extern "system" fn destroy_device(device: vk::Device, p_allocator: *c
         if let Some(data) = DEVICES.remove(dispatch_key(device.as_raw())) {
             log!("vkDestroyDevice (presents={})", data.presents.load(Ordering::Relaxed));
             // Os efeitos dos swapchains que o jogo não destruiu ainda usam o dispositivo.
+            crate::effect::wait_cleanups(std::time::Duration::from_secs(10));
             let _ = data.device.device_wait_idle();
             for (_, mut fx) in data.swapchains.lock().unwrap().drain() {
                 fx.destroy(&data.device);

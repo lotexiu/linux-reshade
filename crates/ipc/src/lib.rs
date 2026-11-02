@@ -10,8 +10,10 @@
 //! arquivo que também seja do próprio usuário.
 
 mod blob;
+mod clock;
 mod channel;
 pub mod plan;
+pub use clock::clock;
 mod status;
 
 pub use blob::{MAX_PARAM_BYTES, MAX_SELECTION_BYTES, PublishError};
