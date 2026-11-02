@@ -320,6 +320,17 @@ impl Compiler {
         doomed.iter().filter(|p| std::fs::remove_dir_all(p).is_ok()).count()
     }
 
+    /// Apaga os compilados de um efeito (todas as resoluções e variantes de macros): o vigia os refaz na próxima olhada. Devolve
+    /// quantos apagou.
+    pub fn invalidate(&self, name: &str) -> usize {
+        let Ok(entries) = std::fs::read_dir(&self.cache) else { return 0 };
+        entries
+            .flatten()
+            .filter(|e| e.file_name().to_str().and_then(parse_bundle_name).is_some_and(|(n, _, _)| n == name))
+            .filter(|e| std::fs::remove_dir_all(e.path()).is_ok())
+            .count()
+    }
+
     pub fn bundle_dir(&self, name: &str, width: u32, height: u32) -> PathBuf {
         self.cache.join(format!("{name}-{width}x{height}"))
     }

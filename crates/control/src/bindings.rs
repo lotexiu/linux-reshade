@@ -6,25 +6,28 @@
 //! Atenção ao digitar: `CTRL+SHIFT+F10` (o nosso) e `CTRL+ALT+F10` (tty10) ficam lado a lado.
 
 use control_core::action::Action;
+use control_core::tech_keys::TechKey;
 use shortcuts::{trigger, Binding, Dispatcher, Error, Scope, Shortcut};
 
 /// O que cada tecla do `config.ini` faz: `(nome no config.ini, id do atalho, ação, descrição)`.
 /// Os ids são guardados pelo sistema: não renomear depois de publicados.
-const TABLE: [(&str, &str, Action, &str); 4] = [
+const TABLE: [(&str, &str, Action, &str); 5] = [
     ("KeyEffects", "toggle-effects", Action::ToggleEffects, "linux-reshade: ligar/desligar efeitos"),
     ("KeyNextPreset", "next-preset", Action::NextPreset, "linux-reshade: próximo preset do jogo"),
     ("KeyPreviousPreset", "previous-preset", Action::PreviousPreset, "linux-reshade: preset anterior do jogo"),
     ("KeyScreenshot", "screenshot", Action::Screenshot, "linux-reshade: capturar a tela do jogo"),
+    ("KeyReload", "reload-effects", Action::ReloadEffects, "linux-reshade: recarregar os efeitos"),
 ];
 
-/// Todos os ids que o programa pode registrar: os que ficam sem tecla são esquecidos pelo sistema.
+/// Todos os ids fixos que o programa pode registrar: os que ficam sem tecla são esquecidos pelo sistema.
 pub fn all_ids() -> Vec<&'static str> {
     TABLE.iter().map(|(_, id, _, _)| *id).collect()
 }
 
-/// Os atalhos pedidos: `(id, tecla no formato XDG)` de cada um que tem tecla. Uma tecla que não se entende é avisada e ignorada.
-pub fn wanted(config: &config::Config) -> Vec<(&'static str, String)> {
-    TABLE
+/// Os atalhos pedidos: `(id, tecla no formato XDG)` de cada um que tem tecla (os do `config.ini` e os de técnica dos presets). Uma
+/// tecla que não se entende é avisada e ignorada.
+pub fn wanted(config: &config::Config, techs: &[TechKey]) -> Vec<(String, String)> {
+    let mut wanted: Vec<(String, String)> = TABLE
         .iter()
         .filter_map(|(key, id, _, _)| {
             let text = config.key(key);
@@ -32,23 +35,32 @@ pub fn wanted(config: &config::Config) -> Vec<(&'static str, String)> {
                 return None;
             }
             match trigger::normalize(&text) {
-                Ok(t) => Some((*id, t)),
+                Ok(t) => Some(((*id).to_string(), t)),
                 Err(why) => {
-                    eprintln!("aviso: {key}={text:?} ignorado ({why})");
+                    control_core::elogln!("aviso: {key}={text:?} ignorado ({why})");
                     None
                 }
             }
         })
-        .collect()
+        .collect();
+    wanted.extend(techs.iter().map(|k| (k.id.clone(), k.trigger.clone())));
+    wanted
 }
 
-pub fn dispatcher(wanted: &[(&'static str, String)]) -> Result<Dispatcher<Action>, Error> {
+/// O despachante dos atalhos pedidos. O atalho de técnica `techs[i]` vira `Action::Technique(i)`.
+pub fn dispatcher(wanted: &[(String, String)], techs: &[TechKey]) -> Result<Dispatcher<Action>, Error> {
     Dispatcher::new(
         wanted
             .iter()
             .filter_map(|(id, trigger)| {
-                let (_, _, action, description) = TABLE.iter().find(|(_, table_id, _, _)| table_id == id)?;
-                Some(Binding::on_press(Shortcut { id: (*id).into(), description: (*description).into(), preferred_trigger: Some(trigger.clone()) }, Scope::Global, *action))
+                let (action, description) = match TABLE.iter().find(|(_, table_id, _, _)| table_id == id) {
+                    Some((_, _, action, description)) => (*action, (*description).to_string()),
+                    None => {
+                        let index = techs.iter().position(|k| &k.id == id)?;
+                        (Action::Technique(index), format!("linux-reshade: ligar/desligar {} ({})", techs[index].technique.name, techs[index].game.as_deref().unwrap_or("todos os jogos")))
+                    }
+                };
+                Some(Binding::on_press(Shortcut { id: id.clone(), description, preferred_trigger: Some(trigger.clone()) }, Scope::Global, action))
             })
             .collect(),
     )
@@ -66,21 +78,31 @@ mod tests {
 
     #[test]
     fn by_default_only_the_toggle_has_a_key() {
-        let w = wanted(&config_with(&[]));
-        assert_eq!(w, [("toggle-effects", "CTRL+SHIFT+F10".to_string())]);
-        let ids: Vec<_> = dispatcher(&w).unwrap().global_shortcuts().into_iter().map(|s| s.id).collect();
+        let w = wanted(&config_with(&[]), &[]);
+        assert_eq!(w, [("toggle-effects".to_string(), "CTRL+SHIFT+F10".to_string())]);
+        let ids: Vec<_> = dispatcher(&w, &[]).unwrap().global_shortcuts().into_iter().map(|s| s.id).collect();
         assert_eq!(ids, ["toggle-effects"]);
     }
 
     #[test]
     fn the_config_changes_keys_and_adds_actions_and_the_oem_key_works() {
-        let w = wanted(&config_with(&[("KeyEffects", "OEM_7"), ("KeyNextPreset", "Ctrl+Next"), ("KeyPreviousPreset", "")]));
-        assert_eq!(w, [("toggle-effects", "apostrophe".to_string()), ("next-preset", "CTRL+Next".to_string())]);
+        let w = wanted(&config_with(&[("KeyEffects", "OEM_7"), ("KeyNextPreset", "Ctrl+Next"), ("KeyPreviousPreset", "")]), &[]);
+        assert_eq!(w, [("toggle-effects".to_string(), "apostrophe".to_string()), ("next-preset".to_string(), "CTRL+Next".to_string())]);
     }
 
     #[test]
     fn an_empty_key_removes_the_shortcut_and_a_bad_one_is_skipped() {
-        assert!(wanted(&config_with(&[("KeyEffects", "")])).is_empty());
-        assert!(wanted(&config_with(&[("KeyEffects", "Ctrl+Banana")])).is_empty());
+        assert!(wanted(&config_with(&[("KeyEffects", "")]), &[]).is_empty());
+        assert!(wanted(&config_with(&[("KeyEffects", "Ctrl+Banana")]), &[]).is_empty());
+    }
+
+    #[test]
+    fn technique_keys_become_numbered_actions() {
+        let techs = vec![TechKey { id: "tech.global.Sepia".into(), game: None, technique: preset::TechId::new("Sepia", "Sepia.fx"), trigger: "F9".into() }];
+        let w = wanted(&config_with(&[("KeyEffects", "")]), &techs);
+        assert_eq!(w, [("tech.global.Sepia".to_string(), "F9".to_string())]);
+        let d = dispatcher(&w, &techs).unwrap();
+        let event = shortcuts::Event { id: "tech.global.Sepia".into(), phase: shortcuts::Phase::Pressed, timestamp: 0 };
+        assert_eq!(d.resolve(&event, &shortcuts::Context { window_visible: false }), Some(&Action::Technique(0)));
     }
 }

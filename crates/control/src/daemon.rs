@@ -17,14 +17,16 @@ fn read_registered(file: &std::path::Path) -> Vec<(String, String)> {
 
 /// O sistema só usa a tecla sugerida na primeira vez que vê um atalho: o que mudou de tecla (ou perdeu a tecla) é esquecido
 /// antes de registrar. Devolve quantos o sistema esqueceu.
-fn forget_changed(previous: &[(String, String)], wanted: &[(&'static str, String)]) -> usize {
+fn forget_changed(previous: &[(String, String)], wanted: &[(String, String)]) -> usize {
     // Sem anotação de antes (versões que ainda não anotavam), vale a tecla de fábrica: a do ligar/desligar já estava registrada.
     let before = |id: &str| previous.iter().find(|(p, _)| p == id).map(|(_, t)| t.clone()).or_else(|| (id == "toggle-effects").then(|| config::default_key("KeyEffects").to_string()));
-    let mut stale: Vec<String> = wanted.iter().filter(|(id, trigger)| before(id).is_some_and(|b| &b != trigger)).map(|(id, _)| (*id).to_string()).collect();
-    // O que não tem tecla agora (tivesse ou não antes): esquecê-lo é inofensivo se o sistema nem o conhecia.
-    for id in bindings::all_ids() {
-        if !wanted.iter().any(|(w, _)| *w == id) && !stale.iter().any(|s| s == id) {
-            stale.push(id.to_string());
+    let mut stale: Vec<String> = wanted.iter().filter(|(id, trigger)| before(id).is_some_and(|b| &b != trigger)).map(|(id, _)| id.clone()).collect();
+    // O que não tem tecla agora (tivesse ou não antes): esquecê-lo é inofensivo se o sistema nem o conhecia. Os atalhos de técnica
+    // que sumiram dos presets só aparecem na anotação de antes.
+    let known = bindings::all_ids().into_iter().map(String::from).chain(previous.iter().map(|(id, _)| id.clone()));
+    for id in known {
+        if !wanted.iter().any(|(w, _)| *w == id) && !stale.contains(&id) {
+            stale.push(id);
         }
     }
     let ids: Vec<&str> = stale.iter().map(String::as_str).collect();
@@ -33,8 +35,9 @@ fn forget_changed(previous: &[(String, String)], wanted: &[(&'static str, String
 
 pub fn run(state: &ipc::Writer) -> Result<(), Error> {
     let config = config::Config::load();
-    let wanted = bindings::wanted(&config);
-    let dispatcher = bindings::dispatcher(&wanted)?;
+    let techs = config.presets_dir.as_deref().map(control_core::tech_keys::scan).unwrap_or_default();
+    let wanted = bindings::wanted(&config, &techs);
+    let dispatcher = bindings::dispatcher(&wanted, &techs)?;
     let registered = registered_file(&config);
     let forgotten = forget_changed(&read_registered(&registered), &wanted);
     if forgotten > 0 {
@@ -55,7 +58,7 @@ pub fn run(state: &ipc::Writer) -> Result<(), Error> {
     let _ = std::fs::create_dir_all(registered.parent().unwrap_or(std::path::Path::new(".")));
     let _ = note.save(&registered);
     // A troca de tecla no painel vale na hora: o daemon reinicia a si mesmo ao ver o `config.ini` mudar.
-    spawn_config_watch(&config);
+    spawn_config_watch(&config, &techs);
 
     std::thread::scope(|scope| {
         // O vigia precisa do fx2spv; sem ele o atalho continua funcionando e só a compilação automática fica de fora.
@@ -72,21 +75,59 @@ pub fn run(state: &ipc::Writer) -> Result<(), Error> {
         let ctx = Context { window_visible: false };
         let presets_dir = config.presets_dir.clone();
         let screenshot_before = config.screenshot_before;
+        let reloader = Compiler::from_env().ok();
         loop {
             let event = backend.next_event()?;
             if let Some(action) = dispatcher.resolve(&event, &ctx) {
-                report(*action, state, presets_dir.as_deref(), screenshot_before);
+                report(*action, state, presets_dir.as_deref(), screenshot_before, &techs, reloader.as_ref());
             }
         }
     })
 }
 
-fn report(action: Action, state: &ipc::Writer, presets_dir: Option<&std::path::Path>, screenshot_before: bool) {
-    control_core::logln!("{action:?} -> {}", action.run(state, presets_dir, screenshot_before));
+fn report(action: Action, state: &ipc::Writer, presets_dir: Option<&std::path::Path>, screenshot_before: bool, techs: &[control_core::tech_keys::TechKey], compiler: Option<&Compiler>) {
+    let result = match action {
+        Action::Technique(i) => match (techs.get(i), presets_dir) {
+            (Some(key), Some(dir)) => match control_core::tech_keys::toggle(dir, key) {
+                Ok(on) => format!("{} {}", key.technique.name, if on { "ligada" } else { "desligada" }),
+                Err(why) => why,
+            },
+            _ => "técnica desconhecida".into(),
+        },
+        Action::ReloadEffects => reload_effects(compiler, presets_dir),
+        other => other.run(state, presets_dir, screenshot_before),
+    };
+    control_core::logln!("{action:?} -> {result}");
+}
+
+/// Apaga os compilados dos efeitos dos presets dos jogos abertos (e do global): o vigia os compila de novo (pega o `.fx` editado).
+fn reload_effects(compiler: Option<&Compiler>, presets_dir: Option<&std::path::Path>) -> String {
+    let (Some(compiler), Some(dir)) = (compiler, presets_dir) else { return "sem compilador ou pasta de presets".into() };
+    let mut names: Vec<String> = Vec::new();
+    let mut presets: Vec<std::path::PathBuf> = vec![dir.join("preset.ini")];
+    for layer in ipc::live_layers().unwrap_or_default() {
+        if let Some(found) = preset::game::find(dir, layer.status.game_id()) {
+            presets.push(found.path);
+        }
+    }
+    for path in presets {
+        if let Ok(preset) = preset::Preset::load(&path) {
+            for id in preset.techniques() {
+                if let Some(file) = id.file {
+                    let name = file.trim_end_matches(".fx").to_string();
+                    if !names.contains(&name) {
+                        names.push(name);
+                    }
+                }
+            }
+        }
+    }
+    let removed: usize = names.iter().map(|n| compiler.invalidate(n)).sum();
+    format!("{removed} compilado(s) de {} efeito(s) apagado(s); o vigia refaz", names.len())
 }
 
 /// Olha o `config.ini` a cada 2 s; se as teclas mudaram, o daemon se reexecuta (os atalhos são registrados na partida).
-fn spawn_config_watch(config: &config::Config) {
+fn spawn_config_watch(config: &config::Config, techs: &[control_core::tech_keys::TechKey]) {
     let Some(path) = config.config_path() else { return };
     // Reinicia por qualquer ajuste que o daemon lê só na partida: teclas, pastas e capturas.
     let keys_now = |c: &config::Config| {
@@ -94,14 +135,15 @@ fn spawn_config_watch(config: &config::Config) {
         v.push(format!("{:?}|{:?}|{:?}|{:?}|{}", c.effect_paths, c.texture_paths, c.presets_dir, c.screenshot_dir, c.screenshot_before));
         v
     };
-    let start = keys_now(config);
+    // Os atalhos de técnica moram nos presets: se mudam, o daemon também se reinicia.
+    let tech_signature = |dir: &Option<std::path::PathBuf>| dir.as_deref().map(|d| control_core::tech_keys::scan(d).into_iter().map(|k| (k.id, k.trigger)).collect::<Vec<_>>()).unwrap_or_default();
+    let (start, start_techs, presets_dir) = (keys_now(config), tech_signature(&config.presets_dir), config.presets_dir.clone());
+    let _ = techs;
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_secs(2));
-        if std::fs::metadata(&path).is_err() {
-            continue;
-        }
-        if keys_now(&config::Config::load()) != start {
-            control_core::logln!("teclas de atalho mudaram no config.ini: reiniciando o daemon");
+        let config_changed = std::fs::metadata(&path).is_ok() && keys_now(&config::Config::load()) != start;
+        if config_changed || tech_signature(&presets_dir) != start_techs {
+            control_core::logln!("teclas de atalho mudaram (config.ini ou presets): reiniciando o daemon");
             let Ok(exe) = std::env::current_exe() else { return };
             use std::os::unix::process::CommandExt;
             let error = std::process::Command::new(exe).args(std::env::args().skip(1)).exec();

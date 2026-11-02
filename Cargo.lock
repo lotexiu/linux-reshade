@@ -250,6 +250,7 @@ dependencies = [
  "ini",
  "ipc",
  "preset",
+ "shortcuts",
 ]
 
 [[package]]
@@ -903,6 +904,7 @@ dependencies = [
  "fx-bundle",
  "ipc",
  "preset",
+ "shortcuts",
 ]
 
 [[package]]

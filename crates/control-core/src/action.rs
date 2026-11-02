@@ -13,6 +13,10 @@ pub enum Action {
     PreviousPreset,
     /// Pede uma captura de tela a cada jogo com a layer aberta.
     Screenshot,
+    /// Liga/desliga uma técnica pelo atalho dela (o número é a posição na lista que o daemon montou; quem executa é o daemon).
+    Technique(usize),
+    /// Recompila os efeitos dos jogos abertos (apaga os compilados deles; o vigia refaz).
+    ReloadEffects,
 }
 
 impl Action {
@@ -25,7 +29,7 @@ impl Action {
             Action::EffectsOn => state.set_effects_enabled(true),
             Action::EffectsOff => state.set_effects_enabled(false),
             // Sem jogos para olhar (a CLI): nada a mudar.
-            Action::NextPreset | Action::PreviousPreset | Action::Screenshot => {}
+            Action::NextPreset | Action::PreviousPreset | Action::Screenshot | Action::Technique(_) | Action::ReloadEffects => {}
         }
         Applied { effects_enabled: state.effects_enabled() }
     }
@@ -35,6 +39,9 @@ impl Action {
     /// O que a ação faz no daemon: as de efeitos mexem no estado compartilhado; as de preset trocam o preset de cada jogo com a
     /// layer aberta. Devolve o texto para o log.
     pub fn run(self, state: &ipc::Writer, presets_dir: Option<&std::path::Path>, screenshot_before: bool) -> String {
+        if matches!(self, Action::Technique(_) | Action::ReloadEffects) {
+            return "ação tratada pelo daemon".into();
+        }
         if self == Action::Screenshot {
             return match ipc::shot::request_screenshot(screenshot_before) {
                 Ok(n) => format!("captura de tela pedida (#{n})"),

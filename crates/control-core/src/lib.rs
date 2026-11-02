@@ -25,6 +25,7 @@ pub mod patches;
 pub mod presets;
 pub mod select;
 pub mod shots;
+pub mod tech_keys;
 pub mod watch;
 
 /// `println!` do daemon com a hora local na frente (o log vira uma linha do tempo que se casa com a do jogo e a do sistema).

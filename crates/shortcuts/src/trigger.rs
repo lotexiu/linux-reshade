@@ -130,6 +130,79 @@ pub fn display(normalized: &str) -> String {
         .join("+")
 }
 
+/// A tecla do Windows (o código `VK_*` que o ReShade guarda nos presets) como nome de keysym do xkb. `None` se não se conhece.
+fn vk_key_name(code: u32) -> Option<String> {
+    Some(match code {
+        0x41..=0x5A => char::from_u32(code + 0x20)?.to_string(),
+        0x30..=0x39 => char::from_u32(code)?.to_string(),
+        0x70..=0x87 => format!("F{}", code - 0x6F),
+        0x08 => "BackSpace".into(),
+        0x09 => "Tab".into(),
+        0x0D => "Return".into(),
+        0x1B => "Escape".into(),
+        0x20 => "space".into(),
+        0x21 => "Prior".into(),
+        0x22 => "Next".into(),
+        0x23 => "End".into(),
+        0x24 => "Home".into(),
+        0x25 => "Left".into(),
+        0x26 => "Up".into(),
+        0x27 => "Right".into(),
+        0x28 => "Down".into(),
+        0x2C => "Print".into(),
+        0x2D => "Insert".into(),
+        0x2E => "Delete".into(),
+        0x13 => "Pause".into(),
+        0x91 => "Scroll_Lock".into(),
+        0xBA => "semicolon".into(),
+        0xBB => "equal".into(),
+        0xBC => "comma".into(),
+        0xBD => "minus".into(),
+        0xBE => "period".into(),
+        0xBF => "slash".into(),
+        0xC0 => "grave".into(),
+        0xDB => "bracketleft".into(),
+        0xDC => "backslash".into(),
+        0xDD => "bracketright".into(),
+        0xDE => "apostrophe".into(),
+        _ => return None,
+    })
+}
+
+/// O atalho de um preset do ReShade (`código VK, ctrl, shift, alt`) no formato XDG.
+pub fn from_vk(code: u32, ctrl: bool, shift: bool, alt: bool) -> Option<String> {
+    let key = vk_key_name(code)?;
+    let mut parts: Vec<String> = Vec::new();
+    if ctrl {
+        parts.push("CTRL".into());
+    }
+    if alt {
+        parts.push("ALT".into());
+    }
+    if shift {
+        parts.push("SHIFT".into());
+    }
+    parts.push(key);
+    Some(parts.join("+"))
+}
+
+/// O contrário: `(código VK, ctrl, shift, alt)` de um atalho já normalizado; `None` se tem Super ou uma tecla sem código VK.
+pub fn to_vk(normalized: &str) -> Option<(u32, bool, bool, bool)> {
+    let mut parts: Vec<&str> = normalized.split('+').collect();
+    let key = parts.pop()?;
+    let code = (0x01..=0xFF).find(|c| vk_key_name(*c).is_some_and(|n| n == key))?;
+    let (mut ctrl, mut shift, mut alt) = (false, false, false);
+    for m in parts {
+        match m {
+            "CTRL" => ctrl = true,
+            "SHIFT" => shift = true,
+            "ALT" => alt = true,
+            _ => return None,
+        }
+    }
+    Some((code, ctrl, shift, alt))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,6 +227,21 @@ mod tests {
         assert!(normalize("Ctrl+").is_err() || normalize("Ctrl+").is_ok_and(|t| t == "CTRL+plus"));
         assert!(normalize("Hyper+F1").unwrap_err().contains("modificador"));
         assert!(normalize("Ctrl+Banana").unwrap_err().contains("tecla"));
+    }
+
+    #[test]
+    fn reshade_vk_codes_roundtrip_with_xdg_triggers() {
+        assert_eq!(from_vk(122, true, false, false).as_deref(), Some("CTRL+F11"));
+        assert_eq!(from_vk(0xDE, false, false, false).as_deref(), Some("apostrophe"), "a tecla OEM 7 do ReShade");
+        assert_eq!(from_vk(0x46, true, true, true).as_deref(), Some("CTRL+ALT+SHIFT+f"));
+        assert_eq!(from_vk(0, false, false, false), None);
+        assert_eq!(to_vk("CTRL+F11"), Some((122, true, false, false)));
+        assert_eq!(to_vk("apostrophe"), Some((0xDE, false, false, false)));
+        assert_eq!(to_vk("LOGO+z"), None, "o ReShade não tem a tecla Super");
+        for text in ["F9", "CTRL+SHIFT+7", "ALT+grave", "CTRL+Next"] {
+            let (c, ctrl, shift, alt) = to_vk(&normalize(text).unwrap()).unwrap();
+            assert_eq!(from_vk(c, ctrl, shift, alt).unwrap(), normalize(text).unwrap());
+        }
     }
 
     #[test]

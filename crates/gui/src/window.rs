@@ -908,6 +908,33 @@ impl Ui {
                 }
                 panel.append(&list);
             }
+            // O atalho que liga e desliga cada técnica (vai no `Key<técnica>` do preset, como no ReShade).
+            for t in &g.techniques {
+                let line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+                let caption = gtk::Label::new(Some(&if multi { format!("Atalho de {}", t.label) } else { "Atalho para ligar/desligar".to_string() }));
+                caption.set_xalign(0.0);
+                caption.set_hexpand(true);
+                let button = gtk::Button::with_label(&if t.key.is_empty() { "Sem atalho".to_string() } else { shortcuts::trigger::display(&t.key) });
+                button.set_tooltip_text(Some("Tecla global que liga e desliga este efeito (o daemon a registra; vale com o jogo em foco)"));
+                button.connect_clicked({
+                    let (weak, id, title) = (weak.clone(), t.id.clone(), t.label.clone());
+                    move |button| {
+                        let Some(ui) = weak.upgrade() else { return };
+                        let window = button.root().and_downcast::<gtk::Window>();
+                        let Some(window) = window else { return };
+                        let (weak, id) = (weak.clone(), id.clone());
+                        crate::shortcuts_dialog::capture_key(&window, &format!("Atalho de {title}"), move |text| {
+                            if let Some(ui) = weak.upgrade() {
+                                ui.act(|h| h.set_technique_key(&id, &text));
+                            }
+                        });
+                        drop(ui);
+                    }
+                });
+                line.append(&caption);
+                line.append(&button);
+                panel.append(&line);
+            }
             // Definições de pré-processador só deste efeito (mudar recompila o efeito).
             let macros = MacroEditor::new("Definições do efeito…", "Definições de pré-processador só deste efeito; valem mais que as do preset. Mudar recompila o efeito.");
             macros.set_text(&g.macros);

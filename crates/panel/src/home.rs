@@ -55,6 +55,8 @@ pub struct TechniqueView {
     pub runtime: Option<TechniqueState>,
     /// Por que não dá para mostrar os parâmetros ou rodar (efeito não achado, ainda não compilado...).
     pub problem: Option<String>,
+    /// O atalho que liga e desliga a técnica (formato XDG, `CTRL+F11`); vazio: sem atalho. Vem do `Key<técnica>` do preset.
+    pub key: String,
 }
 
 /// Um efeito (um arquivo `.fx`) com as técnicas dele: é a unidade que a pessoa vê, move e remove. As técnicas de um
@@ -365,7 +367,8 @@ impl Home {
             } else {
                 None
             };
-            self.snapshot.techniques.push(TechniqueView { id: row.id, label, file, enabled: row.enabled, controls, runtime, problem });
+            let key = preset.technique_key(&row.id).and_then(|k| shortcuts::trigger::from_vk(k.code, k.ctrl, k.shift, k.alt)).unwrap_or_default();
+            self.snapshot.techniques.push(TechniqueView { id: row.id, label, file, enabled: row.enabled, controls, runtime, problem, key });
         }
         // Agrupa por efeito: os parâmetros vêm da primeira técnica de cada arquivo.
         for t in &self.snapshot.techniques {
@@ -667,6 +670,27 @@ impl Home {
             for id in &ids {
                 p.set_enabled(id, true);
             }
+            Ok(None)
+        });
+    }
+
+    /// Dá à técnica o atalho (formato XDG, `CTRL+F11`) que a liga e desliga, no `Key<técnica>` do preset (o formato do ReShade); vazio
+    /// tira o atalho. O daemon se reinicia sozinho ao ver a mudança.
+    pub fn set_technique_key(&mut self, id: &TechId, trigger: &str) {
+        let combo = if trigger.trim().is_empty() {
+            None
+        } else {
+            match shortcuts::trigger::normalize(trigger).ok().and_then(|t| shortcuts::trigger::to_vk(&t)) {
+                Some((code, ctrl, shift, alt)) => Some(preset::KeyCombo { code, ctrl, shift, alt }),
+                None => {
+                    self.done(Some(format!("{trigger}: o preset (formato do ReShade) não guarda essa tecla; evite Super e teclas especiais")));
+                    return;
+                }
+            }
+        };
+        let id = id.clone();
+        self.edit(move |p, _| {
+            p.set_technique_key(&id, combo);
             Ok(None)
         });
     }

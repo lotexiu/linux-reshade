@@ -44,7 +44,7 @@ fn save(key: &str, value: &str) -> Result<(), String> {
 }
 
 /// A combinação digitada, no texto da biblioteca de atalhos (`CTRL+SHIFT+F10`). `None` para um modificador sozinho.
-fn captured(window: &gtk::Window, keyval: gtk::gdk::Key, keycode: u32, state: gtk::gdk::ModifierType) -> Option<Result<String, String>> {
+pub(crate) fn captured(window: &gtk::Window, keyval: gtk::gdk::Key, keycode: u32, state: gtk::gdk::ModifierType) -> Option<Result<String, String>> {
     use gtk::gdk::{Key, ModifierType};
     let modifier_key = matches!(
         keyval,
@@ -326,13 +326,159 @@ fn captures_page(window: &gtk::Window) -> gtk::Box {
     page
 }
 
+/// Os últimos `max` bytes de um arquivo de texto, a partir de uma linha inteira.
+fn tail_of(path: &std::path::Path, max: u64) -> String {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut file) = std::fs::File::open(path) else { return format!("(não consegui abrir {})", path.display()) };
+    let len = file.metadata().map_or(0, |m| m.len());
+    let start = len.saturating_sub(max);
+    let _ = file.seek(SeekFrom::Start(start));
+    let mut bytes = Vec::new();
+    let _ = file.read_to_end(&mut bytes);
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    if start > 0 { text.split_once('\n').map_or(text.clone(), |(_, rest)| rest.to_string()) } else { text }
+}
+
+/// Os arquivos de log que existem, com um nome para mostrar.
+fn log_files() -> Vec<(String, std::path::PathBuf)> {
+    let state = std::env::var_os("XDG_STATE_HOME").map(std::path::PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/state"))).map(|d| d.join(config::LOCATION_DIR));
+    let mut files = Vec::new();
+    if let Some(dir) = state {
+        files.push(("Daemon".to_string(), dir.join("daemon.log")));
+        files.push(("Layer (jogos nativos, vkcube)".to_string(), dir.join("layer.log")));
+    }
+    files.push(("Layer (Flatpak, Sober)".to_string(), std::path::PathBuf::from("/tmp/linux-reshade-flatpak.log")));
+    files.into_iter().filter(|(_, p)| p.exists()).collect()
+}
+
+fn log_page() -> gtk::Box {
+    let page = page_box();
+    let files = log_files();
+    if files.is_empty() {
+        page.append(&hint("Nenhum log encontrado: o daemon grava em ~/.local/state/linux-reshade/daemon.log, e a layer em LINUX_RESHADE_LOG."));
+        return page;
+    }
+    let names: Vec<&str> = files.iter().map(|(n, _)| n.as_str()).collect();
+    let chooser = gtk::DropDown::from_strings(&names);
+    let view = gtk::TextView::new();
+    view.set_editable(false);
+    view.set_monospace(true);
+    view.set_wrap_mode(gtk::WrapMode::WordChar);
+    let scroller = gtk::ScrolledWindow::new();
+    scroller.set_child(Some(&view));
+    scroller.set_vexpand(true);
+    let refresh = {
+        let (chooser, view, scroller, files) = (chooser.clone(), view.clone(), scroller.clone(), files.clone());
+        Rc::new(move || {
+            let Some((_, path)) = files.get(chooser.selected() as usize) else { return };
+            view.buffer().set_text(&tail_of(path, 64 * 1024));
+            // Rola para o fim (o que acabou de acontecer).
+            let scroller = scroller.clone();
+            gtk::glib::idle_add_local_once(move || {
+                let adjustment = scroller.vadjustment();
+                adjustment.set_value(adjustment.upper() - adjustment.page_size());
+            });
+        })
+    };
+    {
+        let refresh = refresh.clone();
+        chooser.connect_selected_notify(move |_| refresh());
+    }
+    let button = gtk::Button::with_label("Atualizar");
+    {
+        let refresh = refresh.clone();
+        button.connect_clicked(move |_| refresh());
+    }
+    let top = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    chooser.set_hexpand(true);
+    top.append(&chooser);
+    top.append(&button);
+    page.append(&top);
+    page.append(&scroller);
+    refresh();
+    page
+}
+
+fn performance_page(window: &gtk::Window) -> gtk::Box {
+    let page = page_box();
+    page.append(&hint("Mede quanto a layer custa por quadro no processador e quanto a GPU gasta em cada efeito. Medir custa um pouco; ligue só para ver."));
+    let toggle = gtk::CheckButton::with_label("Medir o desempenho");
+    toggle.set_active(ipc::stats_on());
+    toggle.connect_toggled(|b| {
+        let _ = ipc::set_stats_on(b.is_active());
+    });
+    let text = gtk::Label::new(None);
+    text.set_xalign(0.0);
+    text.set_yalign(0.0);
+    text.set_selectable(true);
+    text.add_css_class("monospace");
+    let scroller = gtk::ScrolledWindow::new();
+    scroller.set_child(Some(&text));
+    scroller.set_vexpand(true);
+    page.append(&toggle);
+    page.append(&scroller);
+    let refresh = {
+        let text = text.clone();
+        move || {
+            let layers = ipc::live_layers().unwrap_or_default();
+            let mut out = String::new();
+            for l in &layers {
+                let name = if l.status.app.is_empty() { l.id.clone() } else { l.status.app.clone() };
+                match &l.status.perf {
+                    Some(perf) => out.push_str(&format!("{name}\n{}\n", control_core::layers::perf_text(perf))),
+                    None => out.push_str(&format!("{name}\n  (sem medição{})\n\n", if ipc::stats_on() { ": aguardando o próximo segundo" } else { ": ligue a medição acima" })),
+                }
+            }
+            if layers.is_empty() {
+                out = "Nenhum jogo com a layer aberto.".to_string();
+            }
+            text.set_text(&out);
+        }
+    };
+    refresh();
+    let window = window.clone();
+    gtk::glib::timeout_add_seconds_local(1, move || {
+        if !window.is_visible() {
+            return gtk::glib::ControlFlow::Break;
+        }
+        refresh();
+        gtk::glib::ControlFlow::Continue
+    });
+    page
+}
+
+fn about_page() -> gtk::Box {
+    let page = page_box();
+    let config = config::Config::load();
+    let show = |p: Option<&std::path::Path>| p.map_or("(não configurado)".to_string(), |p| p.display().to_string());
+    let text = format!(
+        "linux-reshade {}\nCamada Vulkan compatível com o ReShade, para Linux.\n\nPasta de dados: {}\nconfig.ini: {}\nPresets: {}\nCache dos efeitos compilados: {}\nCapturas de tela: {}\nEstado compartilhado (memória): {}\n\nOpções do ReShade e o que falta: docs/reshade-opcoes.md",
+        env!("CARGO_PKG_VERSION"),
+        show(config.data_dir.as_deref()),
+        show(config.config_path().as_deref()),
+        show(config.presets_dir.as_deref()),
+        config.cache_dir.display(),
+        config.screenshot_dir.display(),
+        ipc::state_dir().display(),
+    );
+    let label = gtk::Label::new(Some(&text));
+    label.set_xalign(0.0);
+    label.set_wrap(true);
+    label.set_selectable(true);
+    page.append(&label);
+    page
+}
+
 /// A janela de configurações: atalhos, capturas de tela e pastas.
 pub fn open(parent: &gtk::ApplicationWindow) -> gtk::Window {
-    let window = gtk::Window::builder().title("Configurações").transient_for(parent).modal(true).default_width(620).default_height(560).build();
+    let window = gtk::Window::builder().title("Configurações").transient_for(parent).modal(true).default_width(700).default_height(600).build();
     let notebook = gtk::Notebook::new();
     notebook.append_page(&shortcuts_page(&window), Some(&gtk::Label::new(Some("Atalhos"))));
     notebook.append_page(&captures_page(&window), Some(&gtk::Label::new(Some("Capturas de tela"))));
     notebook.append_page(&folders_page(&window), Some(&gtk::Label::new(Some("Pastas"))));
+    notebook.append_page(&performance_page(&window), Some(&gtk::Label::new(Some("Desempenho"))));
+    notebook.append_page(&log_page(), Some(&gtk::Label::new(Some("Registro"))));
+    notebook.append_page(&about_page(), Some(&gtk::Label::new(Some("Sobre"))));
     window.set_child(Some(&notebook));
     window.present();
     // Só para os testes de captura da tela: abrir direto numa aba.
@@ -340,4 +486,49 @@ pub fn open(parent: &gtk::ApplicationWindow) -> gtk::Window {
         notebook.set_current_page(Some(tab));
     }
     window
+}
+
+/// Uma janelinha que espera uma combinação de teclas: devolve o atalho (formato XDG; texto vazio para "sem atalho") ou nada se
+/// a pessoa cancelou.
+pub fn capture_key(parent: &impl IsA<gtk::Window>, title: &str, on_done: impl Fn(String) + 'static) {
+    let window = gtk::Window::builder().title(title).transient_for(parent).modal(true).default_width(360).build();
+    let page = page_box();
+    let message = gtk::Label::new(Some("Pressione a tecla (ou combinação) desejada.\nEsc cancela."));
+    message.set_wrap(true);
+    let status = gtk::Label::new(None);
+    status.set_wrap(true);
+    status.add_css_class("error");
+    let clear = gtk::Button::with_label("Tirar o atalho");
+    page.append(&message);
+    page.append(&status);
+    page.append(&clear);
+    let on_done = Rc::new(on_done);
+    {
+        let (window, on_done) = (window.clone(), on_done.clone());
+        clear.connect_clicked(move |_| {
+            on_done(String::new());
+            window.close();
+        });
+    }
+    let controller = gtk::EventControllerKey::new();
+    controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let (window_key, status_key) = (window.clone(), status.clone());
+    controller.connect_key_pressed(move |_, keyval, keycode, state| {
+        if keyval == gtk::gdk::Key::Escape {
+            window_key.close();
+            return gtk::glib::Propagation::Stop;
+        }
+        match captured(&window_key, keyval, keycode, state) {
+            None => {}
+            Some(Ok(text)) => {
+                on_done(text);
+                window_key.close();
+            }
+            Some(Err(why)) => status_key.set_text(&format!("Essa tecla não serve: {why}")),
+        }
+        gtk::glib::Propagation::Stop
+    });
+    window.add_controller(controller);
+    window.set_child(Some(&page));
+    window.present();
 }

@@ -12,13 +12,13 @@ O que o ReShade 6 oferece nas abas Home/Settings/Statistics/Log/About e onde iss
 | Macros (PreprocessorDefinitions) globais, por preset e por efeito | **feito** |
 | Controles de cada efeito (sliders com valor digitável, combos, cores...) | **feito** |
 | Escolha da profundidade (candidatas, passe, limpeza) | **feito** |
-| Tecla para recarregar os efeitos (`KeyReload`) | falta (recompilar é automático ao editar, mas não há atalho) |
-| Tecla por técnica (`Key<técnica>`) | falta |
-| Modo de desempenho | falta |
+| Tecla para recarregar os efeitos (`KeyReload`) | **feito**: apaga os compilados dos jogos abertos e o vigia refaz (pega o `.fx` editado) |
+| Tecla por técnica (`Key<técnica>`) | **feito**: botão em cada efeito do painel; grava o `Key<técnica>` do preset no formato do ReShade (presets do Windows valem) e o daemon registra a tecla |
+| Modo de desempenho (constantes no lugar de uniforms) | falta |
 | Formato da captura (JPEG/BMP), `SavePresetFile`, `SaveOverlayShot` | falta (só PNG, sem overlay: o painel é outra janela) |
-| OSD: FPS, relógio, tempo de quadro | falta |
-| Estatísticas (tempo por técnica, memória) | falta |
-| Abas Log e Sobre | falta (o log fica em arquivo; `scripts/dev.sh logs`) |
+| OSD: FPS e tempo de quadro | **feito** como efeito: `FPSCounter` (canto e tamanho configuráveis); relógio falta |
+| Estatísticas (tempo por técnica, uso do processador pela layer) | **feito**: `lrctl stats on` + aba Desempenho (GPU por efeito, processador por quadro); memória falta |
+| Abas Log e Sobre | **feito**: abas Registro e Sobre nas Configurações |
 | Transição suave entre presets, atalhos de preset por tecla própria | falta |
 | Uniforms de mouse/teclado (`mousepoint`, `key`, `overlay_open`...) | `overlay_active`/`overlay_open` feitos (auxílio do autofoco); mouse e teclado não: a layer não recebe entrada |
 | Add-ons | não se aplica |
