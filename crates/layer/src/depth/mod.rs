@@ -22,6 +22,48 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
+/// Hash barato para handles do Vulkan (inteiros de 64 bits): o padrão (SipHash) custa mais que o resto do gancho de desenho.
+#[derive(Default, Clone, Copy)]
+pub(crate) struct IdHasher(u64);
+
+impl std::hash::Hasher for IdHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for b in bytes {
+            self.0 = (self.0 ^ u64::from(*b)).wrapping_mul(0x100_0000_01b3);
+        }
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        // Os handles têm os bits baixos fixos (alinhamento): a multiplicação espalha o resto.
+        self.0 = (value ^ (value >> 15)).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
+}
+
+pub(crate) type FastMap<K, V> = HashMap<K, V, std::hash::BuildHasherDefault<IdHasher>>;
+
+const CMD_SHARDS: usize = 16;
+
+/// O estado de cada command buffer em gravação. Dividido em partes com um `Mutex` cada: o jogo grava command buffers em várias threads,
+/// e um `Mutex` só para todos fazia uma esperar a outra a cada desenho.
+pub(crate) struct CmdMap {
+    shards: [Mutex<FastMap<u64, CmdState>>; CMD_SHARDS],
+}
+
+impl CmdMap {
+    fn new() -> Self {
+        Self { shards: std::array::from_fn(|_| Mutex::new(FastMap::default())) }
+    }
+
+    /// A parte onde mora o command buffer `cmd` (o handle bruto).
+    pub(crate) fn lock(&self, cmd: u64) -> std::sync::MutexGuard<'_, FastMap<u64, CmdState>> {
+        self.shards[((cmd >> 4) ^ (cmd >> 11)) as usize % CMD_SHARDS].lock().unwrap()
+    }
+}
+
 /// Como os pipelines gráficos comparam a profundidade.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum Compare {
@@ -149,9 +191,9 @@ pub struct Depth {
     /// framebuffer -> views dos anexos (só os que têm alguma view de profundidade).
     pub(crate) framebuffers: Mutex<HashMap<u64, Vec<u64>>>,
     pub(crate) render_passes: Mutex<HashMap<u64, RenderPassInfo>>,
-    pub(crate) pipelines: Mutex<HashMap<u64, Compare>>,
+    pub(crate) pipelines: std::sync::RwLock<FastMap<u64, Compare>>,
     pub(crate) screen: screen::Screen,
-    pub(crate) cmds: Mutex<HashMap<u64, CmdState>>,
+    pub(crate) cmds: CmdMap,
     pub(crate) frame: Mutex<FrameStats>,
     /// A última lista publicada (para só avisar quando muda).
     pub(crate) last_published: Mutex<Vec<observe::Candidate>>,
@@ -258,9 +300,9 @@ impl Depth {
             views: Mutex::new(HashMap::new()),
             framebuffers: Mutex::new(HashMap::new()),
             render_passes: Mutex::new(HashMap::new()),
-            pipelines: Mutex::new(HashMap::new()),
+            pipelines: std::sync::RwLock::new(FastMap::default()),
             screen: screen::Screen::default(),
-            cmds: Mutex::new(HashMap::new()),
+            cmds: CmdMap::new(),
             frame: Mutex::new(FrameStats::default()),
             last_published: Mutex::new(Vec::new()),
             chosen: Mutex::new(None),

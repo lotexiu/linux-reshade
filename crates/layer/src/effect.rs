@@ -124,6 +124,99 @@ struct Built {
     /// Uma fence por imagem, sinalizada quando o command buffer dela termina. Garante que o buffer
     /// não é reenviado enquanto ainda executa (o que o swapchain sugere, mas não garante).
     fences: Vec<vk::Fence>,
+    /// Os carimbos de tempo da GPU (só com a medição de desempenho ligada); criados na primeira medição.
+    gpu: Option<GpuTimer>,
+}
+
+/// Mede quanto a GPU gasta em cada efeito da cadeia: um carimbo de tempo entre um efeito e o seguinte (cada carimbo é um command
+/// buffer mínimo, intercalado com os dos efeitos no mesmo envio).
+struct GpuTimer {
+    pool: vk::QueryPool,
+    command_pool: vk::CommandPool,
+    /// `[imagem][limite]`: o command buffer que grava o carimbo `limite` (o primeiro também zera os da imagem).
+    stamps: Vec<Vec<vk::CommandBuffer>>,
+    /// A imagem já tem uma medição gravada para ler?
+    written: Vec<bool>,
+    /// Nanossegundos por tick do carimbo.
+    period: f32,
+    /// O tempo suavizado de cada efeito, em microssegundos, e o nome dele.
+    steps: Vec<(String, f32)>,
+}
+
+impl GpuTimer {
+    /// `None` se a fila não tem carimbos ou algo falhou (a medição simplesmente não existe).
+    unsafe fn new(data: &DeviceData, family: u32, images: usize, names: Vec<String>) -> Option<Self> {
+        let instance = &data.instance.instance;
+        let queue_props = unsafe { instance.get_physical_device_queue_family_properties(data.physical_device) };
+        if queue_props.get(family as usize).is_none_or(|p| p.timestamp_valid_bits == 0) {
+            return None;
+        }
+        let period = unsafe { instance.get_physical_device_properties(data.physical_device) }.limits.timestamp_period;
+        let boundaries = names.len() + 1;
+        let device = &data.device;
+        unsafe {
+            let pool = device.create_query_pool(&vk::QueryPoolCreateInfo::default().query_type(vk::QueryType::TIMESTAMP).query_count((images * boundaries) as u32), None).ok()?;
+            let command_pool = match device.create_command_pool(&vk::CommandPoolCreateInfo::default().queue_family_index(family), None) {
+                Ok(p) => p,
+                Err(_) => {
+                    device.destroy_query_pool(pool, None);
+                    return None;
+                }
+            };
+            let mut timer = Self { pool, command_pool, stamps: Vec::new(), written: vec![false; images], period, steps: names.into_iter().map(|n| (n, 0.0)).collect() };
+            for image in 0..images {
+                let cbs = device.allocate_command_buffers(&vk::CommandBufferAllocateInfo::default().command_pool(command_pool).command_buffer_count(boundaries as u32)).ok();
+                let Some(cbs) = cbs else {
+                    timer.destroy(device);
+                    return None;
+                };
+                for (boundary, cb) in cbs.iter().enumerate() {
+                    let init = (data.set_loader_data)(device.handle(), cb.as_raw() as *mut std::ffi::c_void);
+                    if init != vk::Result::SUCCESS || device.begin_command_buffer(*cb, &vk::CommandBufferBeginInfo::default()).is_err() {
+                        timer.stamps.push(cbs.clone());
+                        timer.destroy(device);
+                        return None;
+                    }
+                    let query = (image * boundaries + boundary) as u32;
+                    if boundary == 0 {
+                        device.cmd_reset_query_pool(*cb, pool, (image * boundaries) as u32, boundaries as u32);
+                    }
+                    device.cmd_write_timestamp(*cb, vk::PipelineStageFlags::BOTTOM_OF_PIPE, pool, query);
+                    if device.end_command_buffer(*cb).is_err() {
+                        timer.stamps.push(cbs.clone());
+                        timer.destroy(device);
+                        return None;
+                    }
+                }
+                timer.stamps.push(cbs);
+            }
+            Some(timer)
+        }
+    }
+
+    /// Lê a medição que a imagem gravou da última vez que foi usada (a fence dela já foi esperada) e a soma às médias.
+    unsafe fn collect(&mut self, device: &ash::Device, image: usize) {
+        if !self.written.get(image).copied().unwrap_or(false) {
+            return;
+        }
+        let boundaries = self.steps.len() + 1;
+        let mut ticks = vec![0u64; boundaries];
+        let read = unsafe { device.get_query_pool_results(self.pool, (image * boundaries) as u32, &mut ticks, vk::QueryResultFlags::TYPE_64) };
+        if read.is_ok() {
+            for (i, (_, smoothed)) in self.steps.iter_mut().enumerate() {
+                let us = ticks[i + 1].saturating_sub(ticks[i]) as f32 * self.period / 1000.0;
+                *smoothed = if *smoothed == 0.0 { us } else { *smoothed * 0.9 + us * 0.1 };
+            }
+        }
+    }
+
+    unsafe fn destroy(&mut self, device: &ash::Device) {
+        unsafe {
+            device.destroy_command_pool(self.command_pool, None);
+            device.destroy_query_pool(self.pool, None);
+        }
+        self.stamps.clear();
+    }
 }
 
 /// De onde uma etapa tira os uniforms a cada frame.
@@ -390,6 +483,9 @@ impl SwapchainFx {
                 if !built.fences.is_empty() {
                     let _ = device.wait_for_fences(&built.fences, true, 5_000_000_000);
                 }
+                if let Some(timer) = built.gpu.as_mut() {
+                    timer.destroy(device);
+                }
                 built.chain.destroy(device);
                 // Um present já enfileirado ainda pode esperar o semáforo do efeito: ele sai alguns presents depois.
                 retire_semaphores(device, built.semaphores.drain(..));
@@ -484,7 +580,10 @@ fn assemble_partial(old: Option<Built>, partial: Partial, steps: &[ResolvedStep]
             let _ = device.wait_for_fences(&old.fences, true, 5_000_000_000);
         }
     }
-    let Built { chain, params: old_params, semaphores, fences, .. } = old;
+    let Built { chain, params: old_params, semaphores, fences, gpu, .. } = old;
+    if let Some(mut timer) = gpu {
+        unsafe { timer.destroy(device) };
+    }
     let mut parts = chain.into_parts();
     let mut old_params: Vec<Option<StepRuntime>> = old_params.into_iter().map(Some).collect();
     let (mut effects, mut origin, mut params) = (Vec::new(), Vec::new(), Vec::new());
@@ -509,7 +608,7 @@ fn assemble_partial(old: Option<Built>, partial: Partial, steps: &[ResolvedStep]
         unsafe { effect.destroy(device) };
     }
     let chain = Chain::from_parts(effects, shared, origin.clone());
-    Ok(Built { chain, signature: signature(steps), origin, skipped: skipped.iter().map(|s| (s.step, s.why.clone())).collect(), depth_key, params, semaphores, fences })
+    Ok(Built { chain, signature: signature(steps), origin, skipped: skipped.iter().map(|s| (s.step, s.why.clone())).collect(), depth_key, params, semaphores, fences, gpu: None })
 }
 
 /// Cria a cadeia (sem usar nenhuma fila: a inicialização das texturas termina depois, na thread do present).
@@ -557,7 +656,7 @@ fn build_chain(a: BuildArgs) -> Result<Built, String> {
         let origin: Vec<usize> = (0..chain.len()).filter_map(|i| chain.origin(i)).collect();
         let params = origin.iter().map(|&i| runtime_for(&steps[i])).collect();
         let skipped = skipped.iter().map(|s| (s.step, s.why.clone())).collect();
-        let mut built = Built { chain, signature: signature(steps), origin, skipped, depth_key: depth.map(|d| (d.image, d.layout)), params, semaphores: Vec::new(), fences: Vec::new() };
+        let mut built = Built { chain, signature: signature(steps), origin, skipped, depth_key: depth.map(|d| (d.image, d.layout)), params, semaphores: Vec::new(), fences: Vec::new(), gpu: None };
         for _ in &a.images {
             let semaphore = device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None);
             // Nasce sinalizada: a primeira espera por ela não bloqueia.
@@ -798,6 +897,26 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
             return None;
         }
 
+        // Medição de desempenho (só quando pedida): lê o que a GPU gravou da última vez que usou esta imagem e garante o cronômetro.
+        let measure = crate::stats::enabled();
+        if measure {
+            if built.gpu.is_none() {
+                let family = data.queues.lock().unwrap().get(&queue.as_raw()).copied();
+                let names: Vec<String> = built
+                    .origin
+                    .iter()
+                    .map(|&i| fx.steps.get(i).and_then(|s| s.bundle.manifest.techniques.get(s.technique)).map_or_else(|| format!("etapa {i}"), |t| t.name.clone()))
+                    .collect();
+                built.gpu = family.and_then(|f| GpuTimer::new(data, f, fx.images.len(), names));
+            }
+            if let Some(timer) = built.gpu.as_mut() {
+                timer.collect(&data.device, index);
+                if data.presents.load(std::sync::atomic::Ordering::Relaxed) % 30 == 0 {
+                    crate::stats::set_gpu(timer.steps.clone());
+                }
+            }
+        }
+
         // A fence garante que a GPU terminou com o buffer de uniforms desta imagem: pode reescrevê-lo.
         // Primeiro os parâmetros de cada etapa (a imagem inteira do buffer)...
         let own = crate::control::channel().map(|c| c as &dyn ipc::ParamSource);
@@ -820,7 +939,20 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
         let waits = std::slice::from_raw_parts(info.p_wait_semaphores, info.wait_semaphore_count as usize);
         // ALL_COMMANDS: nada do efeito pode começar antes de o jogo terminar de desenhar o frame.
         let stages = vec![vk::PipelineStageFlags::ALL_COMMANDS; waits.len()];
-        let command_buffers = built.chain.command_buffers(index);
+        let mut command_buffers = built.chain.command_buffers(index);
+        let mut timed = false;
+        if measure && let Some(timer) = &built.gpu && timer.stamps.get(index).is_some_and(|c| c.len() == command_buffers.len() + 1) {
+            // Um carimbo antes do primeiro efeito e um depois de cada um.
+            let stamps = &timer.stamps[index];
+            let mut all = Vec::with_capacity(command_buffers.len() * 2 + 1);
+            all.push(stamps[0]);
+            for (i, cb) in command_buffers.iter().enumerate() {
+                all.push(*cb);
+                all.push(stamps[i + 1]);
+            }
+            command_buffers = all;
+            timed = true;
+        }
         let signal = [built.semaphores[index]];
         let submit = vk::SubmitInfo::default()
             .wait_semaphores(waits)
@@ -828,7 +960,12 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
             .command_buffers(&command_buffers)
             .signal_semaphores(&signal);
         match data.device.queue_submit(queue, &[submit], fence) {
-            Ok(()) => Some(signal[0]),
+            Ok(()) => {
+                if timed && let Some(timer) = built.gpu.as_mut() {
+                    timer.written[index] = true;
+                }
+                Some(signal[0])
+            }
             Err(e) => {
                 log!("vkQueueSubmit do efeito falhou: erro {}", e.as_raw());
                 // A fence já foi resetada; um lote vazio a sinaliza de novo para não travar o frame seguinte.

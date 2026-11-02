@@ -267,7 +267,7 @@ mod tests {
     fn layer(app: &str, sizes: &[(u32, u32)]) -> LiveLayer {
         LiveLayer {
             id: format!("layer-{app}"),
-            status: LayerStatus {
+            status: LayerStatus { perf: None,
                 depth: Vec::new(), depth_passes: String::new(),
                 techniques: Vec::new(),
                 exe: String::new(),

@@ -11,9 +11,41 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use vk_layer::dispatch::dispatch_key;
 
-fn data_of(raw: u64) -> Option<Arc<DeviceData>> {
+/// Uma referência ao dado do dispositivo sem contar referências (cada gancho de desenho pagava duas operações atômicas e uma
+/// busca num mapa). Vale enquanto o dispositivo existe, o que o Vulkan já exige de quem usa o command buffer.
+pub(super) struct DeviceRef(*const DeviceData);
+
+impl std::ops::Deref for DeviceRef {
+    type Target = DeviceData;
+
+    fn deref(&self) -> &DeviceData {
+        // SAFETY: o registro mantém o `Arc` vivo até `vkDestroyDevice`, e usar um command buffer depois disso é erro do jogo.
+        unsafe { &*self.0 }
+    }
+}
+
+thread_local! {
+    /// O último dispositivo visto por esta thread: `(chave de dispatch, geração, dado)`.
+    static LAST_DEVICE: std::cell::RefCell<Option<(usize, u64, Arc<DeviceData>)>> = const { std::cell::RefCell::new(None) };
+}
+
+fn data_of(raw: u64) -> Option<DeviceRef> {
     // SAFETY: `raw` é um handle despachável entregue pelo loader.
-    DEVICES.get(unsafe { dispatch_key(raw) })
+    let key = unsafe { dispatch_key(raw) };
+    let generation = crate::state::DEVICES_GENERATION.load(Ordering::Acquire);
+    LAST_DEVICE.with(|cell| {
+        let mut cache = cell.borrow_mut();
+        if let Some((k, g, data)) = cache.as_ref()
+            && *k == key
+            && *g == generation
+        {
+            return Some(DeviceRef(Arc::as_ptr(data)));
+        }
+        let data = DEVICES.get(key)?;
+        let reference = DeviceRef(Arc::as_ptr(&data));
+        *cache = Some((key, generation, data));
+        Some(reference)
+    })
 }
 
 /// O gancho de um comando de profundidade, pelo nome (e pelos apelidos de extensão).
@@ -294,7 +326,7 @@ unsafe extern "system" fn create_graphics_pipelines(
         if result == vk::Result::SUCCESS && !p_create_infos.is_null() {
             let infos = std::slice::from_raw_parts(p_create_infos, count as usize);
             let pipelines = std::slice::from_raw_parts(p_pipelines, count as usize);
-            let mut map = data.depth.pipelines.lock().unwrap();
+            let mut map = data.depth.pipelines.write().unwrap();
             for (info, pipeline) in infos.iter().zip(pipelines) {
                 let compare = if info.p_depth_stencil_state.is_null() {
                     Compare::Unknown
@@ -321,7 +353,7 @@ unsafe extern "system" fn begin_command_buffer(cmd: vk::CommandBuffer, p_begin_i
     unsafe {
         let Some(data) = data_of(cmd.as_raw()) else { return vk::Result::ERROR_DEVICE_LOST };
         if data.depth.is_on() {
-            data.depth.cmds.lock().unwrap().insert(cmd.as_raw(), CmdState::default());
+            data.depth.cmds.lock(cmd.as_raw()).insert(cmd.as_raw(), CmdState::default());
         }
         (data.device.fp_v1_0().begin_command_buffer)(cmd, p_begin_info)
     }
@@ -343,7 +375,7 @@ fn start_pass(data: &DeviceData, cmd: vk::CommandBuffer, render_pass: vk::Render
         end_layout: rp.final_layout,
         ..PassRecord::default()
     };
-    if let Some(state) = data.depth.cmds.lock().unwrap().get_mut(&cmd.as_raw()) {
+    if let Some(state) = data.depth.cmds.lock(cmd.as_raw()).get_mut(&cmd.as_raw()) {
         state.current = Some(record);
     }
 }
@@ -375,7 +407,7 @@ unsafe fn on_begin_render_pass(data: &DeviceData, cmd: vk::CommandBuffer, begin:
         let clears: &[vk::ClearValue] = if b.p_clear_values.is_null() { &[] } else { std::slice::from_raw_parts(b.p_clear_values, b.clear_value_count as usize) };
         let views = imageless_views(b.p_next);
         if let Some(pass) = data.depth.screen.begin_pass(b.render_pass.as_raw(), b.framebuffer.as_raw(), views.clone())
-            && let Some(state) = data.depth.cmds.lock().unwrap().get_mut(&cmd.as_raw())
+            && let Some(state) = data.depth.cmds.lock(cmd.as_raw()).get_mut(&cmd.as_raw())
         {
             state.screen_current = Some(pass);
         }
@@ -405,7 +437,7 @@ fn finish_pass(data: &DeviceData, cmd: vk::CommandBuffer) -> Option<PassRecord> 
     if !data.depth.is_on() {
         return None;
     }
-    let mut cmds = data.depth.cmds.lock().unwrap();
+    let mut cmds = data.depth.cmds.lock(cmd.as_raw());
     let state = cmds.get_mut(&cmd.as_raw())?;
     if let Some(screen) = state.screen_current.take() {
         state.screen_passes.push(screen);
@@ -510,7 +542,7 @@ unsafe fn remember_rendering(data: &DeviceData, cmd: vk::CommandBuffer, info: &v
         // Só dá para partir um passe simples: sem estruturas encadeadas e sem suspender/retomar.
         let simple = info.p_next.is_null() && !info.flags.intersects(vk::RenderingFlags::SUSPENDING | vk::RenderingFlags::RESUMING);
         let copy = simple.then(|| super::RenderingCopy { flags: info.flags, render_area: info.render_area, layer_count: info.layer_count, view_mask: info.view_mask, colors, depth, stencil, image });
-        if let Some(state) = data.depth.cmds.lock().unwrap().get_mut(&cmd.as_raw()) {
+        if let Some(state) = data.depth.cmds.lock(cmd.as_raw()).get_mut(&cmd.as_raw()) {
             state.rendering = copy;
         }
     }
@@ -547,7 +579,7 @@ unsafe extern "system" fn cmd_clear_attachments(cmd: vk::CommandBuffer, count: u
         if data.depth.is_on() && !p_attachments.is_null() && std::slice::from_raw_parts(p_attachments, count as usize).iter().any(|a| a.aspect_mask.intersects(vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL)) {
             data.depth.frame_clear_attachments.fetch_add(1, Ordering::Relaxed);
             // A limpeza é dentro do passe em gravação: se é sobre a imagem observada, é uma limpeza dela.
-            let (image, copy) = match data.depth.cmds.lock().unwrap().get(&cmd.as_raw()) {
+            let (image, copy) = match data.depth.cmds.lock(cmd.as_raw()).get(&cmd.as_raw()) {
                 Some(state) => (state.current.map_or(0, |p| p.image), state.rendering.clone()),
                 None => (0, None),
             };
@@ -589,7 +621,7 @@ unsafe extern "system" fn cmd_begin_rendering(cmd: vk::CommandBuffer, p_info: *c
             if !info.p_color_attachments.is_null() {
                 let colors = std::slice::from_raw_parts(info.p_color_attachments, info.color_attachment_count as usize);
                 if let Some(a) = colors.iter().find(|a| data.depth.screen.is_view(a.image_view.as_raw()))
-                    && let Some(state) = data.depth.cmds.lock().unwrap().get_mut(&cmd.as_raw())
+                    && let Some(state) = data.depth.cmds.lock(cmd.as_raw()).get_mut(&cmd.as_raw())
                 {
                     state.screen_current = Some(super::screen::ScreenPass { kind: super::screen::Kind::Pass, load: load_op(a.load_op), draws: 0 });
                 }
@@ -608,7 +640,7 @@ unsafe extern "system" fn cmd_begin_rendering(cmd: vk::CommandBuffer, p_info: *c
                         end_layout: a.image_layout.as_raw(),
                         ..PassRecord::default()
                     };
-                    if let Some(state) = data.depth.cmds.lock().unwrap().get_mut(&cmd.as_raw()) {
+                    if let Some(state) = data.depth.cmds.lock(cmd.as_raw()).get_mut(&cmd.as_raw()) {
                         state.current = Some(record);
                     }
                     // Um passe que recomeça a profundidade (`Clear` ou `DontCare`) é uma limpeza dela; copia antes, fora do passe.
@@ -639,7 +671,7 @@ fn on_draw(data: &DeviceData, cmd: vk::CommandBuffer, vertices: u64, indirect: b
         return;
     }
     data.depth.frame_draws.fetch_add(1, Ordering::Relaxed);
-    if let Some(state) = data.depth.cmds.lock().unwrap().get_mut(&cmd.as_raw()) {
+    if let Some(state) = data.depth.cmds.lock(cmd.as_raw()).get_mut(&cmd.as_raw()) {
         if let Some(p) = state.current {
             data.depth.frame_depth_draws.fetch_add(1, Ordering::Relaxed);
             if p.image == data.depth.watched_image.load(Ordering::Relaxed) {
@@ -668,16 +700,24 @@ fn on_draw(data: &DeviceData, cmd: vk::CommandBuffer, vertices: u64, indirect: b
 
 unsafe extern "system" fn cmd_draw(cmd: vk::CommandBuffer, vertex_count: u32, instance_count: u32, first_vertex: u32, first_instance: u32) {
     unsafe {
+        let sample = crate::stats::hook_should_sample().then(std::time::Instant::now);
         let Some(data) = data_of(cmd.as_raw()) else { return };
         on_draw(&data, cmd, u64::from(vertex_count) * u64::from(instance_count.max(1)), false);
+        if let Some(t) = sample {
+            crate::stats::hook_sampled(t.elapsed());
+        }
         (data.device.fp_v1_0().cmd_draw)(cmd, vertex_count, instance_count, first_vertex, first_instance);
     }
 }
 
 unsafe extern "system" fn cmd_draw_indexed(cmd: vk::CommandBuffer, index_count: u32, instance_count: u32, first_index: u32, vertex_offset: i32, first_instance: u32) {
     unsafe {
+        let sample = crate::stats::hook_should_sample().then(std::time::Instant::now);
         let Some(data) = data_of(cmd.as_raw()) else { return };
         on_draw(&data, cmd, u64::from(index_count) * u64::from(instance_count.max(1)), false);
+        if let Some(t) = sample {
+            crate::stats::hook_sampled(t.elapsed());
+        }
         (data.device.fp_v1_0().cmd_draw_indexed)(cmd, index_count, instance_count, first_index, vertex_offset, first_instance);
     }
 }
@@ -736,8 +776,8 @@ unsafe extern "system" fn cmd_bind_pipeline(cmd: vk::CommandBuffer, bind_point: 
     unsafe {
         let Some(data) = data_of(cmd.as_raw()) else { return };
         if data.depth.is_on() && bind_point == vk::PipelineBindPoint::GRAPHICS {
-            let compare = data.depth.pipelines.lock().unwrap().get(&pipeline.as_raw()).copied().unwrap_or(Compare::Unknown);
-            if let Some(state) = data.depth.cmds.lock().unwrap().get_mut(&cmd.as_raw()) {
+            let compare = data.depth.pipelines.read().unwrap().get(&pipeline.as_raw()).copied().unwrap_or(Compare::Unknown);
+            if let Some(state) = data.depth.cmds.lock(cmd.as_raw()).get_mut(&cmd.as_raw()) {
                 state.compare = compare;
             }
         }
@@ -751,7 +791,7 @@ fn screen_event(data: &DeviceData, cmd: vk::CommandBuffer, image: vk::Image, kin
     if !data.depth.is_on() || !data.depth.screen.is_image(image.as_raw(), || crate::effect::is_swapchain_image(data, image.as_raw())) {
         return;
     }
-    if let Some(state) = data.depth.cmds.lock().unwrap().get_mut(&cmd.as_raw()) {
+    if let Some(state) = data.depth.cmds.lock(cmd.as_raw()).get_mut(&cmd.as_raw()) {
         state.screen_passes.push(super::screen::ScreenPass::event(kind));
     }
 }
@@ -761,7 +801,7 @@ fn note_layout(data: &DeviceData, cmd: vk::CommandBuffer, image: vk::Image, new_
     if new_layout == vk::ImageLayout::UNDEFINED || !data.depth.images.lock().unwrap().contains_key(&image.as_raw()) {
         return;
     }
-    if let Some(state) = data.depth.cmds.lock().unwrap().get_mut(&cmd.as_raw()) {
+    if let Some(state) = data.depth.cmds.lock(cmd.as_raw()).get_mut(&cmd.as_raw()) {
         state.layouts.push((image.as_raw(), new_layout.as_raw()));
     }
 }
@@ -810,7 +850,7 @@ unsafe extern "system" fn cmd_set_depth_compare_op(cmd: vk::CommandBuffer, op: v
         let Some(data) = data_of(cmd.as_raw()) else { return };
         let Some(next) = data.depth.next.cmd_set_depth_compare_op else { return };
         if data.depth.is_on()
-            && let Some(state) = data.depth.cmds.lock().unwrap().get_mut(&cmd.as_raw())
+            && let Some(state) = data.depth.cmds.lock(cmd.as_raw()).get_mut(&cmd.as_raw())
         {
             state.compare = compare_of(op);
         }
@@ -824,7 +864,7 @@ unsafe extern "system" fn cmd_execute_commands(cmd: vk::CommandBuffer, count: u3
         // Os command buffers secundários não são seguidos: contam como desenhos indiretos do passe em gravação
         // (o ReShade faz o mesmo), para a imagem aparecer nas candidatas.
         if data.depth.is_on()
-            && let Some(state) = data.depth.cmds.lock().unwrap().get_mut(&cmd.as_raw())
+            && let Some(state) = data.depth.cmds.lock(cmd.as_raw()).get_mut(&cmd.as_raw())
         {
             if let Some(s) = state.screen_current.as_mut() {
                 s.draws += count;
@@ -846,14 +886,15 @@ fn merge_submitted(data: &DeviceData, buffers: &[vk::CommandBuffer]) {
         return;
     }
     let (passes, layouts): (Vec<PassRecord>, Vec<(u64, i32)>) = {
-        let cmds = data.depth.cmds.lock().unwrap();
-        let states = buffers.iter().filter_map(|b| cmds.get(&b.as_raw()));
         let mut passes = Vec::new();
         let mut layouts = Vec::new();
-        for s in states {
-            passes.extend(s.passes.iter().copied());
-            layouts.extend(s.layouts.iter().copied());
-            data.depth.screen.push_frame(s.screen_passes.iter().copied());
+        for b in buffers {
+            let cmds = data.depth.cmds.lock(b.as_raw());
+            if let Some(s) = cmds.get(&b.as_raw()) {
+                passes.extend(s.passes.iter().copied());
+                layouts.extend(s.layouts.iter().copied());
+                data.depth.screen.push_frame(s.screen_passes.iter().copied());
+            }
         }
         (passes, layouts)
     };
@@ -1169,7 +1210,7 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
         }
         // Para entender jogos em que a comparação de profundidade não aparece: o que os pipelines criados declaram.
         {
-            let pipelines = data.depth.pipelines.lock().unwrap();
+            let pipelines = data.depth.pipelines.read().unwrap();
             let count = |c: Compare| pipelines.values().filter(|v| **v == c).count();
             let (greater, less, other) = (count(Compare::Greater), count(Compare::Less), count(Compare::Other));
             let mut logged = data.depth.pipelines_logged.lock().unwrap();

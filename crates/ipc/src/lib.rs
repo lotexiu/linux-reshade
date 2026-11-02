@@ -20,7 +20,7 @@ mod status;
 pub use blob::{MAX_PARAM_BYTES, MAX_SELECTION_BYTES, PublishError};
 pub use channel::{ChannelReader, ChannelSelection, ChannelWriter, NO_EFFECT, PlanRead, channel_name, prune as prune_channels, prune_in as prune_channels_in};
 pub use plan::{MAX_PLAN_BYTES, Plan, PlanError, PlanStep};
-pub use status::{DepthStatus, EffectState, LayerStatus, LiveLayer, StatusWriter, SwapchainStatus, TechniqueState, TechniqueStatus, live_layers};
+pub use status::{DepthStatus, EffectState, LayerStatus, LiveLayer, PerfStats, StatusWriter, SwapchainStatus, TechniqueState, TechniqueStatus, live_layers};
 
 use blob::{Params, Selection, Snapshot};
 use rustix::mm::{MapFlags, ProtFlags, mmap, munmap};
@@ -174,6 +174,33 @@ pub fn overlay_in(dir: &std::path::Path, game: &str, max_age: std::time::Duratio
 
 pub fn overlay(game: &str, max_age: std::time::Duration) -> Option<(String, String)> {
     overlay_in(&state_dir(), game, max_age)
+}
+
+/// A medição de desempenho da layer liga e desliga por um marcador no estado compartilhado (medir custa um pouco: a layer só mede
+/// quando alguém pediu).
+const STATS_FILE: &str = "stats-on";
+
+pub fn stats_on_in(dir: &std::path::Path) -> bool {
+    dir.join(STATS_FILE).exists()
+}
+
+pub fn stats_on() -> bool {
+    stats_on_in(&state_dir())
+}
+
+pub fn set_stats_on_in(dir: &std::path::Path, on: bool) -> io::Result<()> {
+    match (on, stats_on_in(dir)) {
+        (true, false) => {
+            ensure_private_dir(dir)?;
+            fs::write(dir.join(STATS_FILE), b"")
+        }
+        (false, true) => fs::remove_file(dir.join(STATS_FILE)),
+        _ => Ok(()),
+    }
+}
+
+pub fn set_stats_on(on: bool) -> io::Result<()> {
+    set_stats_on_in(&state_dir(), on)
 }
 
 pub fn set_depth_arm(game: &str, on: bool) -> io::Result<()> {

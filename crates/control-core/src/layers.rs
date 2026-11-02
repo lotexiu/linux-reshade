@@ -83,6 +83,12 @@ pub fn render(layers: &[LiveLayer]) -> String {
             }
         }
     }
+    // O desempenho medido (só com a medição ligada: `lrctl stats on`).
+    for l in layers.iter().filter(|l| l.status.perf.is_some()) {
+        let app = if l.status.app.is_empty() { l.id.clone() } else { l.status.app.clone() };
+        text.push_str(&format!("\ndesempenho de {app} (pid {}):\n", pid_of(&l.id).unwrap_or("?")));
+        text.push_str(&perf_text(l.status.perf.as_ref().expect("filtrado acima")));
+    }
     // As candidatas a profundidade da cena (só com a observação ligada na layer).
     for l in layers.iter().filter(|l| !l.status.depth.is_empty()) {
         let app = if l.status.app.is_empty() { l.id.clone() } else { l.status.app.clone() };
@@ -113,6 +119,25 @@ pub fn render(layers: &[LiveLayer]) -> String {
                 layout_name(d.layout),
             ));
         }
+    }
+    text
+}
+
+/// O desempenho de um jogo em linhas (usado pelo `lrctl layers` e pelo painel).
+pub fn perf_text(p: &ipc::PerfStats) -> String {
+    let ms = |us: u32| format!("{:.2} ms", f64::from(us) / 1000.0);
+    let mut text = format!(
+        "  {:.1} quadros/s ({} por quadro)\n  processador, por quadro: layer {} (efeitos {}, profundidade {}); ganchos de desenho nas threads do jogo ~{}\n  GPU dos efeitos: {}\n",
+        f64::from(p.fps_centi) / 100.0,
+        ms(p.frame_us),
+        ms(p.layer_us),
+        ms(p.effects_us),
+        ms(p.depth_us),
+        ms(p.hooks_us),
+        ms(p.gpu_us),
+    );
+    for (name, us) in &p.gpu_steps {
+        text.push_str(&format!("    {name}: {}\n", ms(*us)));
     }
     text
 }
@@ -167,7 +192,7 @@ mod tests {
     }
 
     fn live_with(app: &str, id: &str, swapchains: Vec<SwapchainStatus>) -> LiveLayer {
-        LiveLayer { id: id.into(), status: LayerStatus { depth: Vec::new(), depth_passes: String::new(), techniques: Vec::new(), exe: String::new(), app: app.into(), swapchains } }
+        LiveLayer { id: id.into(), status: LayerStatus { perf: None, depth: Vec::new(), depth_passes: String::new(), techniques: Vec::new(), exe: String::new(), app: app.into(), swapchains } }
     }
 
     fn sc(w: u32, h: u32, format: i32, effect: EffectState) -> SwapchainStatus {

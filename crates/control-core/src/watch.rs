@@ -238,7 +238,7 @@ mod tests {
     fn layer(app: &str, swapchains: &[(u32, u32, EffectState)]) -> LiveLayer {
         LiveLayer {
             id: format!("layer-{app}"),
-            status: LayerStatus {
+            status: LayerStatus { perf: None,
                 depth: Vec::new(), depth_passes: String::new(),
                 techniques: Vec::new(),
                 exe: String::new(),

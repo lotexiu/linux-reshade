@@ -49,3 +49,6 @@ unsafe impl Sync for DeviceData {}
 
 pub static INSTANCES: LazyLock<Registry<InstanceData>> = LazyLock::new(Registry::new);
 pub static DEVICES: LazyLock<Registry<DeviceData>> = LazyLock::new(Registry::new);
+
+/// Sobe a cada device criado ou destruído: invalida os caches de dispositivo das threads (ver `depth::hooks::data_of`).
+pub static DEVICES_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);

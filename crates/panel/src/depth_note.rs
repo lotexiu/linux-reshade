@@ -76,7 +76,7 @@ mod tests {
     use ipc::{DepthStatus, LayerStatus};
 
     fn layer(depth: Vec<DepthStatus>) -> LiveLayer {
-        LiveLayer { id: "l".into(), status: LayerStatus { depth, depth_passes: String::new(), techniques: Vec::new(), exe: "Jogo".into(), app: String::new(), swapchains: Vec::new() } }
+        LiveLayer { id: "l".into(), status: LayerStatus { perf: None, depth, depth_passes: String::new(), techniques: Vec::new(), exe: "Jogo".into(), app: String::new(), swapchains: Vec::new() } }
     }
 
     fn candidate(sampled: bool, layout: i32) -> DepthStatus {

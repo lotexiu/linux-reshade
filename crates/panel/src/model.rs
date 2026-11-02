@@ -221,7 +221,7 @@ mod tests {
     fn game(w: u32, h: u32) -> Vec<LiveLayer> {
         vec![LiveLayer {
             id: "layer-1".into(),
-            status: LayerStatus {
+            status: LayerStatus { perf: None,
                 depth: Vec::new(), depth_passes: String::new(),
                 techniques: Vec::new(),
                 exe: String::new(),

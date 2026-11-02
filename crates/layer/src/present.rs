@@ -22,6 +22,8 @@ pub unsafe extern "system" fn queue_present(
         let Some(data) = DEVICES.get(dispatch_key(queue.as_raw())) else {
             return vk::Result::ERROR_DEVICE_LOST;
         };
+        let measure = crate::stats::enabled();
+        let started = measure.then(std::time::Instant::now);
         let n = data.presents.fetch_add(1, Ordering::Relaxed) + 1;
         if n == 1 || n % PRESENT_LOG_EVERY == 0 {
             log!("vkQueuePresentKHR #{n}");
@@ -58,7 +60,9 @@ pub unsafe extern "system" fn queue_present(
 
         // Com o efeito aplicado, o present passa a esperar o semáforo do efeito, não os do jogo
         // (que o submit do efeito já consumiu).
+        let process_started = measure.then(std::time::Instant::now);
         let effect_semaphore = effect::process(&data, queue, &effect_info, enabled);
+        let process_time = process_started.map(|t| t.elapsed());
         if enabled {
             data.depth.fx_presents[usize::from(effect_semaphore.is_some())].fetch_add(1, Ordering::Relaxed);
         }
@@ -97,8 +101,14 @@ pub unsafe extern "system" fn queue_present(
             p_present_info
         };
 
+        let depth_started = measure.then(std::time::Instant::now);
         crate::depth::end_frame(&data, effect::largest_extent(&data));
+        let depth_time = depth_started.map(|t| t.elapsed());
+        let before_driver = started.map(|t| t.elapsed());
         let result = (data.swapchain.queue_present_khr)(queue, p_info);
+        if let (Some(layer), Some(process), Some(depth)) = (before_driver, process_time, depth_time) {
+            crate::stats::frame_done(layer, process, depth);
+        }
         if result != vk::Result::SUCCESS && data.odd_presents.fetch_add(1, Ordering::Relaxed) < ODD_PRESENT_LOG_MAX {
             log!("vkQueuePresentKHR #{n} devolveu {}", result.as_raw());
         }

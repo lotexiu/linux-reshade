@@ -147,6 +147,16 @@ pub fn run(command: Command, state: &ipc::Writer) -> ExitCode {
             println!("as capturas vão para {}", config.screenshot_dir.display());
             ExitCode::SUCCESS
         }
+        Command::Stats(on) => match ipc::set_stats_on(on) {
+            Ok(()) => {
+                println!("medição de desempenho {}", if on { "ligada: veja com 'lrctl layers' (ou na aba Desempenho do painel)" } else { "desligada" });
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("lrctl: {e}");
+                ExitCode::FAILURE
+            }
+        },
         Command::Daemon => match daemon::run(state) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => fail(e),

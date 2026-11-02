@@ -78,6 +78,7 @@ pub unsafe extern "system" fn create_device(
                 depth: crate::depth::Depth::new(next_gdpa, handle),
             },
         );
+        crate::state::DEVICES_GENERATION.fetch_add(1, Ordering::AcqRel);
         log!("vkCreateDevice ok");
         vk::Result::SUCCESS
     }
@@ -86,6 +87,7 @@ pub unsafe extern "system" fn create_device(
 pub unsafe extern "system" fn destroy_device(device: vk::Device, p_allocator: *const vk::AllocationCallbacks<'_>) {
     unsafe {
         if let Some(data) = DEVICES.remove(dispatch_key(device.as_raw())) {
+            crate::state::DEVICES_GENERATION.fetch_add(1, Ordering::AcqRel);
             log!("vkDestroyDevice (presents={})", data.presents.load(Ordering::Relaxed));
             // Os efeitos dos swapchains que o jogo não destruiu ainda usam o dispositivo.
             crate::effect::wait_cleanups(std::time::Duration::from_secs(10));

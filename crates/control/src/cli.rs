@@ -17,6 +17,7 @@ uso: lrctl <comando> [opções]
   effects                         lista os efeitos que podem ser escolhidos por nome
   layers                          mostra os jogos com a layer ativa: resolução, formato, estado
   watch                           só compila, sem atalho global (o daemon já faz isso)
+  stats on|off                    liga/desliga a medição de desempenho da layer (aparece em 'layers' e na aba Desempenho do painel)
   screenshot                      captura a tela de cada jogo com a layer (com e sem efeitos); o daemon/watch grava os PNG
 
   depth pick candidate <N>        escolhe a N-ésima candidata de profundidade da lista de 'lrctl layers' (de 1); com
@@ -67,6 +68,8 @@ pub enum Command {
     Daemon,
     /// Pede uma captura de tela a cada jogo com a layer aberta (o daemon ou o `watch` grava os PNG).
     Screenshot,
+    /// Liga ou desliga a medição de desempenho da layer (aparece em `layers`).
+    Stats(bool),
     Layers,
     Watch,
     Effects,
@@ -212,6 +215,11 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "toggle" => no_args(Command::Toggle),
         "daemon" => no_args(Command::Daemon),
         "screenshot" => no_args(Command::Screenshot),
+        "stats" => match tail {
+            [x] if x == "on" => Ok(Command::Stats(true)),
+            [x] if x == "off" => Ok(Command::Stats(false)),
+            _ => Err("uso: lrctl stats on|off".to_string()),
+        },
         "current" => no_args(Command::Current { layer }),
         "layers" => no_args(Command::Layers),
         "effects" => no_args(Command::Effects),

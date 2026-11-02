@@ -17,11 +17,13 @@ struct State {
     depth: Vec<ipc::DepthStatus>,
     depth_passes: String,
     writer: Option<StatusWriter>,
+    /// O desempenho medido (só com a medição ligada).
+    perf: Option<ipc::PerfStats>,
     /// Já tentamos criar o arquivo e falhou: não insiste (e já logou).
     writer_failed: bool,
 }
 
-static STATE: Mutex<State> = Mutex::new(State { app: String::new(), swapchains: Vec::new(), techniques: Vec::new(), depth: Vec::new(), depth_passes: String::new(), writer: None, writer_failed: false });
+static STATE: Mutex<State> = Mutex::new(State { app: String::new(), swapchains: Vec::new(), techniques: Vec::new(), depth: Vec::new(), depth_passes: String::new(), perf: None, writer: None, writer_failed: false });
 static INSTANCES: AtomicUsize = AtomicUsize::new(0);
 
 /// Registra uma instância Vulkan criada. `app` é o nome que o jogo deu (ou vazio).
@@ -83,7 +85,7 @@ fn publish(state: &mut State) {
         }
     }
     if let Some(writer) = &state.writer {
-        let status = LayerStatus { depth: state.depth.clone(), depth_passes: state.depth_passes.clone(), techniques: state.techniques.clone(), exe: exe_name(), app: state.app.clone(), swapchains: state.swapchains.iter().map(|(_, s)| s.clone()).collect() };
+        let status = LayerStatus { perf: state.perf.clone(), depth: state.depth.clone(), depth_passes: state.depth_passes.clone(), techniques: state.techniques.clone(), exe: exe_name(), app: state.app.clone(), swapchains: state.swapchains.iter().map(|(_, s)| s.clone()).collect() };
         if let Err(e) = writer.publish(&status) {
             log!("não consegui publicar o status: {e}");
         }
@@ -105,6 +107,15 @@ pub fn set_depth(depth: Vec<ipc::DepthStatus>, passes: String) {
     if state.depth != depth || state.depth_passes != passes {
         state.depth = depth;
         state.depth_passes = passes;
+        publish(&mut state);
+    }
+}
+
+/// Conta ao app de controle o desempenho medido (`None`: a medição foi desligada).
+pub fn set_perf(perf: Option<ipc::PerfStats>) {
+    let mut state = STATE.lock().unwrap();
+    if state.perf != perf {
+        state.perf = perf;
         publish(&mut state);
     }
 }
