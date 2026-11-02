@@ -81,7 +81,7 @@ const SEMAPHORE_RETIRE_PRESENTS: u32 = 8;
 
 static RETIRED_SEMAPHORES: std::sync::Mutex<Vec<(u64, vk::Semaphore, u32)>> = std::sync::Mutex::new(Vec::new());
 
-fn retire_semaphores(device: &ash::Device, semaphores: impl Iterator<Item = vk::Semaphore>) {
+pub(crate) fn retire_semaphores(device: &ash::Device, semaphores: impl Iterator<Item = vk::Semaphore>) {
     let key = device.handle().as_raw();
     let mut retired = RETIRED_SEMAPHORES.lock().unwrap();
     retired.extend(semaphores.map(|s| (key, s, SEMAPHORE_RETIRE_PRESENTS)));
@@ -671,6 +671,16 @@ pub fn on_depth_image_destroyed(data: &DeviceData, image: u64) {
             log!("efeito descartado: o jogo destruiu a imagem de profundidade que ele usava");
         }
     }
+}
+
+/// A imagem que o swapchain apresenta agora (para a captura de tela); `None` se o swapchain não aceita o uso extra.
+pub fn frame_target(data: &DeviceData, swapchain: u64, index: usize) -> Option<crate::screenshot::Target> {
+    let swapchains = data.swapchains.lock().unwrap();
+    let fx = swapchains.get(&swapchain)?;
+    if fx.unusable.is_some() {
+        return None;
+    }
+    Some(crate::screenshot::Target { image: *fx.images.get(index)?, extent: fx.extent, format: fx.format })
 }
 
 /// O tamanho do maior swapchain do dispositivo (a "tela" a que a profundidade deve se parecer); 0x0 se não há.

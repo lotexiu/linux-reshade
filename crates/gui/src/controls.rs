@@ -148,22 +148,39 @@ impl ControlsView {
                 (Inputs::Switch(sw), vec![widget])
             }
             Kind::Slider { min, max, step } => {
-                let scales: Vec<gtk::Scale> = (0..n)
+                // O valor fica numa caixa de número ao lado (digitável) ligada ao mesmo ajuste da barra, com folga para o botão
+                // da barra não passar por cima do número.
+                let digits = digits(*step);
+                let pairs: Vec<(gtk::Scale, gtk::SpinButton)> = (0..n)
                     .map(|_| {
-                        let s = gtk::Scale::with_range(gtk::Orientation::Horizontal, *min, *max, *step);
-                        s.set_hexpand(true);
-                        s.set_draw_value(true);
-                        s.set_digits(digits(*step) as i32);
-                        s.set_value_pos(gtk::PositionType::Right);
-                        s
+                        let adjustment = gtk::Adjustment::new(*min, *min, *max, *step, *step * 10.0, 0.0);
+                        let scale = gtk::Scale::new(gtk::Orientation::Horizontal, Some(&adjustment));
+                        scale.set_hexpand(true);
+                        scale.set_draw_value(false);
+                        let spin = gtk::SpinButton::new(Some(&adjustment), *step, digits);
+                        spin.set_numeric(true);
+                        spin.set_width_chars(8);
+                        spin.set_valign(gtk::Align::Center);
+                        (scale, spin)
                     })
                     .collect();
-                for scale in &scales {
+                let scales: Vec<gtk::Scale> = pairs.iter().map(|(s, _)| s.clone()).collect();
+                for (scale, spin) in &pairs {
                     forward_scroll(scale, &self.scroller);
+                    forward_scroll(spin, &self.scroller);
                     let all = scales.clone();
                     scale.connect_value_changed(self.notifier(control, Box::new(move || all.iter().map(|s| s.value()).collect())));
                 }
-                let widgets = scales.iter().map(|s| s.clone().upcast()).collect();
+                let widgets = pairs
+                    .iter()
+                    .map(|(scale, spin)| {
+                        let pair = gtk::Box::new(gtk::Orientation::Horizontal, 14);
+                        pair.set_hexpand(true);
+                        pair.append(scale);
+                        pair.append(spin);
+                        pair.upcast()
+                    })
+                    .collect();
                 (Inputs::Scales(scales), widgets)
             }
             Kind::Combo { items } => {

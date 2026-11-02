@@ -155,7 +155,8 @@ fn describe(e: &CompileError) -> String {
 const ARM_EVERY: Duration = Duration::from_secs(3);
 
 /// Vigia para sempre: a cada [`INTERVAL`] olha as layers vivas e compila o que falta, contando o que fez.
-pub fn run(compiler: &Compiler, state: &ipc::Writer, presets_dir: Option<std::path::PathBuf>, global_macros: &str) -> ! {
+pub fn run(compiler: &Compiler, state: &ipc::Writer, presets_dir: Option<std::path::PathBuf>, global_macros: &str, screenshots: &std::path::Path) -> ! {
+    let mut saver = crate::shots::Saver::default();
     let mut failures = Failures::new();
     let mut games = presets_dir.map(|dir| crate::games::Games::new(dir).with_global_macros(global_macros).with_depth_dir(ipc::state_dir()));
     let mut last_prune = std::time::Instant::now();
@@ -175,6 +176,9 @@ pub fn run(compiler: &Compiler, state: &ipc::Writer, presets_dir: Option<std::pa
             if last_beat.elapsed() >= std::time::Duration::from_secs(600) {
                 last_beat = std::time::Instant::now();
                 crate::logln!("vigia vivo ({} jogo(s) com a layer)", layers.len());
+            }
+            for path in saver.save_pending(&ipc::state_dir(), screenshots) {
+                crate::logln!("captura de tela salva: {}", path.display());
             }
             let report = tick(compiler, state, &layers, &mut failures);
             let games_report = games.as_mut().map(|g| g.tick(compiler, state, &layers, &mut failures));

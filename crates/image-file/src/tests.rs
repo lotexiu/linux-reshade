@@ -75,3 +75,15 @@ fn truncated_jpeg_is_an_error_not_a_panic() {
     let bytes = include_bytes!("test_red.jpg");
     assert!(decode("t.jpg", &bytes[..40]).is_err());
 }
+
+#[test]
+fn encoded_png_decodes_back_to_the_same_pixels() {
+    let rgba: Vec<u8> = (0..4u8 * 3).flat_map(|n| [n * 20, 255 - n * 10, n, 77]).collect();
+    let png = encode_png(4, 3, &rgba).unwrap();
+    let back = decode("captura.png", &png).unwrap();
+    assert_eq!((back.width, back.height), (4, 3));
+    // O alfa sai (a captura é opaca): volta 255.
+    let want: Vec<u8> = rgba.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2], 255]).collect();
+    assert_eq!(back.pixels, want);
+    assert!(encode_png(2, 2, &[0; 3]).is_err());
+}

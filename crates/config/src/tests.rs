@@ -245,3 +245,20 @@ fn keys_come_from_the_input_section_with_factory_defaults() {
     set_key(&file, "KeyEffects", "").unwrap();
     assert_eq!(resolve(&env).key("KeyEffects"), "", "vazio guarda 'sem atalho' e não volta ao de fábrica");
 }
+
+#[test]
+fn screenshots_default_to_the_pictures_folder_and_follow_the_config() {
+    let sb = Sandbox::new("shots");
+    let data = sb.path("dados");
+    sb.write("dados/config.ini", "[GENERAL]\nPresetsPath=./Presets\n");
+    let env = sb.env(&[("LINUX_RESHADE_DATA", data.to_str().unwrap())]);
+    let c = resolve(&env);
+    assert_eq!(c.screenshot_dir, sb.path("home/Pictures/linux-reshade"));
+    assert!(c.screenshot_before, "de fábrica guarda também o quadro sem efeitos");
+    let file = c.config_path().unwrap();
+    set_value(&file, "SCREENSHOT", "SavePath", "./Capturas").unwrap();
+    set_value(&file, "SCREENSHOT", "SaveBeforeShot", "0").unwrap();
+    let c = resolve(&env);
+    assert_eq!(c.screenshot_dir, data.join("Capturas"));
+    assert!(!c.screenshot_before);
+}

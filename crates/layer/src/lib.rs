@@ -16,6 +16,7 @@ mod log;
 mod params;
 mod present;
 mod proc_addr;
+mod screenshot;
 mod state;
 mod status;
 mod swapchain;

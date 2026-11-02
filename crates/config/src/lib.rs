@@ -126,13 +126,18 @@ pub struct Config {
     pub cache_dir: PathBuf,
     /// Os atalhos de teclado da seção `[INPUT]` (`KeyEffects=CTRL+SHIFT+F10`, ...): `(nome, texto)`; ver [`KEY_NAMES`].
     pub keys: Vec<(String, String)>,
+    /// Onde as capturas de tela são gravadas (`[SCREENSHOT] SavePath`).
+    pub screenshot_dir: PathBuf,
+    /// Guardar também o quadro sem efeitos (`[SCREENSHOT] SaveBeforeShot`, ligado de fábrica): para comparar.
+    pub screenshot_before: bool,
 }
 
 /// Os atalhos que o `config.ini` guarda na seção `[INPUT]` (os nomes são os do `ReShade.ini`) e o que cada um faz.
-pub const KEY_NAMES: [(&str, &str); 3] = [
+pub const KEY_NAMES: [(&str, &str); 4] = [
     ("KeyEffects", "Ligar/desligar os efeitos"),
     ("KeyNextPreset", "Próximo preset do jogo"),
     ("KeyPreviousPreset", "Preset anterior do jogo"),
+    ("KeyScreenshot", "Capturar a tela do jogo (com e sem efeitos)"),
 ];
 
 /// O atalho de fábrica de cada tecla (vazio: sem atalho).
@@ -226,7 +231,13 @@ impl Config {
 
         let global_macros = env("LINUX_RESHADE_DEFINES").map(|v| v.to_string_lossy().into_owned()).or_else(|| ini.as_ref().and_then(|i| i.get("GENERAL", "PreprocessorDefinitions")).map(String::from)).unwrap_or_default();
         let keys = ini.as_ref().map(|i| i.entries("INPUT").into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()).unwrap_or_default();
-        Self { data_dir, config_file: configured, effect_paths, texture_paths, presets_dir, global_macros, cache_dir, keys }
+        let screenshot_dir = env("LINUX_RESHADE_SCREENSHOTS")
+            .map(PathBuf::from)
+            .or_else(|| ini.as_ref().and_then(|i| i.get("SCREENSHOT", "SavePath")).filter(|v| !v.is_empty()).zip(base.as_ref()).map(|(v, b)| SearchPath::parse(v, b, home).dir))
+            .or_else(|| home.map(|h| h.join("Pictures").join(LOCATION_DIR)))
+            .unwrap_or_else(|| PathBuf::from("/tmp/linux-reshade-capturas"));
+        let screenshot_before = ini.as_ref().and_then(|i| i.get("SCREENSHOT", "SaveBeforeShot")).is_none_or(|v| v != "0" && !v.eq_ignore_ascii_case("false"));
+        Self { data_dir, config_file: configured, effect_paths, texture_paths, presets_dir, global_macros, cache_dir, keys, screenshot_dir, screenshot_before }
     }
 
     /// O atalho de `name` (de [`KEY_NAMES`]): o do `config.ini`, ou o de fábrica. Texto vazio: sem atalho.
@@ -273,6 +284,20 @@ impl Config {
 pub fn set_key(config_file: &Path, name: &str, value: &str) -> io::Result<()> {
     let mut ini = Ini::load(config_file).unwrap_or_default();
     ini.set("INPUT", name, value);
+    ini.save(config_file)
+}
+
+/// Grava um valor qualquer do `config.ini` (cria o arquivo e a seção se preciso).
+pub fn set_value(config_file: &Path, section: &str, key: &str, value: &str) -> io::Result<()> {
+    let mut ini = Ini::load(config_file).unwrap_or_default();
+    ini.set(section, key, value);
+    ini.save(config_file)
+}
+
+/// Grava uma lista (`a,b,c`) do `config.ini`.
+pub fn set_list(config_file: &Path, section: &str, key: &str, items: &[String]) -> io::Result<()> {
+    let mut ini = Ini::load(config_file).unwrap_or_default();
+    ini.set_list(section, key, items);
     ini.save(config_file)
 }
 

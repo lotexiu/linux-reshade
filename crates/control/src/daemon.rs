@@ -63,7 +63,7 @@ pub fn run(state: &ipc::Writer) -> Result<(), Error> {
             Ok(compiler) => {
                 control_core::logln!("vigiando os jogos com a layer: compila os efeitos escolhidos por nome para cada resolução");
                 let config = config::Config::load();
-                scope.spawn(move || watch::run(&compiler, state, config.presets_dir, &config.global_macros));
+                scope.spawn(move || watch::run(&compiler, state, config.presets_dir, &config.global_macros, &config.screenshot_dir));
             }
             Err(e) => control_core::elogln!("aviso: sem compilação automática de efeitos ({e})"),
         }
@@ -71,23 +71,29 @@ pub fn run(state: &ipc::Writer) -> Result<(), Error> {
         // Ainda não há janela: só atalhos globais valem.
         let ctx = Context { window_visible: false };
         let presets_dir = config.presets_dir.clone();
+        let screenshot_before = config.screenshot_before;
         loop {
             let event = backend.next_event()?;
             if let Some(action) = dispatcher.resolve(&event, &ctx) {
-                report(*action, state, presets_dir.as_deref());
+                report(*action, state, presets_dir.as_deref(), screenshot_before);
             }
         }
     })
 }
 
-fn report(action: Action, state: &ipc::Writer, presets_dir: Option<&std::path::Path>) {
-    control_core::logln!("{action:?} -> {}", action.run(state, presets_dir));
+fn report(action: Action, state: &ipc::Writer, presets_dir: Option<&std::path::Path>, screenshot_before: bool) {
+    control_core::logln!("{action:?} -> {}", action.run(state, presets_dir, screenshot_before));
 }
 
 /// Olha o `config.ini` a cada 2 s; se as teclas mudaram, o daemon se reexecuta (os atalhos são registrados na partida).
 fn spawn_config_watch(config: &config::Config) {
     let Some(path) = config.config_path() else { return };
-    let keys_now = |c: &config::Config| config::KEY_NAMES.iter().map(|(k, _)| c.key(k)).collect::<Vec<_>>();
+    // Reinicia por qualquer ajuste que o daemon lê só na partida: teclas, pastas e capturas.
+    let keys_now = |c: &config::Config| {
+        let mut v: Vec<String> = config::KEY_NAMES.iter().map(|(k, _)| c.key(k)).collect();
+        v.push(format!("{:?}|{:?}|{:?}|{:?}|{}", c.effect_paths, c.texture_paths, c.presets_dir, c.screenshot_dir, c.screenshot_before));
+        v
+    };
     let start = keys_now(config);
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_secs(2));

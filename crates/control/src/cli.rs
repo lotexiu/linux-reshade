@@ -17,6 +17,7 @@ uso: lrctl <comando> [opções]
   effects                         lista os efeitos que podem ser escolhidos por nome
   layers                          mostra os jogos com a layer ativa: resolução, formato, estado
   watch                           só compila, sem atalho global (o daemon já faz isso)
+  screenshot                      captura a tela de cada jogo com a layer (com e sem efeitos); o daemon/watch grava os PNG
 
   depth pick candidate <N>        escolhe a N-ésima candidata de profundidade da lista de 'lrctl layers' (de 1); com
                                   --layer <jogo> vale só para ele
@@ -64,6 +65,8 @@ pub enum Command {
     Off,
     Toggle,
     Daemon,
+    /// Pede uma captura de tela a cada jogo com a layer aberta (o daemon ou o `watch` grava os PNG).
+    Screenshot,
     Layers,
     Watch,
     Effects,
@@ -208,6 +211,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "off" => no_args(Command::Off),
         "toggle" => no_args(Command::Toggle),
         "daemon" => no_args(Command::Daemon),
+        "screenshot" => no_args(Command::Screenshot),
         "current" => no_args(Command::Current { layer }),
         "layers" => no_args(Command::Layers),
         "effects" => no_args(Command::Effects),

@@ -39,6 +39,25 @@ pub const MAX_SIDE: u32 = 16384;
 const PNG_MAGIC: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
 const JPEG_MAGIC: &[u8; 3] = b"\xff\xd8\xff";
 
+/// Codifica pixels RGBA de 8 bits como PNG (as capturas de tela). O alfa é descartado: um quadro de jogo é opaco, e o alfa que
+/// sobra na imagem do swapchain não significa transparência.
+pub fn encode_png(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>, Error> {
+    if width == 0 || height == 0 || width > MAX_SIDE || height > MAX_SIDE || rgba.len() as u64 != u64::from(width) * u64::from(height) * 4 {
+        return Err(Error::Decode(format!("{width}x{height} com {} bytes não é uma imagem RGBA", rgba.len())));
+    }
+    let rgb: Vec<u8> = rgba.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]).collect();
+    let mut out = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut out, width, height);
+        encoder.set_color(png::ColorType::Rgb);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_compression(png::Compression::Fast);
+        let mut writer = encoder.write_header().map_err(|e| Error::Decode(e.to_string()))?;
+        writer.write_image_data(&rgb).map_err(|e| Error::Decode(e.to_string()))?;
+    }
+    Ok(out)
+}
+
 /// Decodifica `bytes` (o conteúdo de `file_name`, que só serve para a mensagem de erro).
 pub fn decode(file_name: &str, bytes: &[u8]) -> Result<Rgba8, Error> {
     if bytes.starts_with(JPEG_MAGIC) {

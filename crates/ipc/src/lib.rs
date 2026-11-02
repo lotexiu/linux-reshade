@@ -11,9 +11,10 @@
 
 mod blob;
 mod clock;
+pub mod shot;
 mod channel;
 pub mod plan;
-pub use clock::clock;
+pub use clock::{clock, file_stamp};
 mod status;
 
 pub use blob::{MAX_PARAM_BYTES, MAX_SELECTION_BYTES, PublishError};

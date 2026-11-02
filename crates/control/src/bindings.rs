@@ -10,10 +10,11 @@ use shortcuts::{trigger, Binding, Dispatcher, Error, Scope, Shortcut};
 
 /// O que cada tecla do `config.ini` faz: `(nome no config.ini, id do atalho, ação, descrição)`.
 /// Os ids são guardados pelo sistema: não renomear depois de publicados.
-const TABLE: [(&str, &str, Action, &str); 3] = [
+const TABLE: [(&str, &str, Action, &str); 4] = [
     ("KeyEffects", "toggle-effects", Action::ToggleEffects, "linux-reshade: ligar/desligar efeitos"),
     ("KeyNextPreset", "next-preset", Action::NextPreset, "linux-reshade: próximo preset do jogo"),
     ("KeyPreviousPreset", "previous-preset", Action::PreviousPreset, "linux-reshade: preset anterior do jogo"),
+    ("KeyScreenshot", "screenshot", Action::Screenshot, "linux-reshade: capturar a tela do jogo"),
 ];
 
 /// Todos os ids que o programa pode registrar: os que ficam sem tecla são esquecidos pelo sistema.

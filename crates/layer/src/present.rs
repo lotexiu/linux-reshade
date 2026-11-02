@@ -31,15 +31,63 @@ pub unsafe extern "system" fn queue_present(
             log!("efeitos {} (present #{n})", if enabled { "LIGADOS" } else { "DESLIGADOS" });
         }
 
+        // Captura de tela pedida: a cópia do quadro do jogo (sem efeitos) entra na fila antes do efeito, que passa a esperar por ela.
+        let info = &*p_present_info;
+        let mut effect_info = *info;
+        let mut before = None;
+        let mut also_without = false;
+        let mut number = 0;
+        let pre_wait;
+        if info.swapchain_count == 1
+            && let Some(request) = crate::screenshot::poll()
+        {
+            let (swapchain, index) = (*info.p_swapchains, *info.p_image_indices as usize);
+            let family = data.queues.lock().unwrap().get(&queue.as_raw()).copied();
+            if let (Some(target), Some(family)) = (effect::frame_target(&data, swapchain.as_raw(), index), family) {
+                let waits = std::slice::from_raw_parts(info.p_wait_semaphores, info.wait_semaphore_count as usize);
+                before = crate::screenshot::capture(&data, queue, family, target, waits, request.number);
+                also_without = request.also_without_effects;
+                number = request.number;
+            }
+        }
+        if let Some(capture) = &before {
+            pre_wait = [capture.semaphore];
+            effect_info.wait_semaphore_count = 1;
+            effect_info.p_wait_semaphores = pre_wait.as_ptr();
+        }
+
         // Com o efeito aplicado, o present passa a esperar o semáforo do efeito, não os do jogo
         // (que o submit do efeito já consumiu).
-        let effect_semaphore = effect::process(&data, queue, &*p_present_info, enabled);
+        let effect_semaphore = effect::process(&data, queue, &effect_info, enabled);
         if enabled {
             data.depth.fx_presents[usize::from(effect_semaphore.is_some())].fetch_add(1, Ordering::Relaxed);
         }
-        let wait = [effect_semaphore.unwrap_or_default()];
+        // O que o present espera: o efeito; ou, sem efeito mas com captura, a cópia (que consumiu os semáforos do jogo).
+        let mut final_wait = effect_semaphore.or(before.as_ref().map(|c| c.semaphore));
+        if let Some(pre) = before {
+            let family = data.queues.lock().unwrap().get(&queue.as_raw()).copied().unwrap_or(0);
+            match (effect_semaphore, effect::frame_target(&data, (*info.p_swapchains).as_raw(), *info.p_image_indices as usize)) {
+                (Some(effect_done), Some(target)) => {
+                    // Com efeitos: a cópia do resultado espera o efeito e o present espera a cópia.
+                    let after = crate::screenshot::capture(&data, queue, family, target, &[effect_done], number);
+                    if let Some(after) = &after {
+                        final_wait = Some(after.semaphore);
+                    }
+                    if also_without {
+                        crate::screenshot::finish(&data, pre, ipc::shot::Kind::WithoutEffects);
+                    } else {
+                        crate::screenshot::finish_discard(&data, pre);
+                    }
+                    if let Some(after) = after {
+                        crate::screenshot::finish(&data, after, ipc::shot::Kind::WithEffects);
+                    }
+                }
+                _ => crate::screenshot::finish(&data, pre, ipc::shot::Kind::WithEffects),
+            }
+        }
+        let wait = [final_wait.unwrap_or_default()];
         let patched;
-        let p_info = if effect_semaphore.is_some() {
+        let p_info = if final_wait.is_some() {
             let mut copy = *p_present_info;
             copy.wait_semaphore_count = 1;
             copy.p_wait_semaphores = wait.as_ptr();

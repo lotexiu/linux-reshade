@@ -11,6 +11,8 @@ pub enum Action {
     /// Passa os jogos abertos para o preset seguinte/anterior (só no daemon, que sabe quais jogos estão abertos).
     NextPreset,
     PreviousPreset,
+    /// Pede uma captura de tela a cada jogo com a layer aberta.
+    Screenshot,
 }
 
 impl Action {
@@ -23,7 +25,7 @@ impl Action {
             Action::EffectsOn => state.set_effects_enabled(true),
             Action::EffectsOff => state.set_effects_enabled(false),
             // Sem jogos para olhar (a CLI): nada a mudar.
-            Action::NextPreset | Action::PreviousPreset => {}
+            Action::NextPreset | Action::PreviousPreset | Action::Screenshot => {}
         }
         Applied { effects_enabled: state.effects_enabled() }
     }
@@ -32,7 +34,13 @@ impl Action {
 impl Action {
     /// O que a ação faz no daemon: as de efeitos mexem no estado compartilhado; as de preset trocam o preset de cada jogo com a
     /// layer aberta. Devolve o texto para o log.
-    pub fn run(self, state: &ipc::Writer, presets_dir: Option<&std::path::Path>) -> String {
+    pub fn run(self, state: &ipc::Writer, presets_dir: Option<&std::path::Path>, screenshot_before: bool) -> String {
+        if self == Action::Screenshot {
+            return match ipc::shot::request_screenshot(screenshot_before) {
+                Ok(n) => format!("captura de tela pedida (#{n})"),
+                Err(e) => format!("não consegui pedir a captura: {e}"),
+            };
+        }
         let delta = match self {
             Action::NextPreset => 1,
             Action::PreviousPreset => -1,

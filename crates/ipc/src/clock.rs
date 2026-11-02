@@ -29,3 +29,14 @@ pub fn clock() -> String {
     }
     format!("{:02}:{:02}:{:02}.{:03}", tm.hour, tm.min, tm.sec, now.subsec_millis())
 }
+
+/// O instante agora no formato de nome de arquivo (`2026-11-02_18-45-03`), na hora local.
+pub fn file_stamp() -> String {
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
+    let mut tm = Tm { sec: 0, min: 0, hour: 0, mday: 0, mon: 0, year: 0, wday: 0, yday: 0, isdst: 0, gmtoff: 0, zone: std::ptr::null() };
+    // SAFETY: como em `clock`.
+    if unsafe { localtime_r(&secs, &mut tm) }.is_null() {
+        return secs.to_string();
+    }
+    format!("{:04}-{:02}-{:02}_{:02}-{:02}-{:02}", tm.year + 1900, tm.mon + 1, tm.mday, tm.hour, tm.min, tm.sec)
+}

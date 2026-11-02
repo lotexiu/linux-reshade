@@ -141,6 +141,12 @@ pub fn run(command: Command, state: &ipc::Writer) -> ExitCode {
             println!("{}", action::Applied { effects_enabled: state.effects_enabled() });
             ExitCode::SUCCESS
         }
+        Command::Screenshot => {
+            let config = config::Config::load();
+            println!("{}", action::Action::Screenshot.run(state, None, config.screenshot_before));
+            println!("as capturas vão para {}", config.screenshot_dir.display());
+            ExitCode::SUCCESS
+        }
         Command::Daemon => match daemon::run(state) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => fail(e),
@@ -178,7 +184,7 @@ pub fn run(command: Command, state: &ipc::Writer) -> ExitCode {
                 println!("vigiando os jogos com a layer (Ctrl+C para sair)");
                 {
                     let config = config::Config::load();
-                    watch::run(&compiler, state, config.presets_dir, &config.global_macros)
+                    watch::run(&compiler, state, config.presets_dir, &config.global_macros, &config.screenshot_dir)
                 }
             }
             Err(e) => fail(e),
