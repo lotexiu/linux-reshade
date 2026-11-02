@@ -711,6 +711,10 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
             fx.on_epoch(data, epoch);
         }
         if !enabled || fx.unusable.is_some() || index >= fx.images.len() {
+            if !enabled && crate::stats::enabled() {
+                // Sem efeitos rodando, a medição da GPU de antes não vale mais.
+                crate::stats::set_gpu(Vec::new());
+            }
             return None;
         }
 
