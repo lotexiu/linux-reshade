@@ -17,6 +17,6 @@ mod memory;
 pub mod shared;
 
 pub use backbuffer::BackbufferCopies;
-pub use chain::{Chain, Skipped, Step};
+pub use chain::{build_missing, Chain, ChainParts, Skipped, Step};
 pub use effect::{DepthInput, Effect, Target};
 pub use error::Error;

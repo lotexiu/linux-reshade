@@ -8,7 +8,7 @@ use crate::state::DeviceData;
 use ash::vk::{self, Handle};
 use ipc::{EffectState, SwapchainStatus, TechniqueState, TechniqueStatus};
 use postfx::effect::{DepthInput, FrameInfo, Target, utc_date};
-use postfx::{Chain, Step};
+use postfx::{Chain, Effect, Step};
 use std::sync::LazyLock;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -63,7 +63,7 @@ fn discard_job_in_background(fx: &mut Fx, device: &ash::Device) {
     let spawned = std::thread::Builder::new().name("lr-cleanup".into()).spawn({
         let device = device.clone();
         move || {
-            if let Ok(Ok(SendBuilt(built))) = thread.join() {
+            if let Ok(SendOut(Ok(Output::Full(built)))) = thread.join() {
                 let mut dead = Fx::Ready(built);
                 // SAFETY: a cadeia acabou de ser criada e nunca foi enviada à GPU.
                 unsafe { SwapchainFx::destroy_fx(&mut dead, &device) };
@@ -152,7 +152,11 @@ const FENCE_TIMEOUT_NS: u64 = 250_000_000;
 /// Uma criação de cadeia rodando numa thread própria (a compilação dos shaders pelo driver leva segundos e não pode parar o
 /// jogo). O resultado só é instalado no present seguinte ao fim dela, na thread que usa a fila.
 struct Job {
-    thread: Option<std::thread::JoinHandle<Result<SendBuilt, String>>>,
+    thread: Option<std::thread::JoinHandle<SendOut>>,
+    /// As etapas deste trabalho (a montagem da cadeia usa estas, não as mais novas que `steps` possa ter).
+    steps: Vec<ResolvedStep>,
+    /// Só cria os efeitos que faltam; os outros vêm da cadeia aposentada (sem refazê-los, o histórico dos que não mudaram fica).
+    incremental: bool,
     /// O que está sendo construído (bundle e técnica de cada etapa).
     signature: Vec<(u64, usize)>,
     /// A imagem de profundidade do jogo de que a cadeia tem uma view (se usa profundidade).
@@ -162,11 +166,38 @@ struct Job {
     started: Instant,
 }
 
-/// O que a thread devolve. Os handles do Vulkan são só inteiros e o `Chain` não é compartilhado enquanto a thread corre.
-struct SendBuilt(Built);
+/// O que a thread devolve: a cadeia inteira, ou só os efeitos novos (com as texturas compartilhadas que passaram para a thread).
+enum Output {
+    Full(Built),
+    Partial(Partial),
+}
 
-// SAFETY: o `Built` é construído numa thread e só depois entregue, inteiro, à thread do present; nada o acessa entre as duas.
-unsafe impl Send for SendBuilt {}
+/// Os efeitos novos de uma atualização incremental.
+struct Partial {
+    /// Um por etapa: `Some` para os criados agora.
+    effects: Vec<Option<Effect>>,
+    skipped: Vec<postfx::Skipped>,
+    /// As texturas compartilhadas (tiradas da cadeia aposentada): os efeitos reaproveitados e os novos as apelidam.
+    shared: postfx::shared::Shared,
+    /// Para cada etapa, a posição do efeito que ela reaproveita na cadeia aposentada.
+    reuse: Vec<Option<usize>>,
+}
+
+struct Failure {
+    why: String,
+    /// As texturas compartilhadas que a thread levou (voltam para ser destruídas depois da cadeia aposentada).
+    shared: Option<postfx::shared::Shared>,
+}
+
+struct SendOut(Result<Output, Failure>);
+
+// SAFETY: os handles do Vulkan são só inteiros e nada acessa o resultado entre a thread de criação e a do present.
+unsafe impl Send for SendOut {}
+
+struct SendPlan(Vec<Option<usize>>, postfx::shared::Shared);
+
+// SAFETY: como acima; a cadeia aposentada não usa o `Shared` enquanto a thread o tem.
+unsafe impl Send for SendPlan {}
 
 enum Fx {
     Unbuilt,
@@ -267,9 +298,14 @@ impl SwapchainFx {
         if let Fx::Building(job) = &self.fx
             && job.signature != new_signature
         {
-            log!("criação da cadeia descartada: a escolha mudou");
-            // Sem esperar a thread terminar (a primeira compilação leva segundos e parava o jogo): ela se desfaz sozinha.
-            discard_job_in_background(&mut self.fx, &data.device);
+            if job.incremental {
+                // Termina e instala (as texturas compartilhadas estão na thread); depois da instalação a escolha é olhada de novo e a
+                // diferença vira o próximo trabalho.
+            } else {
+                log!("criação da cadeia descartada: a escolha mudou");
+                // Sem esperar a thread terminar (a primeira compilação leva segundos e parava o jogo): ela se desfaz sozinha.
+                discard_job_in_background(&mut self.fx, &data.device);
+            }
         }
         // Uma falha anterior era da cadeia antiga: com outra vale tentar de novo.
         if matches!(self.fx, Fx::Failed(_)) && signature(&self.steps) != new_signature {
@@ -323,7 +359,27 @@ impl SwapchainFx {
         let built = match std::mem::replace(fx, Fx::Unbuilt) {
             Fx::Ready(built) => Some(built),
             // Uma criação em andamento: espera a thread terminar e descarta o resultado (nada o usou).
-            Fx::Building(mut job) => job.thread.take().and_then(|t| t.join().ok()).and_then(Result::ok).map(|b| b.0),
+            Fx::Building(mut job) => match job.thread.take().and_then(|t| t.join().ok()) {
+                Some(SendOut(Ok(Output::Full(built)))) => Some(built),
+                // Os efeitos novos saem antes das texturas compartilhadas que apelidam; a cadeia aposentada (que também as apelida)
+                // já saiu antes (ver `drop_retiring` nos chamadores).
+                Some(SendOut(Ok(Output::Partial(mut partial)))) => {
+                    unsafe {
+                        for effect in partial.effects.iter_mut().flatten() {
+                            effect.destroy(device);
+                        }
+                        partial.shared.destroy(device);
+                    }
+                    None
+                }
+                Some(SendOut(Err(mut failure))) => {
+                    if let Some(shared) = failure.shared.as_mut() {
+                        unsafe { shared.destroy(device) };
+                    }
+                    None
+                }
+                None => None,
+            },
             _ => None,
         };
         if let Some(mut built) = built {
@@ -357,6 +413,103 @@ struct BuildArgs {
     depth: Option<crate::depth::Chosen>,
     queue_family: u32,
     set_loader_data: vk_layer::abi::PfnSetDeviceLoaderData,
+}
+
+/// De onde vêm os uniforms de uma etapa nova.
+fn runtime_for(step: &ResolvedStep) -> StepRuntime {
+    StepRuntime {
+        params_id: step.bundle.params_id(),
+        source: match &step.params {
+            StepParams::Legacy => StepSource::Published(ParamState::new(fx_bundle::uniforms::default_block(&step.bundle.manifest))),
+            StepParams::Plan(bytes) => StepSource::Plan(bytes.clone()),
+        },
+    }
+}
+
+/// Cria só os efeitos que faltam (ver [`Partial`]) numa thread: os de `reuse` já existem na cadeia aposentada.
+fn build_partial(a: BuildArgs, reuse: Vec<Option<usize>>, mut shared: postfx::shared::Shared) -> Result<Output, Failure> {
+    for (n, step) in a.steps.iter().enumerate() {
+        let t = step.bundle.manifest.target;
+        if (t.width, t.height) != (a.extent.width, a.extent.height) {
+            return Err(Failure { why: format!("etapa {n}: o bundle foi compilado para {}x{} e o swapchain é {}x{}", t.width, t.height, a.extent.width, a.extent.height), shared: Some(shared) });
+        }
+    }
+    let device = &a.device;
+    let device_handle = device.handle();
+    let set_loader_data = a.set_loader_data;
+    let depth = a.depth;
+    let target = Target {
+        images: &a.images,
+        format: a.format,
+        extent: a.extent,
+        rest_layout: vk::ImageLayout::PRESENT_SRC_KHR,
+        queue_family: a.queue_family,
+        init_command_buffer: Some(&move |cb| {
+            let result = unsafe { set_loader_data(device_handle, cb.as_raw() as *mut std::ffi::c_void) };
+            if result == vk::Result::SUCCESS { Ok(()) } else { Err(result) }
+        }),
+        depth: depth.map(|d| DepthInput {
+            image: vk::Image::from_raw(d.image),
+            format: vk::Format::from_raw(d.format),
+            layout: vk::ImageLayout::from_raw(d.layout),
+            extent: vk::Extent2D { width: d.width, height: d.height },
+            linear_filter: d.linear,
+        }),
+    };
+    let chain_steps: Vec<Step<'_>> = a.steps.iter().map(|s| Step { bundle: &s.bundle, technique: s.technique }).collect();
+    let flags: Vec<bool> = reuse.iter().map(Option::is_some).collect();
+    match unsafe { postfx::build_missing(device, &a.memory, &chain_steps, &flags, &target, &mut shared) } {
+        Ok((effects, skipped)) => {
+            for s in &skipped {
+                log!("etapa {} pulada: {}", s.step, s.why);
+            }
+            Ok(Output::Partial(Partial { effects, skipped, shared, reuse }))
+        }
+        Err(e) => Err(Failure { why: e.to_string(), shared: Some(shared) }),
+    }
+}
+
+/// Junta os efeitos reaproveitados da cadeia aposentada com os novos, na ordem das etapas. A cadeia aposentada deixa de existir
+/// (o que sobrou dela é destruído); as fences e os semáforos dela passam para a nova.
+fn assemble_partial(old: Option<Built>, partial: Partial, steps: &[ResolvedStep], depth_key: Option<(u64, i32)>, device: &ash::Device) -> Result<Built, (String, Option<postfx::shared::Shared>)> {
+    let Partial { effects: mut new_effects, skipped, shared, reuse } = partial;
+    let Some(old) = old else {
+        for effect in new_effects.iter_mut().flatten() {
+            unsafe { effect.destroy(device) };
+        }
+        return Err(("a cadeia anterior sumiu antes da atualização terminar".into(), Some(shared)));
+    };
+    unsafe {
+        if !old.fences.is_empty() {
+            let _ = device.wait_for_fences(&old.fences, true, 5_000_000_000);
+        }
+    }
+    let Built { chain, params: old_params, semaphores, fences, .. } = old;
+    let mut parts = chain.into_parts();
+    let mut old_params: Vec<Option<StepRuntime>> = old_params.into_iter().map(Some).collect();
+    let (mut effects, mut origin, mut params) = (Vec::new(), Vec::new(), Vec::new());
+    for (n, step) in steps.iter().enumerate() {
+        if let Some(i) = reuse.get(n).copied().flatten() {
+            let (Some(effect), Some(mut runtime)) = (parts.effects.get_mut(i).and_then(Option::take), old_params.get_mut(i).and_then(Option::take)) else { continue };
+            // Os uniforms do plano podem ter mudado.
+            if let (StepSource::Plan(bytes), StepParams::Plan(new)) = (&mut runtime.source, &step.params) {
+                *bytes = new.clone();
+            }
+            effects.push(effect);
+            origin.push(n);
+            params.push(runtime);
+        } else if let Some(effect) = new_effects.get_mut(n).and_then(Option::take) {
+            effects.push(effect);
+            origin.push(n);
+            params.push(runtime_for(step));
+        }
+    }
+    // O que a cadeia aposentada tinha e a nova não usa.
+    for effect in parts.effects.iter_mut().flatten() {
+        unsafe { effect.destroy(device) };
+    }
+    let chain = Chain::from_parts(effects, shared, origin.clone());
+    Ok(Built { chain, signature: signature(steps), origin, skipped: skipped.iter().map(|s| (s.step, s.why.clone())).collect(), depth_key, params, semaphores, fences })
 }
 
 /// Cria a cadeia (sem usar nenhuma fila: a inicialização das texturas termina depois, na thread do present).
@@ -402,17 +555,7 @@ fn build_chain(a: BuildArgs) -> Result<Built, String> {
         }
         // Os parâmetros seguem as etapas que ficaram na cadeia (as puladas não têm efeito a alimentar).
         let origin: Vec<usize> = (0..chain.len()).filter_map(|i| chain.origin(i)).collect();
-        let params = origin
-            .iter()
-            .map(|&i| &steps[i])
-            .map(|s| StepRuntime {
-                params_id: s.bundle.params_id(),
-                source: match &s.params {
-                    StepParams::Legacy => StepSource::Published(ParamState::new(fx_bundle::uniforms::default_block(&s.bundle.manifest))),
-                    StepParams::Plan(bytes) => StepSource::Plan(bytes.clone()),
-                },
-            })
-            .collect();
+        let params = origin.iter().map(|&i| runtime_for(&steps[i])).collect();
         let skipped = skipped.iter().map(|s| (s.step, s.why.clone())).collect();
         let mut built = Built { chain, signature: signature(steps), origin, skipped, depth_key: depth.map(|d| (d.image, d.layout)), params, semaphores: Vec::new(), fences: Vec::new() };
         for _ in &a.images {
@@ -513,10 +656,45 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
                 set_loader_data: data.set_loader_data,
             };
             let signature = signature(&fx.steps);
-            match std::thread::Builder::new().name("lr-build".into()).spawn(move || build_chain(args).map(SendBuilt)) {
+            // Uma cadeia aposentada que tem efeitos iguais aos novos (mesmo bundle, técnica e profundidade) os cede: só o que mudou é
+            // criado, e o que não mudou segue com o histórico (os efeitos temporais não "piscam" porque outro foi ligado).
+            let depth_key_now = depth.map(|d| (d.image, d.layout));
+            let mut plan: Option<SendPlan> = None;
+            if let Some(old) = fx.retiring.as_mut()
+                && old.depth_key == depth_key_now
+                && old.fences.len() == fx.images.len()
+            {
+                let chain_steps: Vec<Step<'_>> = fx.steps.iter().map(|s| Step { bundle: &s.bundle, technique: s.technique }).collect();
+                if old.chain.shared_mut().merge_scan(&chain_steps) {
+                    let mut available: Vec<Option<(u64, usize)>> = old.chain.keys().into_iter().map(Some).collect();
+                    let reuse: Vec<Option<usize>> = fx
+                        .steps
+                        .iter()
+                        .map(|s| {
+                            let position = available.iter().position(|k| *k == Some((s.bundle.id, s.technique)));
+                            if let Some(p) = position {
+                                available[p] = None;
+                            }
+                            position
+                        })
+                        .collect();
+                    if reuse.iter().any(Option::is_some) {
+                        plan = Some(SendPlan(reuse, old.chain.take_shared()));
+                    }
+                }
+            }
+            let incremental = plan.is_some();
+            let steps_for_job = fx.steps.clone();
+            let work = move || {
+                SendOut(match plan {
+                    Some(SendPlan(reuse, shared)) => build_partial(args, reuse, shared),
+                    None => build_chain(args).map(Output::Full).map_err(|why| Failure { why, shared: None }),
+                })
+            };
+            match std::thread::Builder::new().name("lr-build".into()).spawn(work) {
                 Ok(thread) => {
-                    log!("criação da cadeia iniciada noutra thread ({} etapa(s))", fx.steps.len());
-                    fx.fx = Fx::Building(Job { thread: Some(thread), signature, depth_image: depth.map(|d| d.image), depth_key: depth.map(|d| (d.image, d.layout)), started: Instant::now() });
+                    log!("criação da cadeia iniciada noutra thread ({} etapa(s){})", fx.steps.len(), if incremental { ", só as que mudaram" } else { "" });
+                    fx.fx = Fx::Building(Job { thread: Some(thread), steps: steps_for_job, incremental, signature, depth_image: depth.map(|d| d.image), depth_key: depth_key_now, started: Instant::now() });
                 }
                 Err(e) => {
                     log!("não consegui criar a thread da cadeia: {e}");
@@ -524,7 +702,10 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
                     fx.fx = Fx::Failed(format!("thread: {e}"));
                 }
             }
-            return None;
+            // Com uma cadeia aposentada o quadro segue com ela; sem nenhuma, passa sem efeito.
+            if fx.retiring.is_none() {
+                return None;
+            }
         }
         let build_finished = matches!(&fx.fx, Fx::Building(job) if job.thread.as_ref().is_some_and(|t| t.is_finished()));
         if matches!(&fx.fx, Fx::Building(_)) && !build_finished && fx.retiring.is_none() {
@@ -533,16 +714,24 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
         if build_finished && let Fx::Building(job) = &mut fx.fx {
             let started = job.started;
             let built_with = job.depth_key;
+            let job_steps = std::mem::take(&mut job.steps);
+            let incremental = job.incremental;
             let result = job.thread.take().map(|t| t.join()).unwrap_or(Err(Box::new("sem thread")));
-            fx.fx = match result {
-                Ok(Ok(SendBuilt(mut built))) => {
-                    // A inicialização das texturas precisa da fila: aqui, na thread que a usa.
+            let outcome: Result<Built, (String, Option<postfx::shared::Shared>)> = match result {
+                Ok(SendOut(Ok(Output::Full(built)))) => Ok(built),
+                Ok(SendOut(Ok(Output::Partial(partial)))) => assemble_partial(fx.retiring.take(), partial, &job_steps, built_with, &data.device),
+                Ok(SendOut(Err(failure))) => Err((failure.why, failure.shared)),
+                Err(_) => Err(("a thread de criação da cadeia falhou".to_string(), None)),
+            };
+            fx.fx = match outcome {
+                Ok(mut built) => {
+                    // A inicialização das texturas (só as dos efeitos novos) precisa da fila: aqui, na thread que a usa.
                     match built.chain.finish_init(&data.device, queue) {
                         Ok(()) => {
                             log!("efeito criado para o swapchain {:#x} ({} imagens) em {} ms", swapchain.as_raw(), fx.images.len(), started.elapsed().as_millis());
                             log!("cadeia de {} etapa(s) criada", built.chain.len());
                             crate::status::set_techniques(
-                                fx.steps
+                                job_steps
                                     .iter()
                                     .enumerate()
                                     .map(|(i, step)| TechniqueStatus {
@@ -558,6 +747,10 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
                                 log!("etapa {step}: uniform sem fonte no runtime (fica no valor padrão): {ignored}");
                             }
                             fx.set_state(EffectState::Ready);
+                            if incremental {
+                                // A escolha pode ter mudado de novo durante o trabalho: olha-a outra vez no próximo present.
+                                fx.seen_epoch = u64::MAX;
+                            }
                             Fx::Ready(built)
                         }
                         Err(e) => {
@@ -571,15 +764,14 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
                         }
                     }
                 }
-                Ok(Err(why)) => {
+                Err((why, shared)) => {
                     log!("efeito indisponível no swapchain {:#x}: {why}", swapchain.as_raw());
+                    // A cadeia aposentada também apelida as texturas compartilhadas: sai antes delas.
+                    fx.drop_retiring(&data.device);
+                    if let Some(mut shared) = shared {
+                        shared.destroy(&data.device);
+                    }
                     fx.failed_depth = built_with;
-                    fx.set_state(EffectState::Failed(why.clone()));
-                    Fx::Failed(why)
-                }
-                Err(_) => {
-                    let why = "a thread de criação da cadeia falhou".to_string();
-                    log!("efeito indisponível no swapchain {:#x}: {why}", swapchain.as_raw());
                     fx.set_state(EffectState::Failed(why.clone()));
                     Fx::Failed(why)
                 }

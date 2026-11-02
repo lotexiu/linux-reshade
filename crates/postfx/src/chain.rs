@@ -32,6 +32,51 @@ pub fn technique_index(bundle: &Bundle, name: &str) -> Option<usize> {
     bundle.manifest.techniques.iter().position(|t| t.name == name)
 }
 
+/// Os pedaços de uma cadeia desmontada (ver [`Chain::into_parts`]).
+pub struct ChainParts {
+    pub effects: Vec<Option<Effect>>,
+    pub shared: Shared,
+    pub origin: Vec<usize>,
+}
+
+/// Cria só os efeitos que faltam de uma cadeia nova: `reuse[n]` diz que a etapa `n` usará um efeito que já existe (não é criada
+/// aqui). Devolve um `Option<Effect>` por etapa (`None` para as reaproveitadas e as puladas por falta de suporte) e as puladas.
+/// Sem usar fila: cada efeito criado fica com a inicialização pendente (ver [`Chain::finish_init`]).
+///
+/// # Safety
+/// As mesmas de [`Effect::new_shared`]; `shared` vive mais que os efeitos criados.
+pub unsafe fn build_missing(
+    device: &ash::Device,
+    memory: &vk::PhysicalDeviceMemoryProperties,
+    steps: &[Step<'_>],
+    reuse: &[bool],
+    target: &Target<'_>,
+    shared: &mut Shared,
+) -> Result<(Vec<Option<Effect>>, Vec<Skipped>), Error> {
+    let mut built: Vec<Option<Effect>> = Vec::new();
+    let mut skipped = Vec::new();
+    for (n, step) in steps.iter().enumerate() {
+        if reuse.get(n).copied().unwrap_or(false) {
+            built.push(None);
+            continue;
+        }
+        match unsafe { Effect::new_shared(device, memory, step.bundle, step.technique, target, None, Some(shared)) } {
+            Ok(effect) => built.push(Some(effect)),
+            Err(Error::Unsupported(why)) => {
+                skipped.push(Skipped { step: n, why });
+                built.push(None);
+            }
+            Err(e) => {
+                for effect in built.iter_mut().flatten() {
+                    unsafe { effect.destroy(device) };
+                }
+                return Err(e);
+            }
+        }
+    }
+    Ok((built, skipped))
+}
+
 /// Uma etapa que a cadeia pulou por usar algo que o runtime ainda não faz.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Skipped {
@@ -137,6 +182,32 @@ impl Chain {
             unsafe { effect.finish_init(device, queue) }?;
         }
         Ok(())
+    }
+
+    /// O bundle e a técnica de cada efeito da cadeia, na ordem de execução.
+    pub fn keys(&self) -> Vec<(u64, usize)> {
+        self.effects.iter().map(Effect::key).collect()
+    }
+
+    /// As texturas compartilhadas da cadeia (o dono das imagens), para quem quer criar efeitos novos fora dela.
+    pub fn shared_mut(&mut self) -> &mut Shared {
+        &mut self.shared
+    }
+
+    /// Tira as texturas compartilhadas desta cadeia (ela fica sem elas: os efeitos que já tem continuam apelidando as imagens, que
+    /// passam a ser de quem as recebeu e precisam viver mais que eles).
+    pub fn take_shared(&mut self) -> Shared {
+        std::mem::take(&mut self.shared)
+    }
+
+    /// Desmonta a cadeia nos efeitos (um `Option` por posição, para tirar um a um), nas texturas compartilhadas e na origem.
+    pub fn into_parts(mut self) -> ChainParts {
+        ChainParts { effects: std::mem::take(&mut self.effects).into_iter().map(Some).collect(), shared: std::mem::take(&mut self.shared), origin: std::mem::take(&mut self.origin) }
+    }
+
+    /// Monta uma cadeia com efeitos prontos (a ordem de execução é a da lista), as texturas que eles apelidam e a origem de cada um.
+    pub fn from_parts(effects: Vec<Effect>, shared: Shared, origin: Vec<usize>) -> Self {
+        Self { effects, shared, origin }
     }
 
     /// De qual etapa da lista original vem o efeito `position` da cadeia.

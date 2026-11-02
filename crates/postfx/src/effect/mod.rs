@@ -139,6 +139,8 @@ pub(crate) struct MipChain {
 
 #[derive(Default)]
 pub struct Effect {
+    /// Que bundle e técnica este efeito executa (a cadeia reaproveita o efeito que já tem a mesma chave).
+    key: (u64, usize),
     copy: BackbufferCopies,
     /// Cópia do frame em formato sRGB, para samplers com `SRGBTexture` (a leitura decodifica sozinha).
     copy_srgb: GpuImage,
@@ -259,12 +261,17 @@ impl Effect {
         queue: Option<vk::Queue>,
         shared: Option<&mut Shared>,
     ) -> Result<Self, Error> {
-        let mut effect = Self::default();
+        let mut effect = Self { key: (bundle.id, technique), ..Self::default() };
         if let Err(e) = unsafe { effect.build(device, memory, bundle, technique, target, queue, shared) } {
             unsafe { effect.destroy(device) };
             return Err(e);
         }
         Ok(effect)
+    }
+
+    /// O bundle (`Bundle::id`) e a técnica deste efeito.
+    pub fn key(&self) -> (u64, usize) {
+        self.key
     }
 
     /// Command buffer que processa a imagem `index` do alvo.
