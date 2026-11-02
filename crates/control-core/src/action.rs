@@ -8,6 +8,9 @@ pub enum Action {
     ToggleEffects,
     EffectsOn,
     EffectsOff,
+    /// Passa os jogos abertos para o preset seguinte/anterior (só no daemon, que sabe quais jogos estão abertos).
+    NextPreset,
+    PreviousPreset,
 }
 
 impl Action {
@@ -19,8 +22,37 @@ impl Action {
             }
             Action::EffectsOn => state.set_effects_enabled(true),
             Action::EffectsOff => state.set_effects_enabled(false),
+            // Sem jogos para olhar (a CLI): nada a mudar.
+            Action::NextPreset | Action::PreviousPreset => {}
         }
         Applied { effects_enabled: state.effects_enabled() }
+    }
+}
+
+impl Action {
+    /// O que a ação faz no daemon: as de efeitos mexem no estado compartilhado; as de preset trocam o preset de cada jogo com a
+    /// layer aberta. Devolve o texto para o log.
+    pub fn run(self, state: &ipc::Writer, presets_dir: Option<&std::path::Path>) -> String {
+        let delta = match self {
+            Action::NextPreset => 1,
+            Action::PreviousPreset => -1,
+            other => return other.apply(state).to_string(),
+        };
+        let Some(dir) = presets_dir else { return "sem pasta de presets".into() };
+        let mut games: Vec<String> = ipc::live_layers().unwrap_or_default().iter().map(|l| l.status.game_id().to_string()).filter(|g| !g.is_empty()).collect();
+        games.sort();
+        games.dedup();
+        if games.is_empty() {
+            return "nenhum jogo com a layer aberto".into();
+        }
+        games
+            .iter()
+            .map(|game| match crate::presets::cycle_preset(dir, game, delta) {
+                Ok(name) => format!("{game}: preset {name}"),
+                Err(why) => why,
+            })
+            .collect::<Vec<_>>()
+            .join("; ")
     }
 }
 

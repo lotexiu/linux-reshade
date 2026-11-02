@@ -9,6 +9,7 @@ mod depth_picker;
 mod games;
 mod macros;
 mod settings;
+mod shortcuts_dialog;
 mod window;
 
 use control_core::compiler::Compiler;
@@ -27,6 +28,7 @@ struct Options {
     game: Option<String>,
     /// Abre o editor de definições (para fotografar a tela com ele aberto).
     open_macros: bool,
+    open_shortcuts: bool,
     /// Espera antes de agir (para um jogo abrir depois do painel).
     wait_ms: u64,
     /// Escolhe este efeito na lista (e desfaz ao sair).
@@ -39,7 +41,7 @@ struct Options {
 
 impl Options {
     fn is_test_run(&self) -> bool {
-        self.game.is_some() || self.smoke.is_some() || self.open_macros || self.screenshot.is_some() || self.effect.is_some() || self.hold_ms > 0 || self.wait_ms > 0 || self.keepalive_check
+        self.game.is_some() || self.smoke.is_some() || self.open_macros || self.open_shortcuts || self.screenshot.is_some() || self.effect.is_some() || self.hold_ms > 0 || self.wait_ms > 0 || self.keepalive_check
     }
 }
 
@@ -54,6 +56,7 @@ fn parse_args() -> Result<Options, String> {
             "--hold" => options.hold_ms = args.next().and_then(|v| v.parse().ok()).ok_or("--hold precisa de um tempo em milissegundos")?,
             "--game" => options.game = Some(args.next().ok_or("--game precisa do id de um jogo")?),
             "--open-macros" => options.open_macros = true,
+            "--open-shortcuts" => options.open_shortcuts = true,
             "--keepalive-check" => options.keepalive_check = true,
             "--screenshot" => options.screenshot = Some(args.next().ok_or("--screenshot precisa de um arquivo .png")?),
             other => return Err(format!("opção desconhecida: {other}\nuso: lrpanel [--smoke <Efeito>] [--effect <Efeito>] [--screenshot <arquivo.png>] [--wait <ms>] [--hold <ms>]")),
@@ -63,7 +66,7 @@ fn parse_args() -> Result<Options, String> {
 }
 
 /// Grava a janela, já desenhada, num PNG.
-fn save_screenshot(window: &gtk::ApplicationWindow, path: &str) -> Result<(), String> {
+fn save_screenshot(window: &impl IsA<gtk::Widget>, path: &str) -> Result<(), String> {
     let (width, height) = (window.width(), window.height());
     let paintable = gtk::WidgetPaintable::new(Some(window));
     let snapshot = gtk::Snapshot::new();
@@ -186,8 +189,16 @@ async fn test_run(app: gtk::Application, ui: Rc<window::Ui>, options: Rc<Options
         ui.macros_popup();
         glib::timeout_future(Duration::from_millis(500)).await;
     }
+    let dialog = options.open_shortcuts.then(|| shortcuts_dialog::open(&ui.window));
+    if dialog.is_some() {
+        glib::timeout_future(Duration::from_millis(500)).await;
+    }
     if let Some(path) = &options.screenshot {
-        match save_screenshot(&ui.window, path) {
+        let shot = match &dialog {
+            Some(d) => save_screenshot(d, path),
+            None => save_screenshot(&ui.window, path),
+        };
+        match shot {
             Ok(()) => println!("lrpanel: captura em {path}"),
             Err(e) => fail(format!("captura falhou: {e}")),
         }

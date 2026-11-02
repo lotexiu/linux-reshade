@@ -124,6 +124,23 @@ pub struct Config {
     pub global_macros: String,
     /// Onde ficam os bundles compilados.
     pub cache_dir: PathBuf,
+    /// Os atalhos de teclado da seção `[INPUT]` (`KeyEffects=CTRL+SHIFT+F10`, ...): `(nome, texto)`; ver [`KEY_NAMES`].
+    pub keys: Vec<(String, String)>,
+}
+
+/// Os atalhos que o `config.ini` guarda na seção `[INPUT]` (os nomes são os do `ReShade.ini`) e o que cada um faz.
+pub const KEY_NAMES: [(&str, &str); 3] = [
+    ("KeyEffects", "Ligar/desligar os efeitos"),
+    ("KeyNextPreset", "Próximo preset do jogo"),
+    ("KeyPreviousPreset", "Preset anterior do jogo"),
+];
+
+/// O atalho de fábrica de cada tecla (vazio: sem atalho).
+pub fn default_key(name: &str) -> &'static str {
+    match name {
+        "KeyEffects" => "CTRL+SHIFT+F10",
+        _ => "",
+    }
 }
 
 /// Como o ambiente é lido: injetado, para os testes não dependerem da máquina.
@@ -208,7 +225,18 @@ impl Config {
             .unwrap_or_else(|| default_cache(env));
 
         let global_macros = env("LINUX_RESHADE_DEFINES").map(|v| v.to_string_lossy().into_owned()).or_else(|| ini.as_ref().and_then(|i| i.get("GENERAL", "PreprocessorDefinitions")).map(String::from)).unwrap_or_default();
-        Self { data_dir, config_file: configured, effect_paths, texture_paths, presets_dir, global_macros, cache_dir }
+        let keys = ini.as_ref().map(|i| i.entries("INPUT").into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()).unwrap_or_default();
+        Self { data_dir, config_file: configured, effect_paths, texture_paths, presets_dir, global_macros, cache_dir, keys }
+    }
+
+    /// O atalho de `name` (de [`KEY_NAMES`]): o do `config.ini`, ou o de fábrica. Texto vazio: sem atalho.
+    pub fn key(&self, name: &str) -> String {
+        self.keys.iter().find(|(k, _)| k == name).map_or_else(|| default_key(name).to_string(), |(_, v)| v.clone())
+    }
+
+    /// Onde o `config.ini` mora (existindo ou não), se há pasta de dados.
+    pub fn config_path(&self) -> Option<PathBuf> {
+        self.config_file.clone().or_else(|| self.data_dir.as_ref().map(|d| d.join("config.ini")))
     }
 
     /// Nada foi configurado: sem pasta de dados e sem lista de efeitos por variável.
@@ -239,6 +267,13 @@ impl Config {
         paths.extend(global.iter().cloned());
         expand(&paths)
     }
+}
+
+/// Grava um atalho na seção `[INPUT]` do `config.ini` (cria o arquivo se preciso). Texto vazio guarda "sem atalho".
+pub fn set_key(config_file: &Path, name: &str, value: &str) -> io::Result<()> {
+    let mut ini = Ini::load(config_file).unwrap_or_default();
+    ini.set("INPUT", name, value);
+    ini.save(config_file)
 }
 
 /// O que `init` criou.

@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 config = { path = "../config" }
+ini = { path = "../ini" }
 ipc = { path = "../ipc" }
 control-core = { path = "../control-core" }
 shortcuts = { path = "../shortcuts" }

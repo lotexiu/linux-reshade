@@ -309,9 +309,18 @@ impl Ui {
         toggle.append(&gtk::Label::new(Some("Efeitos ligados")));
         toggle.append(&enabled);
         header.pack_end(&toggle);
+        let shortcuts_button = gtk::Button::from_icon_name("input-keyboard-symbolic");
+        shortcuts_button.set_tooltip_text(Some("Atalhos de teclado (ligar/desligar efeitos, trocar de preset)"));
+        header.pack_start(&shortcuts_button);
 
         let window = gtk::ApplicationWindow::builder().application(app).title("linux-reshade").default_width(600).default_height(780).child(&page).build();
         window.set_titlebar(Some(&header));
+        {
+            let window = window.clone();
+            shortcuts_button.connect_clicked(move |_| {
+                crate::shortcuts_dialog::open(&window);
+            });
+        }
 
         let ui = Rc::new(Ui {
             window,

@@ -5,7 +5,10 @@
 //! *request*; o resultado vem no sinal `Response` desse request. Como o sinal pode chegar antes de
 //! a chamada retornar, o caminho do request é calculado antes e o sinal é assinado antes da chamada.
 
+mod kde;
 mod request;
+
+pub use kde::forget;
 
 use request::Requester;
 use shortcuts::{Backend, BoundShortcut, Error, Event, Phase, Shortcut};

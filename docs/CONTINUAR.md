@@ -151,3 +151,9 @@ target/release/lrpanel --effect Sepia --screenshot /tmp/painel.png --hold 2000 -
 - Oscilação da profundidade tinha duas causas: (1) a candidata escolhida pelo número sumia quando o jogo recriava a imagem (mapas de sombra em cascata) e a escolha caía na heurística; agora herda a imagem de mesmo tamanho/formato (`picked_image`); (2) o daemon remontava o plano toda vez que a inversão (`reversed`) piscava entre `Some` e `None`, refazendo a cadeia; agora só muda depois de 25 ticks iguais (`REVERSED_TICKS`).
 - `lrctl layers` mostra "presents sem efeito/com efeito": se o primeiro número cresce durante a oscilação, a layer está pulando o efeito.
 - MSAA em qualidade máxima funciona com a layer atual (resolve da amostra 0).
+
+## Atalhos configuráveis (2026-11-02)
+
+- `config.ini`, seção `[INPUT]`: `KeyEffects` (ligar/desligar, de fábrica `CTRL+SHIFT+F10`), `KeyNextPreset`, `KeyPreviousPreset`. O valor é o formato XDG do portal; `shortcuts::trigger::normalize` entende `'`, `OEM_7`, `Ctrl+Shift+F10`... A janela de atalhos do painel (botão do teclado) captura a tecla e grava.
+- O portal só usa a tecla sugerida na primeira vez que vê um id (confirmado no KDE). Para trocar, o daemon anota o que registrou (`shortcuts-bound.ini`, ao lado do cache), esquece o atalho pelo `KGlobalAccel` do KDE (`shortcuts_portal::forget`) e registra de novo; o daemon se reexecuta sozinho ao ver o `[INPUT]` mudar. No GNOME não há "esquecer": a tecla só muda pelas configurações do sistema.
+- Uma tecla sem modificador (como `'`) vale em TODOS os programas enquanto o daemon roda; a janela avisa.

@@ -93,6 +93,41 @@ pub fn new_for_game(presets_dir: &Path, game_id: &str, name: &str) -> Result<Pat
     Ok(path)
 }
 
+/// Os presets do jogo (nomes sem a extensão, em ordem alfabética sem distinguir caixa).
+pub fn list_for_game(presets_dir: &Path, game_id: &str) -> Vec<String> {
+    let Some(dir) = game::game_dir(presets_dir, game_id) else { return Vec::new() };
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().is_file())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| game::valid_preset_file(n))
+        .map(|n| n.trim_end_matches(".ini").trim_end_matches(".INI").to_string())
+        .collect();
+    names.sort_by_key(|n| n.to_lowercase());
+    names
+}
+
+/// Passa o jogo para o preset seguinte (`delta` 1) ou anterior (`-1`) da lista, dando a volta. Sem preset próprio ainda, o
+/// primeiro (ou o último). Devolve o nome do escolhido.
+pub fn cycle_preset(presets_dir: &Path, game_id: &str, delta: i32) -> Result<String, String> {
+    let names = list_for_game(presets_dir, game_id);
+    if names.is_empty() {
+        return Err(format!("{game_id}: o jogo não tem presets próprios"));
+    }
+    let current = game::find(presets_dir, game_id).and_then(|f| f.path.file_stem().map(|s| s.to_string_lossy().into_owned()));
+    let position = current.and_then(|c| names.iter().position(|n| n.eq_ignore_ascii_case(&c)));
+    let len = names.len() as i32;
+    let next = match position {
+        Some(i) => (i as i32 + delta).rem_euclid(len),
+        None if delta >= 0 => 0,
+        None => len - 1,
+    } as usize;
+    use_preset(presets_dir, game_id, Some(&names[next]))?;
+    Ok(names[next].clone())
+}
+
 /// Escolhe o preset do jogo (`Some(arquivo)`), ou volta a seguir o global (`None`).
 pub fn use_preset(presets_dir: &Path, game_id: &str, name: Option<&str>) -> Result<(), String> {
     let file = name.map(|n| if n.to_ascii_lowercase().ends_with(".ini") { n.to_string() } else { format!("{n}.ini") });
@@ -259,5 +294,28 @@ mod tests {
         assert!(f.compiler.any_bundle("Invert").is_some());
         assert!(set_uniform(&mut p, &f.compiler, "Inexistente.fx", "A", &[1.0]).is_err());
         assert_eq!(p.value("Invert.fx", "Qualquer"), None, "nada foi gravado");
+    }
+}
+
+#[cfg(test)]
+mod cycle_tests {
+    use super::*;
+
+    #[test]
+    fn cycling_walks_the_games_presets_in_order_and_wraps() {
+        let dir = std::env::temp_dir().join(format!("lr-cycle-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("Jogo")).unwrap();
+        for n in ["Beta.ini", "alfa.ini", "Gama.ini"] {
+            std::fs::write(dir.join("Jogo").join(n), "Techniques=\n").unwrap();
+        }
+        assert_eq!(list_for_game(&dir, "Jogo"), ["alfa", "Beta", "Gama"]);
+        assert_eq!(cycle_preset(&dir, "Jogo", 1).unwrap(), "alfa", "sem preset próprio: o primeiro");
+        assert_eq!(cycle_preset(&dir, "Jogo", 1).unwrap(), "Beta");
+        assert_eq!(cycle_preset(&dir, "Jogo", 1).unwrap(), "Gama");
+        assert_eq!(cycle_preset(&dir, "Jogo", 1).unwrap(), "alfa", "dá a volta");
+        assert_eq!(cycle_preset(&dir, "Jogo", -1).unwrap(), "Gama", "e volta para trás");
+        assert!(cycle_preset(&dir, "Outro", 1).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

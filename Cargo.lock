@@ -810,6 +810,7 @@ dependencies = [
  "config",
  "control-core",
  "fx-bundle",
+ "ini",
  "ipc",
  "panel",
  "preset",
@@ -828,6 +829,7 @@ dependencies = [
  "ipc",
  "panel",
  "preset",
+ "shortcuts",
 ]
 
 [[package]]

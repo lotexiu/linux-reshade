@@ -13,6 +13,7 @@ path = "src/main.rs"
 panel = { path = "../panel" }
 control-core = { path = "../control-core" }
 config = { path = "../config" }
+shortcuts = { path = "../shortcuts" }
 preset = { path = "../preset" }
 ini = { path = "../ini" }
 ipc = { path = "../ipc" }

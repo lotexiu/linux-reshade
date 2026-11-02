@@ -226,3 +226,22 @@ fn global_macros_come_from_config_ini_or_the_environment() {
     assert_eq!(c.global_macros, "X=2", "a variável de ambiente vale mais");
     assert_eq!(resolve(&sb.env(&[])).global_macros, "");
 }
+
+#[test]
+fn keys_come_from_the_input_section_with_factory_defaults() {
+    let sb = Sandbox::new("keys");
+    let data = sb.path("dados");
+    sb.write("dados/config.ini", "[GENERAL]\nPresetsPath=./Presets\n");
+    let env = sb.env(&[("LINUX_RESHADE_DATA", data.to_str().unwrap())]);
+    let c = resolve(&env);
+    assert_eq!(c.key("KeyEffects"), "CTRL+SHIFT+F10", "de fábrica");
+    assert_eq!(c.key("KeyNextPreset"), "", "sem atalho");
+    let file = c.config_path().unwrap();
+    set_key(&file, "KeyEffects", "apostrophe").unwrap();
+    set_key(&file, "KeyNextPreset", "CTRL+Next").unwrap();
+    let c = resolve(&env);
+    assert_eq!((c.key("KeyEffects").as_str(), c.key("KeyNextPreset").as_str()), ("apostrophe", "CTRL+Next"));
+    assert!(fs::read_to_string(&file).unwrap().contains("PresetsPath"), "o resto do arquivo fica como estava");
+    set_key(&file, "KeyEffects", "").unwrap();
+    assert_eq!(resolve(&env).key("KeyEffects"), "", "vazio guarda 'sem atalho' e não volta ao de fábrica");
+}

@@ -14,7 +14,7 @@ Rocket League via Proton, só offline):
 - **Layer Vulkan** implícita (Rust) que aplica efeitos FX no `vkQueuePresentKHR`, sem frame de atraso.
 - **Compilador FX → bundle** (`tools/fx2spv`, C++, ferramenta separada) com os efeitos `.fx` da comunidade.
 - **Controle em tempo real** por linha de comando (`lrctl`) e por interface gráfica GTK4 (`lrpanel`):
-  escolher o efeito, ajustar parâmetros, ligar/desligar (atalho global **Ctrl+Shift+F10** no Wayland).
+  escolher o efeito, ajustar parâmetros, ligar/desligar (atalho global **Ctrl+Shift+F10** no Wayland, configurável: botão do teclado no painel ou `[INPUT]` do `config.ini`; aceita também teclas como `'`/`OEM_7`, e atalhos de próximo/anterior preset).
 - **Por jogo (F1):** efeito e parâmetros próprios de cada jogo aberto (`lrctl ... --layer <pid|nome>`),
   além da escolha para todos. A interface gráfica ainda não usa isso.
 - **Pastas configuráveis (F0):** pasta de dados única (shaders, texturas, presets) que sobrevive a reinstalar
