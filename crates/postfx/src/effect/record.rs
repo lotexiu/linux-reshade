@@ -190,13 +190,13 @@ pub unsafe fn record(rec: &Recording<'_>, cb: vk::CommandBuffer, index: usize) -
             .extent(vk::Extent3D { width: rec.frame_extent.width, height: rec.frame_extent.height, depth: 1 });
 
         if let Some(pool) = rec.profile {
-            device.cmd_reset_query_pool(cb, pool, 0, rec.passes.len() as u32 + 1);
+            device.cmd_reset_query_pool(cb, pool, 0, 2 * rec.passes.len() as u32 + 1);
         }
         for (k, pass) in rec.passes.iter().enumerate() {
             // O carimbo `k` marca o fim de tudo o que veio antes: o tempo do passe k é o do carimbo k+1 menos o k (inclui as cópias e
             // barreiras que o preparam).
             if let Some(pool) = rec.profile {
-                device.cmd_write_timestamp(cb, vk::PipelineStageFlags::BOTTOM_OF_PIPE, pool, k as u32);
+                device.cmd_write_timestamp(cb, vk::PipelineStageFlags::BOTTOM_OF_PIPE, pool, 2 * k as u32);
             }
             // A cópia do frame precisa refletir o que os passes anteriores escreveram nele.
             if pass.samples_color && !copy_valid {
@@ -214,6 +214,9 @@ pub unsafe fn record(rec: &Recording<'_>, cb: vk::CommandBuffer, index: usize) -
 
             if let Some(c) = &pass.compute {
                 record_compute(device, cb, pass, c, rec.set0);
+                if let Some(pool) = rec.profile {
+                    device.cmd_write_timestamp(cb, vk::PipelineStageFlags::BOTTOM_OF_PIPE, pool, 2 * k as u32 + 1);
+                }
                 for chain in &pass.mips {
                     generate_mips(device, cb, chain);
                 }
@@ -274,6 +277,9 @@ pub unsafe fn record(rec: &Recording<'_>, cb: vk::CommandBuffer, index: usize) -
             }
             device.cmd_draw(cb, pass.num_vertices, 1, 0, 0);
             device.cmd_end_render_pass(cb);
+            if let Some(pool) = rec.profile {
+                device.cmd_write_timestamp(cb, vk::PipelineStageFlags::BOTTOM_OF_PIPE, pool, 2 * k as u32 + 1);
+            }
             for chain in &pass.mips {
                 generate_mips(device, cb, chain);
             }
@@ -293,7 +299,7 @@ pub unsafe fn record(rec: &Recording<'_>, cb: vk::CommandBuffer, index: usize) -
         }
 
         if let Some(pool) = rec.profile {
-            device.cmd_write_timestamp(cb, vk::PipelineStageFlags::BOTTOM_OF_PIPE, pool, rec.passes.len() as u32);
+            device.cmd_write_timestamp(cb, vk::PipelineStageFlags::BOTTOM_OF_PIPE, pool, 2 * rec.passes.len() as u32);
         }
         if frame_layout != rest_layout {
             transition(device, cb, frame, frame_layout, rest_layout);

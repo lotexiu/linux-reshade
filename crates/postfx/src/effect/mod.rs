@@ -283,11 +283,22 @@ impl Effect {
     /// A GPU não pode estar executando o command buffer do efeito.
     pub unsafe fn pass_times(&self, device: &ash::Device, tick_ns: f32) -> Vec<(String, f32)> {
         let Some(profile) = &self.profile else { return Vec::new() };
-        let mut ticks = vec![0u64; profile.labels.len() + 1];
+        let mut ticks = vec![0u64; 2 * profile.labels.len() + 1];
         if unsafe { device.get_query_pool_results(profile.pool, 0, &mut ticks, vk::QueryResultFlags::TYPE_64) }.is_err() {
             return Vec::new();
         }
-        profile.labels.iter().enumerate().map(|(k, label)| (label.clone(), ticks[k + 1].saturating_sub(ticks[k]) as f32 * tick_ns / 1000.0)).collect()
+        let us = |from: usize| ticks[from + 1].saturating_sub(ticks[from]) as f32 * tick_ns / 1000.0;
+        let mut rows = Vec::new();
+        for (k, label) in profile.labels.iter().enumerate() {
+            // O carimbo `2k` abre o passe `k` (com a cópia do quadro e as barreiras que o preparam), `2k+1` fecha o desenho e `2k+2`
+            // fecha a geração dos mipmaps.
+            rows.push((label.clone(), us(2 * k)));
+            let mips = us(2 * k + 1);
+            if mips > 0.0 {
+                rows.push((format!("{label} (mipmaps)"), mips));
+            }
+        }
+        rows
     }
 
     /// O bundle (`Bundle::id`) e a técnica deste efeito.
@@ -754,7 +765,7 @@ impl Effect {
 
         // Diagnóstico: com `LINUX_RESHADE_PROFILE_PASSES` no ambiente, cada passe leva carimbos de tempo (ver `pass_times`).
         if std::env::var_os("LINUX_RESHADE_PROFILE_PASSES").is_some() && self.profile.is_none() {
-            let info = vk::QueryPoolCreateInfo::default().query_type(vk::QueryType::TIMESTAMP).query_count(self.passes.len() as u32 + 1);
+            let info = vk::QueryPoolCreateInfo::default().query_type(vk::QueryType::TIMESTAMP).query_count(2 * self.passes.len() as u32 + 1);
             if let Ok(pool) = unsafe { device.create_query_pool(&info, None) } {
                 let labels = bundle.manifest.techniques.get(technique).map(|t| t.passes.iter().enumerate().map(|(k, p)| format!("{k}: {}", p.compute_entry.as_deref().unwrap_or(&p.pixel_entry))).collect()).unwrap_or_default();
                 self.profile = Some(PassProfile { pool, labels });

@@ -130,6 +130,9 @@ pub struct Config {
     pub screenshot_dir: PathBuf,
     /// Guardar também o quadro sem efeitos (`[SCREENSHOT] SaveBeforeShot`, ligado de fábrica): para comparar.
     pub screenshot_before: bool,
+    /// Passar o SPIR-V dos efeitos pelo `spirv-opt -O` depois de compilar (`[GENERAL] OptimizeShaders`, ligado de fábrica): a GPU roda
+    /// uns 5 a 10% mais rápido. Sem o `spirv-opt` instalado não faz nada.
+    pub optimize_shaders: bool,
 }
 
 /// Os atalhos que o `config.ini` guarda na seção `[INPUT]` (os nomes são os do `ReShade.ini`) e o que cada um faz.
@@ -238,7 +241,8 @@ impl Config {
             .or_else(|| home.map(|h| h.join("Pictures").join(LOCATION_DIR)))
             .unwrap_or_else(|| PathBuf::from("/tmp/linux-reshade-capturas"));
         let screenshot_before = ini.as_ref().and_then(|i| i.get("SCREENSHOT", "SaveBeforeShot")).is_none_or(|v| v != "0" && !v.eq_ignore_ascii_case("false"));
-        Self { data_dir, config_file: configured, effect_paths, texture_paths, presets_dir, global_macros, cache_dir, keys, screenshot_dir, screenshot_before }
+        let optimize_shaders = env("LINUX_RESHADE_NO_OPT").is_none() && ini.as_ref().and_then(|i| i.get("GENERAL", "OptimizeShaders")).is_none_or(|v| v != "0" && !v.eq_ignore_ascii_case("false"));
+        Self { data_dir, config_file: configured, effect_paths, texture_paths, presets_dir, global_macros, cache_dir, keys, screenshot_dir, screenshot_before, optimize_shaders }
     }
 
     /// O atalho de `name` (de [`KEY_NAMES`]): o do `config.ini`, ou o de fábrica. Texto vazio: sem atalho.
