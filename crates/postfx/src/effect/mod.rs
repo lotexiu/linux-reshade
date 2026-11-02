@@ -137,8 +137,15 @@ pub(crate) struct MipChain {
     pub linear: bool,
 }
 
+/// Os carimbos de tempo por passe (diagnóstico).
+struct PassProfile {
+    pool: vk::QueryPool,
+    labels: Vec<String>,
+}
+
 #[derive(Default)]
 pub struct Effect {
+    profile: Option<PassProfile>,
     /// Que bundle e técnica este efeito executa (a cadeia reaproveita o efeito que já tem a mesma chave).
     key: (u64, usize),
     copy: BackbufferCopies,
@@ -267,6 +274,20 @@ impl Effect {
             return Err(e);
         }
         Ok(effect)
+    }
+
+    /// O tempo da GPU de cada passe (rótulo, microssegundos) da última execução já concluída, se o efeito foi criado com
+    /// `LINUX_RESHADE_PROFILE_PASSES` no ambiente. `tick_ns` é `timestamp_period` da GPU.
+    ///
+    /// # Safety
+    /// A GPU não pode estar executando o command buffer do efeito.
+    pub unsafe fn pass_times(&self, device: &ash::Device, tick_ns: f32) -> Vec<(String, f32)> {
+        let Some(profile) = &self.profile else { return Vec::new() };
+        let mut ticks = vec![0u64; profile.labels.len() + 1];
+        if unsafe { device.get_query_pool_results(profile.pool, 0, &mut ticks, vk::QueryResultFlags::TYPE_64) }.is_err() {
+            return Vec::new();
+        }
+        profile.labels.iter().enumerate().map(|(k, label)| (label.clone(), ticks[k + 1].saturating_sub(ticks[k]) as f32 * tick_ns / 1000.0)).collect()
     }
 
     /// O bundle (`Bundle::id`) e a técnica deste efeito.
@@ -731,6 +752,14 @@ impl Effect {
 
         self.pending_init = unsafe { self.initialize_textures(device, memory, bundle, target, queue)? };
 
+        // Diagnóstico: com `LINUX_RESHADE_PROFILE_PASSES` no ambiente, cada passe leva carimbos de tempo (ver `pass_times`).
+        if std::env::var_os("LINUX_RESHADE_PROFILE_PASSES").is_some() && self.profile.is_none() {
+            let info = vk::QueryPoolCreateInfo::default().query_type(vk::QueryType::TIMESTAMP).query_count(self.passes.len() as u32 + 1);
+            if let Ok(pool) = unsafe { device.create_query_pool(&info, None) } {
+                let labels = bundle.manifest.techniques.get(technique).map(|t| t.passes.iter().enumerate().map(|(k, p)| format!("{k}: {}", p.compute_entry.as_deref().unwrap_or(&p.pixel_entry))).collect()).unwrap_or_default();
+                self.profile = Some(PassProfile { pool, labels });
+            }
+        }
         for (i, &cb) in self.command_buffers.iter().enumerate() {
             let rec = record::Recording {
                 device,
@@ -744,6 +773,7 @@ impl Effect {
                 frame_extent: target.extent,
                 rest_layout: target.rest_layout,
                 set0: self.sets0.get(i).copied(),
+                profile: self.profile.as_ref().map(|p| p.pool),
             };
             unsafe { record::record(&rec, cb, i)? };
         }
@@ -1016,6 +1046,9 @@ impl Effect {
     /// A GPU não pode estar executando os command buffers deste efeito.
     pub unsafe fn destroy(&mut self, device: &ash::Device) {
         unsafe {
+            if let Some(profile) = self.profile.take() {
+                device.destroy_query_pool(profile.pool, None);
+            }
             if self.command_pool != vk::CommandPool::null() {
                 device.destroy_command_pool(std::mem::take(&mut self.command_pool), None); // libera os command buffers
             }

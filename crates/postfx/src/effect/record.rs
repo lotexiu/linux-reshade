@@ -33,6 +33,8 @@ pub struct Recording<'a> {
     pub rest_layout: vk::ImageLayout,
     /// `sets0[index]` quando o efeito tem uniforms; vazio quando não tem.
     pub set0: Option<vk::DescriptorSet>,
+    /// Carimbos de tempo por passe (só para diagnóstico: ver `Effect::pass_times`).
+    pub profile: Option<vk::QueryPool>,
 }
 
 /// Estágios e acessos que cada layout implica, para as barreiras de transição.
@@ -187,7 +189,15 @@ pub unsafe fn record(rec: &Recording<'_>, cb: vk::CommandBuffer, index: usize) -
             .dst_subresource(layers)
             .extent(vk::Extent3D { width: rec.frame_extent.width, height: rec.frame_extent.height, depth: 1 });
 
-        for pass in rec.passes {
+        if let Some(pool) = rec.profile {
+            device.cmd_reset_query_pool(cb, pool, 0, rec.passes.len() as u32 + 1);
+        }
+        for (k, pass) in rec.passes.iter().enumerate() {
+            // O carimbo `k` marca o fim de tudo o que veio antes: o tempo do passe k é o do carimbo k+1 menos o k (inclui as cópias e
+            // barreiras que o preparam).
+            if let Some(pool) = rec.profile {
+                device.cmd_write_timestamp(cb, vk::PipelineStageFlags::BOTTOM_OF_PIPE, pool, k as u32);
+            }
             // A cópia do frame precisa refletir o que os passes anteriores escreveram nele.
             if pass.samples_color && !copy_valid {
                 transition(device, cb, frame, frame_layout, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
@@ -282,6 +292,9 @@ pub unsafe fn record(rec: &Recording<'_>, cb: vk::CommandBuffer, index: usize) -
             }
         }
 
+        if let Some(pool) = rec.profile {
+            device.cmd_write_timestamp(cb, vk::PipelineStageFlags::BOTTOM_OF_PIPE, pool, rec.passes.len() as u32);
+        }
         if frame_layout != rest_layout {
             transition(device, cb, frame, frame_layout, rest_layout);
         }

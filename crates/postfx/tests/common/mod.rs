@@ -12,6 +12,7 @@ pub const FORMAT: vk::Format = vk::Format::R8G8B8A8_UNORM;
 pub const REST: vk::ImageLayout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
 
 pub struct Gpu {
+    pub physical: vk::PhysicalDevice,
     _entry: ash::Entry,
     pub instance: ash::Instance,
     pub device: ash::Device,
@@ -70,7 +71,7 @@ impl Gpu {
             let device = instance.create_device(physical, &vk::DeviceCreateInfo::default().queue_create_infos(&queues).enabled_features(&features), None).ok()?;
             let queue = device.get_device_queue(family, 0);
             let memory = instance.get_physical_device_memory_properties(physical);
-            Some(Self { _entry: entry, instance, device, queue, family, memory })
+            Some(Self { physical, _entry: entry, instance, device, queue, family, memory })
         }
     }
 

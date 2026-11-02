@@ -189,6 +189,12 @@ fn a_chain_of_compiled_bundles_runs() {
         let depth = depth_image_with(&gpu, depth_format, dw, dh, base, ((spread != 0.0 || disc.is_some()) && depth_format == DEPTH_FORMAT && (dw, dh) == (w, h)).then_some(&gradient));
         let input_depth = DepthInput { image: depth.image, format: depth_format, layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL, extent: vk::Extent2D { width: dw, height: dh }, linear_filter: true };
         let target = Target { images: &images, format: FORMAT, extent: vk::Extent2D { width: w, height: h }, rest_layout: REST, queue_family: gpu.family, init_command_buffer: None, depth: Some(input_depth) };
+        // `LINUX_RESHADE_CHAIN_PROFILE=1`: o tempo da GPU de cada passe (média dos quadros), do mais caro ao mais barato.
+        let profile = std::env::var_os("LINUX_RESHADE_CHAIN_PROFILE").is_some();
+        if profile {
+            // SAFETY: o teste roda sozinho nesta thread antes de criar a cadeia.
+            std::env::set_var("LINUX_RESHADE_PROFILE_PASSES", "1");
+        }
         let started = std::time::Instant::now();
         let built = postfx::Chain::new_lenient(&gpu.device, &gpu.memory, &steps, &target, gpu.queue);
         eprintln!("cadeia construída em {:.0} ms", started.elapsed().as_secs_f64() * 1000.0);
@@ -227,9 +233,28 @@ fn a_chain_of_compiled_bundles_runs() {
                     chain.set_active_control(Some(&name));
                 }
                 let frames: u32 = std::env::var("LINUX_RESHADE_CHAIN_FRAMES").ok().and_then(|v| v.parse().ok()).unwrap_or(4);
+                let mut sums: std::collections::BTreeMap<(usize, String), (f64, u32)> = std::collections::BTreeMap::new();
+                let tick_ns = gpu.instance.get_physical_device_properties(gpu.physical).limits.timestamp_period;
                 for n in 0..frames {
                     chain.update_sources(0, &FrameInfo { frame_count: 600 + n, ..frame });
                     gpu.submit_all(&chain.command_buffers(0));
+                    // Os primeiros quadros pagam compilação e cache frio: só conta do quadro 5 em diante.
+                    if profile && n >= 5 {
+                        for (effect, label, us) in chain.pass_times(&gpu.device, tick_ns) {
+                            let entry = sums.entry((effect, label)).or_default();
+                            entry.0 += f64::from(us);
+                            entry.1 += 1;
+                        }
+                    }
+                }
+                if profile {
+                    let mut rows: Vec<_> = sums.into_iter().map(|((e, l), (sum, n))| (e, l, sum / f64::from(n.max(1)))).collect();
+                    let total: f64 = rows.iter().map(|r| r.2).sum();
+                    rows.sort_by(|a, b| b.2.total_cmp(&a.2));
+                    eprintln!("PERFIL por passe (média, total {:.2} ms):", total / 1000.0);
+                    for (e, l, us) in rows.iter().take(25) {
+                        eprintln!("  efeito {e} passe {l}: {:.3} ms", us / 1000.0);
+                    }
                 }
                 eprintln!("{frames} quadros executados");
                 // Diagnóstico: o que há em cada textura compartilhada pedida (`LINUX_RESHADE_CHAIN_DUMP=nome1,nome2`).

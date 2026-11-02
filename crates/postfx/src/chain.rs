@@ -256,6 +256,14 @@ impl Chain {
         }
     }
 
+    /// O tempo de cada passe de cada efeito (ver [`Effect::pass_times`]): `(posição do efeito, rótulo, microssegundos)`.
+    ///
+    /// # Safety
+    /// A GPU não pode estar executando a cadeia.
+    pub unsafe fn pass_times(&self, device: &ash::Device, tick_ns: f32) -> Vec<(usize, String, f32)> {
+        self.effects.iter().enumerate().flat_map(|(n, e)| unsafe { e.pass_times(device, tick_ns) }.into_iter().map(move |(l, us)| (n, l, us))).collect()
+    }
+
     /// A imagem de uma textura compartilhada pelo nome (`unique_name` do manifesto): para diagnóstico.
     pub fn shared_image(&self, name: &str) -> Option<vk::Image> {
         self.shared.image(name)
