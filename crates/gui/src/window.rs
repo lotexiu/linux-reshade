@@ -702,7 +702,7 @@ impl Ui {
         groups
             .iter()
             .map(|g| {
-                let techniques: Vec<String> = g.techniques.iter().map(|t| format!("{}:{}:{}:{:?}:{:?}", t.id, t.label, t.enabled, t.problem, t.runtime)).collect();
+                let techniques: Vec<String> = g.techniques.iter().map(|t| format!("{}:{}:{}:{:?}:{:?}:{}", t.id, t.label, t.enabled, t.problem, t.runtime, t.key)).collect();
                 format!("{}|{}|{}\n", g.file, g.macros, techniques.join(";"))
             })
             .collect()
