@@ -166,6 +166,7 @@ const VERSION: &str = "3";
 pub fn save(compiler: &Compiler, info: &EffectInfo) -> std::io::Result<()> {
     let mut ini = Ini::new();
     ini.set("", "version", VERSION);
+    ini.set("", "search", &compiler.search_fingerprint());
     ini.set("", "techniques", &info.techniques.iter().map(|t| one_line(t)).collect::<Vec<_>>().join(","));
     ini.set("", "features", &info.features.iter().map(|f| f.key()).collect::<Vec<_>>().join(","));
     ini.set("", "problems", &info.problems.iter().map(|p| one_line(p)).collect::<Vec<_>>().join(" | "));
@@ -183,7 +184,7 @@ pub fn load(compiler: &Compiler, name: &str) -> Option<EffectInfo> {
         return None;
     }
     let ini = Ini::load(&file).ok()?;
-    if ini.get("", "version") != Some(VERSION) {
+    if ini.get("", "version") != Some(VERSION) || ini.get("", "search") != Some(compiler.search_fingerprint().as_str()) {
         return None;
     }
     let list = |key: &str| ini.get("", key).unwrap_or("").split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect::<Vec<_>>();

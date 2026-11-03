@@ -317,6 +317,12 @@ impl Compiler {
         config::expand(&self.effects)
     }
 
+    /// Identifica as pastas de busca de efeitos e de texturas: muda quando o usuário troca as pastas, e o que foi
+    /// concluído com as antigas (efeito sem imagem, por exemplo) deixa de valer.
+    pub fn search_fingerprint(&self) -> String {
+        format!("{:?}|{:?}", self.effects, self.textures)
+    }
+
     /// O `.fx` de um efeito, procurando nos diretórios configurados.
     pub fn source(&self, name: &str) -> Result<PathBuf, CompileError> {
         if !valid_name(name) {
