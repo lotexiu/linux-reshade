@@ -560,6 +560,8 @@ impl Compiler {
             let bytes = std::fs::read(&path).map_err(|e| CompileError::Texture(format!("{}: {e}", path.display())))?;
             let decoded = image_file::decode(source, &bytes).map_err(|e| CompileError::Texture(format!("{}: {e}", path.display())))?;
             let image = fx_bundle::images::TextureImage { width: decoded.width, height: decoded.height, rgba: decoded.pixels };
+            // O ReShade estica a imagem ao tamanho que o efeito declara para a textura.
+            let image = if u64::from(texture.width) * u64::from(texture.height) * 4 <= fx_bundle::images::MAX_IMAGE_BYTES { image.resized(texture.width, texture.height) } else { image };
             fx_bundle::images::write(dir, index, &image).map_err(|e| CompileError::Io(format!("{}: {e}", dir.display())))?;
             sources.push(path.display().to_string());
         }
@@ -659,7 +661,7 @@ mod tests {
         let ensured = f.compiler.ensure("Tex", 8, 4).unwrap();
         let image = fs::read(fx_bundle::images::path(ensured.dir(), 0)).unwrap();
         let image = fx_bundle::images::decode(&image).unwrap();
-        assert_eq!((image.width, image.height, image.rgba.len()), (1, 1, 4));
+        assert_eq!((image.width, image.height, image.rgba.len()), (4, 2, 32), "esticada ao tamanho que o manifesto declara para a textura");
         assert!(f.compiler.is_current("Tex", 8, 4));
 
         // O PNG foi editado depois: o bundle deixa de estar atual e é refeito.

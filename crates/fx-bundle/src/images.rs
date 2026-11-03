@@ -56,6 +56,34 @@ pub fn decode(bytes: &[u8]) -> Result<TextureImage, Error> {
     Ok(TextureImage { width, height, rgba: bytes[12..].to_vec() })
 }
 
+impl TextureImage {
+    /// A imagem esticada para `width` x `height` (interpolação bilinear), como o ReShade faz quando o `.fx` declara para a
+    /// textura de arquivo um tamanho diferente do da imagem (ex.: `Width = BUFFER_WIDTH`).
+    pub fn resized(&self, width: u32, height: u32) -> TextureImage {
+        if (self.width, self.height) == (width, height) || self.width == 0 || self.height == 0 {
+            return self.clone();
+        }
+        let at = |x: u32, y: u32, c: usize| f32::from(self.rgba[(y as usize * self.width as usize + x as usize) * 4 + c]);
+        let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
+        for y in 0..height {
+            let fy = ((y as f32 + 0.5) * self.height as f32 / height as f32 - 0.5).clamp(0.0, (self.height - 1) as f32);
+            let (y0, ty) = (fy.floor() as u32, fy.fract());
+            let y1 = (y0 + 1).min(self.height - 1);
+            for x in 0..width {
+                let fx = ((x as f32 + 0.5) * self.width as f32 / width as f32 - 0.5).clamp(0.0, (self.width - 1) as f32);
+                let (x0, tx) = (fx.floor() as u32, fx.fract());
+                let x1 = (x0 + 1).min(self.width - 1);
+                for c in 0..4 {
+                    let top = at(x0, y0, c) * (1.0 - tx) + at(x1, y0, c) * tx;
+                    let bottom = at(x0, y1, c) * (1.0 - tx) + at(x1, y1, c) * tx;
+                    rgba.push((top * (1.0 - ty) + bottom * ty).round() as u8);
+                }
+            }
+        }
+        TextureImage { width, height, rgba }
+    }
+}
+
 /// Grava a imagem da textura `index` no bundle (cria `images/`).
 pub fn write(bundle_dir: &Path, index: usize, image: &TextureImage) -> std::io::Result<()> {
     std::fs::create_dir_all(bundle_dir.join("images"))?;
@@ -100,6 +128,16 @@ mod tests {
     fn an_image_round_trips() {
         let image = TextureImage { width: 2, height: 1, rgba: vec![1, 2, 3, 4, 5, 6, 7, 8] };
         assert_eq!(decode(&encode(&image)).unwrap(), image);
+    }
+
+    #[test]
+    fn an_image_is_stretched_to_the_declared_size() {
+        let image = TextureImage { width: 2, height: 1, rgba: vec![0, 0, 0, 255, 255, 255, 255, 255] };
+        let big = image.resized(4, 2);
+        assert_eq!((big.width, big.height, big.rgba.len()), (4, 2, 32));
+        assert_eq!(&big.rgba[..4], &[0, 0, 0, 255], "o canto esquerdo continua preto");
+        assert_eq!(&big.rgba[12..16], &[255, 255, 255, 255], "o direito continua branco");
+        assert_eq!(image.resized(2, 1), image);
     }
 
     #[test]
