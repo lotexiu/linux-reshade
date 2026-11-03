@@ -898,6 +898,13 @@ impl Effect {
             if !written.contains(&image.image) {
                 written.push(image.image);
             }
+            // Como o ReShade: uma textura com níveis de mipmap que um passe de compute escreve (no nível 0) ganha os níveis
+            // seguintes logo depois do passe. Efeitos como o DOF do Marty escrevem a cor de fundo e de frente por compute e depois a
+            // leem em níveis mais altos quando o desfoque é grande; sem isso esses níveis ficam vazios e a imagem sai preta.
+            if image.levels > 1 && storage.level == 0 && pass.generate_mipmaps && !self.passes[k].mips.iter().any(|c| c.image == image.image) {
+                let linear = !matches!(tex.format, TextureFormat::R32f | TextureFormat::Rg32f | TextureFormat::Rgba32f);
+                self.passes[k].mips.push(MipChain { image: image.image, extent: vk::Extent2D { width: tex.width, height: tex.height }, levels: image.levels, linear });
+            }
         }
         if let Some(c) = self.passes[k].compute.as_mut() {
             c.images = written;
