@@ -157,3 +157,8 @@ target/release/lrpanel --effect Sepia --screenshot /tmp/painel.png --hold 2000 -
 - `config.ini`, seção `[INPUT]`: `KeyEffects` (ligar/desligar, de fábrica `CTRL+SHIFT+F10`), `KeyNextPreset`, `KeyPreviousPreset`. O valor é o formato XDG do portal; `shortcuts::trigger::normalize` entende `'`, `OEM_7`, `Ctrl+Shift+F10`... A janela de atalhos do painel (botão do teclado) captura a tecla e grava.
 - O portal só usa a tecla sugerida na primeira vez que vê um id (confirmado no KDE). Para trocar, o daemon anota o que registrou (`shortcuts-bound.ini`, ao lado do cache), esquece o atalho pelo `KGlobalAccel` do KDE (`shortcuts_portal::forget`) e registra de novo; o daemon se reexecuta sozinho ao ver o `[INPUT]` mudar. No GNOME não há "esquecer": a tecla só muda pelas configurações do sistema.
 - Uma tecla sem modificador (como `'`) vale em TODOS os programas enquanto o daemon roda; a janela avisa.
+
+## Regra da interface: sem popover dentro de popover
+Um popover (ou `DropDown`, que abre um) dentro de outro deixa o de fora aberto depois do clique que fecha o de dentro: a
+janela parece travada. Dentro de um popover use `crates/gui/src/disclosure.rs` (botão que revela o conteúdo no lugar) ou
+botões/listas comuns, como `depth_picker.rs` e `macros.rs` já fazem.

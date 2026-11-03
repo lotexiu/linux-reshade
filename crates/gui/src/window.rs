@@ -217,8 +217,6 @@ impl Ui {
         add_box.append(&add_search);
         // Os filtros ficam num menu à parte (uma linha só na janela): características (várias ao mesmo tempo), só os
         // compatíveis e a subpasta.
-        let filters_button = gtk::MenuButton::new();
-        filters_button.set_label("Filtros");
         let only_ok = gtk::CheckButton::with_label("Só compatíveis");
         let chip_buttons: Vec<(Feature, gtk::CheckButton)> = [Feature::Depth, Feature::Color, Feature::Textures, Feature::Mipmaps, Feature::Srgb, Feature::Compute]
             .into_iter()
@@ -259,14 +257,14 @@ impl Ui {
         filters_box.append(&folder_search);
         filters_box.append(&folder_scroller);
         filters_box.append(&clear_filters);
-        let filters_popover = gtk::Popover::new();
-        filters_popover.set_child(Some(&filters_box));
-        filters_button.set_popover(Some(&filters_popover));
+        let filters = crate::disclosure::Disclosure::new("Filtros", &filters_box);
+        let filters_button = filters.button.clone();
         let search_line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         add_search.set_hexpand(true);
         search_line.append(&add_search);
-        search_line.append(&filters_button);
+        search_line.append(&filters.button);
         add_box.remove(&add_search);
+        add_box.prepend(&filters.body);
         add_box.prepend(&search_line);
         add_box.append(&add_progress);
         add_box.append(&add_scroller);
@@ -380,8 +378,8 @@ impl Ui {
         toggle.append(&gtk::Label::new(Some("Efeitos ligados")));
         toggle.append(&enabled);
         header.pack_end(&toggle);
-        let shortcuts_button = gtk::Button::from_icon_name("input-keyboard-symbolic");
-        shortcuts_button.set_tooltip_text(Some("Configurações: atalhos de teclado, capturas de tela e pastas"));
+        let shortcuts_button = gtk::Button::from_icon_name("emblem-system-symbolic");
+        shortcuts_button.set_tooltip_text(Some("Configurações: atalhos, capturas de tela, pastas, desempenho e cache"));
         header.pack_start(&shortcuts_button);
 
         let window = gtk::ApplicationWindow::builder().application(app).title("linux-reshade").default_width(600).default_height(780).child(&page).build();

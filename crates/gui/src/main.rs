@@ -6,6 +6,7 @@
 
 mod controls;
 mod depth_picker;
+mod disclosure;
 mod games;
 mod macros;
 mod settings;

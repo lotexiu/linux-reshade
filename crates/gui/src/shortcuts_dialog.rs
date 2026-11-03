@@ -447,6 +447,136 @@ fn performance_page(window: &gtk::Window) -> gtk::Box {
     page
 }
 
+/// Quanto ocupa o cache dos efeitos compilados, em texto.
+fn cache_usage_text(compiler: &control_core::compiler::Compiler) -> String {
+    let u = control_core::maintenance::usage(compiler);
+    format!("{}\n{} efeitos compilados, {} análises, {:.1} MB", compiler.cache.display(), u.bundles, u.analyses, u.bytes as f64 / 1e6)
+}
+
+/// Os nomes dos efeitos do preset global (sem repetir), para medir a compilação deles.
+fn global_preset_effects() -> Vec<String> {
+    let Some(dir) = config::Config::load().presets_dir else { return Vec::new() };
+    let Ok(preset) = control_core::presets::load(&dir.join("preset.ini")) else { return Vec::new() };
+    let mut names: Vec<String> = Vec::new();
+    for row in control_core::presets::rows(&preset) {
+        if let Some(file) = row.id.file {
+            let name = file.trim_end_matches(".fx").to_string();
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+    }
+    names
+}
+
+fn cache_page() -> gtk::Box {
+    use control_core::maintenance::{self, Clear};
+    let page = page_box();
+    page.append(&hint("Os efeitos compilados e as análises de compatibilidade ficam guardados. Limpar à força serve para testar a compilação do zero; o que um jogo aberto usa é recompilado em seguida."));
+    let compiler = Rc::new(control_core::compiler::Compiler::from_env());
+    let usage = gtk::Label::new(None);
+    usage.set_xalign(0.0);
+    usage.set_selectable(true);
+    let refresh_usage = {
+        let (usage, compiler) = (usage.clone(), compiler.clone());
+        move || usage.set_text(&match &*compiler {
+            Ok(c) => cache_usage_text(c),
+            Err(e) => format!("Sem compilador: {e}"),
+        })
+    };
+    refresh_usage();
+    page.append(&usage);
+
+    let status = gtk::Label::new(None);
+    status.set_xalign(0.0);
+    status.set_wrap(true);
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    for (label, what, tip) in [
+        ("Limpar compilados", Clear::Bundles, "Apaga os efeitos compilados (as análises ficam)"),
+        ("Limpar análises", Clear::Analyses, "Apaga as análises de compatibilidade; o painel as refaz em segundo plano"),
+        ("Limpar tudo", Clear::All, "Apaga os compilados e as análises"),
+    ] {
+        let button = gtk::Button::with_label(label);
+        button.set_tooltip_text(Some(tip));
+        let (compiler, status, refresh_usage) = (compiler.clone(), status.clone(), refresh_usage.clone());
+        button.connect_clicked(move |_| {
+            if let Ok(c) = &*compiler {
+                let n = maintenance::clear(c, what);
+                status.set_text(&format!("{n} itens apagados."));
+                refresh_usage();
+            }
+        });
+        buttons.append(&button);
+    }
+    page.append(&buttons);
+
+    page.append(&hint("Medir a compilação apaga os compilados dos efeitos do preset global e os compila de novo, um por vez (1920x1080, sem macros), contando o tempo de cada um."));
+    let measure = gtk::Button::with_label("Recompilar o preset global e medir");
+    measure.set_halign(gtk::Align::Start);
+    let report = gtk::Label::new(None);
+    report.set_xalign(0.0);
+    report.set_yalign(0.0);
+    report.set_selectable(true);
+    report.add_css_class("monospace");
+    let scroller = gtk::ScrolledWindow::new();
+    scroller.set_child(Some(&report));
+    scroller.set_vexpand(true);
+    {
+        let (compiler, status, report, refresh_usage, measure_button) = (compiler.clone(), status.clone(), report.clone(), refresh_usage.clone(), measure.clone());
+        measure.connect_clicked(move |_| {
+            if compiler.is_err() {
+                return;
+            }
+            let effects = global_preset_effects();
+            if effects.is_empty() {
+                status.set_text("O preset global não tem efeitos.");
+                return;
+            }
+            measure_button.set_sensitive(false);
+            status.set_text(&format!("Compilando {} efeitos…", effects.len()));
+            report.set_text("");
+            let total = effects.len();
+            let (tx, rx) = std::sync::mpsc::channel::<maintenance::Timing>();
+            let worker = control_core::compiler::Compiler::from_env();
+            std::thread::spawn(move || {
+                let Ok(worker) = worker else { return };
+                maintenance::time_compiles(&worker, &effects, |t| {
+                    let _ = tx.send(t.clone());
+                });
+            });
+            let done: Rc<RefCell<Vec<maintenance::Timing>>> = Rc::new(RefCell::new(Vec::new()));
+            let (status, report, refresh_usage, measure_button) = (status.clone(), report.clone(), refresh_usage.clone(), measure_button.clone());
+            gtk::glib::timeout_add_local(std::time::Duration::from_millis(200), move || {
+                let mut finished = false;
+                loop {
+                    match rx.try_recv() {
+                        Ok(t) => done.borrow_mut().push(t),
+                        Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                            finished = true;
+                            break;
+                        }
+                    }
+                }
+                let n = done.borrow().len();
+                if finished || n >= total {
+                    report.set_text(&maintenance::report(&done.borrow()));
+                    status.set_text("Pronto.");
+                    measure_button.set_sensitive(true);
+                    refresh_usage();
+                    return gtk::glib::ControlFlow::Break;
+                }
+                status.set_text(&format!("Compilando… {n}/{total}"));
+                gtk::glib::ControlFlow::Continue
+            });
+        });
+    }
+    page.append(&measure);
+    page.append(&status);
+    page.append(&scroller);
+    page
+}
+
 fn about_page() -> gtk::Box {
     let page = page_box();
     let config = config::Config::load();
@@ -477,6 +607,7 @@ pub fn open(parent: &gtk::ApplicationWindow) -> gtk::Window {
     notebook.append_page(&captures_page(&window), Some(&gtk::Label::new(Some("Capturas de tela"))));
     notebook.append_page(&folders_page(&window), Some(&gtk::Label::new(Some("Pastas"))));
     notebook.append_page(&performance_page(&window), Some(&gtk::Label::new(Some("Desempenho"))));
+    notebook.append_page(&cache_page(), Some(&gtk::Label::new(Some("Cache"))));
     notebook.append_page(&log_page(), Some(&gtk::Label::new(Some("Registro"))));
     notebook.append_page(&about_page(), Some(&gtk::Label::new(Some("Sobre"))));
     window.set_child(Some(&notebook));

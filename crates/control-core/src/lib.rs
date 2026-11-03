@@ -20,6 +20,7 @@ pub mod game_plan;
 pub mod games;
 pub mod layers;
 pub mod location;
+pub mod maintenance;
 pub mod params;
 pub mod patches;
 pub mod presets;

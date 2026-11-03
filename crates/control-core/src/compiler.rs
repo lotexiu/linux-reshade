@@ -119,6 +119,11 @@ fn parse_bundle_name(file_name: &str) -> Option<(String, u32, u32)> {
     Some((name.to_string(), w.parse().ok()?, h.parse().ok()?))
 }
 
+/// O nome de um diretório do cache é o de um bundle (`Nome-1920x1080`)?
+pub fn is_bundle_name(file_name: &str) -> bool {
+    parse_bundle_name(file_name).is_some()
+}
+
 /// Quais diretórios do cache apagar. Pura: recebe o que existe e devolve o que sobra de lado.
 pub(crate) fn prune_plan(entries: &[CacheEntry], in_use: &std::collections::HashSet<(String, u32, u32)>, keep_per_effect: usize) -> Vec<PathBuf> {
     let mut doomed = Vec::new();
