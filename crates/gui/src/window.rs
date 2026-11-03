@@ -261,9 +261,10 @@ impl Ui {
         let filters_button = filters.button.clone();
         let search_line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         add_search.set_hexpand(true);
+        // O campo já é filho de `add_box`: sai de lá antes de entrar na linha (senão o GTK recusa e o campo some).
+        add_box.remove(&add_search);
         search_line.append(&add_search);
         search_line.append(&filters.button);
-        add_box.remove(&add_search);
         add_box.prepend(&filters.body);
         add_box.prepend(&search_line);
         add_box.append(&add_progress);
