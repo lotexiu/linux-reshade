@@ -104,6 +104,8 @@ pub struct HomeSnapshot {
     pub preset_macros: String,
     /// Efeitos que podem ser adicionados (nomes de arquivo sem `.fx`).
     pub effects: Vec<String>,
+    /// A subpasta de cada efeito, relativa à pasta de busca que o contém (`Cor/PD80`; vazio: direto na pasta de busca).
+    pub folders: HashMap<String, String>,
     /// O que se sabe de cada efeito (compatibilidade e características), conforme a análise em segundo plano avança.
     pub infos: HashMap<String, EffectInfo>,
     /// Andamento da análise: efeitos analisados e total.
@@ -208,11 +210,15 @@ impl Home {
     pub fn refresh(&mut self) {
         self.snapshot.enabled = self.state.effects_enabled();
         self.snapshot.layers = (self.layers)();
-        self.snapshot.effects = self
-            .compiler
-            .as_ref()
-            .map(|c| c.available().into_iter().map(|(n, _)| n).collect())
-            .unwrap_or_default();
+        let available = self.compiler.as_ref().map(|c| c.available()).unwrap_or_default();
+        self.snapshot.folders = match &self.compiler {
+            Ok(c) => {
+                let roots: Vec<PathBuf> = c.effects.iter().map(|r| r.dir.clone()).collect();
+                available.iter().map(|(n, dir)| (n.clone(), folder_of(&roots, dir))).collect()
+            }
+            Err(_) => HashMap::new(),
+        };
+        self.snapshot.effects = available.into_iter().map(|(n, _)| n).collect();
 
         self.refresh_analysis();
 
@@ -1076,4 +1082,14 @@ pub fn start_analysis() -> Option<std::thread::JoinHandle<()>> {
             }
         })
         .ok()
+}
+
+/// A subpasta de `dir` relativa à pasta de busca que a contém (a mais específica, se há mais de uma).
+fn folder_of(roots: &[PathBuf], dir: &Path) -> String {
+    roots
+        .iter()
+        .filter_map(|r| dir.strip_prefix(r).ok())
+        .min_by_key(|rel| rel.components().count())
+        .map(|rel| rel.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_default()
 }

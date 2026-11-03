@@ -51,6 +51,8 @@ pub struct Ui {
     add_list: gtk::ListBox,
     add_rows: RefCell<Vec<AddRow>>,
     add_filter: Rc<RefCell<AddFilter>>,
+    folder_model: gtk::StringList,
+    folder_picker: gtk::DropDown,
     add_progress: gtk::Label,
     /// Quantas análises de efeitos a lista já mostra (para só reescrevê-la quando mudam).
     add_infos_shown: Cell<usize>,
@@ -80,12 +82,19 @@ struct AddFilter {
     /// O efeito precisa ter TODAS as características marcadas.
     features: HashSet<Feature>,
     only_compatible: bool,
+    /// Só os efeitos desta subpasta (e das de dentro dela); vazio: todas.
+    folder: String,
+    folders: HashMap<String, String>,
     infos: HashMap<String, EffectInfo>,
 }
 
 impl AddFilter {
     fn accepts(&self, name: &str) -> bool {
-        if !self.query.is_empty() && !name.to_lowercase().contains(&self.query) {
+        let folder = self.folders.get(name).map(String::as_str).unwrap_or("");
+        if !self.query.is_empty() && !name.to_lowercase().contains(&self.query) && !folder.to_lowercase().contains(&self.query) {
+            return false;
+        }
+        if !self.folder.is_empty() && folder != self.folder && !folder.strip_prefix(&self.folder).is_some_and(|rest| rest.starts_with('/')) {
             return false;
         }
         let info = self.infos.get(name);
@@ -106,6 +115,12 @@ struct AddRow {
 
 /// Quem refaz a tela depois de uma ação; preenchido quando a `Ui` existe (as ações nascem antes dela).
 type Hook = Rc<RefCell<Option<Box<dyn Fn()>>>>;
+
+/// O texto do botão de filtros: quantos estão ligados.
+fn filters_label(f: &AddFilter) -> String {
+    let n = f.features.len() + usize::from(f.only_compatible) + usize::from(!f.folder.is_empty());
+    if n == 0 { "Filtros".to_string() } else { format!("Filtros ({n})") }
+}
 
 fn margins(w: &impl IsA<gtk::Widget>, all: i32) {
     w.set_margin_top(all);
@@ -199,22 +214,35 @@ impl Ui {
         let add_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
         margins(&add_box, 8);
         add_box.append(&add_search);
-        // Filtro por característica (várias ao mesmo tempo) e só os compatíveis.
-        let chips = gtk::FlowBox::new();
-        chips.set_selection_mode(gtk::SelectionMode::None);
-        chips.set_max_children_per_line(3);
-        chips.set_row_spacing(4);
-        chips.set_column_spacing(4);
-        let only_ok = gtk::ToggleButton::with_label("Só compatíveis");
-        chips.append(&only_ok);
-        let chip_buttons: Vec<(Feature, gtk::ToggleButton)> = [Feature::Depth, Feature::Color, Feature::Textures, Feature::Mipmaps, Feature::Srgb, Feature::Compute]
+        // Os filtros ficam num menu à parte (uma linha só na janela): características (várias ao mesmo tempo), só os
+        // compatíveis e a subpasta.
+        let filters_button = gtk::MenuButton::new();
+        filters_button.set_label("Filtros");
+        let only_ok = gtk::CheckButton::with_label("Só compatíveis");
+        let chip_buttons: Vec<(Feature, gtk::CheckButton)> = [Feature::Depth, Feature::Color, Feature::Textures, Feature::Mipmaps, Feature::Srgb, Feature::Compute]
             .into_iter()
-            .map(|f| (f, gtk::ToggleButton::with_label(f.label())))
+            .map(|f| (f, gtk::CheckButton::with_label(f.label())))
             .collect();
+        let folder_model = gtk::StringList::new(&["Todas as pastas"]);
+        let folder_picker = gtk::DropDown::new(Some(folder_model.clone()), gtk::Expression::NONE);
+        let clear_filters = gtk::Button::with_label("Limpar");
+        let filters_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        margins(&filters_box, 8);
+        filters_box.append(&only_ok);
         for (_, b) in &chip_buttons {
-            chips.append(b);
+            filters_box.append(b);
         }
-        add_box.append(&chips);
+        filters_box.append(&folder_picker);
+        filters_box.append(&clear_filters);
+        let filters_popover = gtk::Popover::new();
+        filters_popover.set_child(Some(&filters_box));
+        filters_button.set_popover(Some(&filters_popover));
+        let search_line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        add_search.set_hexpand(true);
+        search_line.append(&add_search);
+        search_line.append(&filters_button);
+        add_box.remove(&add_search);
+        add_box.prepend(&search_line);
         add_box.append(&add_progress);
         add_box.append(&add_scroller);
         let add_popover = gtk::Popover::new();
@@ -229,12 +257,14 @@ impl Ui {
                 list.invalidate_filter();
             });
             let (list, filter) = (add_list.clone(), add_filter.clone());
+            let label = filters_button.clone();
             only_ok.connect_toggled(move |b| {
                 filter.borrow_mut().only_compatible = b.is_active();
                 list.invalidate_filter();
+                label.set_label(&filters_label(&filter.borrow()));
             });
-            for (feature, button) in chip_buttons {
-                let (list, filter) = (add_list.clone(), add_filter.clone());
+            for (feature, button) in chip_buttons.iter().cloned() {
+                let (list, filter, label) = (add_list.clone(), add_filter.clone(), filters_button.clone());
                 button.connect_toggled(move |b| {
                     let mut f = filter.borrow_mut();
                     if b.is_active() {
@@ -244,8 +274,24 @@ impl Ui {
                     }
                     drop(f);
                     list.invalidate_filter();
+                    label.set_label(&filters_label(&filter.borrow()));
                 });
             }
+            let (list, filter, label, model) = (add_list.clone(), add_filter.clone(), filters_button.clone(), folder_model.clone());
+            folder_picker.connect_selected_notify(move |dd| {
+                let pick = dd.selected();
+                filter.borrow_mut().folder = if pick == 0 { String::new() } else { model.string(pick).map(|s| s.to_string()).unwrap_or_default() };
+                list.invalidate_filter();
+                label.set_label(&filters_label(&filter.borrow()));
+            });
+            let (only_ok, picker, chips) = (only_ok.clone(), folder_picker.clone(), chip_buttons.iter().map(|(_, b)| b.clone()).collect::<Vec<_>>());
+            clear_filters.connect_clicked(move |_| {
+                only_ok.set_active(false);
+                picker.set_selected(0);
+                for b in &chips {
+                    b.set_active(false);
+                }
+            });
         }
 
         // "Novo preset": um nome e criar.
@@ -348,6 +394,8 @@ impl Ui {
             add_list,
             add_rows: RefCell::new(Vec::new()),
             add_filter,
+            folder_model,
+            folder_picker,
             add_progress,
             add_infos_shown: Cell::new(usize::MAX),
             add_effects: RefCell::new(Vec::new()),
@@ -621,6 +669,16 @@ impl Ui {
             self.depth_picker.set(&s.depth_choices, s.depth_pick);
 
             // Efeitos que podem ser adicionados.
+            if self.add_filter.borrow().folders != s.folders {
+                let mut names: Vec<&String> = s.folders.values().filter(|f| !f.is_empty()).collect();
+                names.sort();
+                names.dedup();
+                let keep = self.add_filter.borrow().folder.clone();
+                self.folder_model.splice(1, self.folder_model.n_items() - 1, &names.iter().map(|n| n.as_str()).collect::<Vec<_>>());
+                self.folder_picker.set_selected(names.iter().position(|n| **n == keep).map_or(0, |i| i as u32 + 1));
+                self.add_filter.borrow_mut().folders = s.folders.clone();
+                self.add_list.invalidate_filter();
+            }
             if *self.add_effects.borrow() != s.effects {
                 while let Some(child) = self.add_list.first_child() {
                     self.add_list.remove(&child);
