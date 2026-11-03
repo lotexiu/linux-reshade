@@ -74,6 +74,7 @@ pub unsafe fn build_missing(
             }
         }
     }
+    crate::effect::pipeline_cache::save(device);
     Ok((built, skipped))
 }
 
@@ -170,6 +171,7 @@ impl Chain {
                 }
             }
         }
+        crate::effect::pipeline_cache::save(device);
         Ok((chain, skipped))
     }
 

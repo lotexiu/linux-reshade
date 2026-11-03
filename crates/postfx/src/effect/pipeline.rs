@@ -4,6 +4,98 @@ use super::convert;
 use ash::vk;
 use fx_bundle::manifest::Pass;
 
+/// Cache de pipelines do driver (`VkPipelineCache`), um por dispositivo, guardado em arquivo entre execuções.
+///
+/// Criar os pipelines de uma cadeia custa segundos (o driver compila o SPIR-V para a GPU); com o cache em disco, a
+/// segunda vez que o mesmo efeito aparece (outra sessão do jogo, trocar de preset, mudar a resolução) é quase de graça.
+/// O driver confere o cabeçalho (GPU, versão do driver) e ignora dados que não são dele, então um arquivo velho ou de
+/// outra placa é inofensivo.
+pub mod cache {
+    use ash::vk::{self, Handle};
+    use std::collections::HashMap;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Mutex, OnceLock};
+
+    static PATH: OnceLock<PathBuf> = OnceLock::new();
+    static CACHES: Mutex<Option<HashMap<u64, vk::PipelineCache>>> = Mutex::new(None);
+    static DIRTY: AtomicBool = AtomicBool::new(false);
+
+    /// Onde o cache fica no disco (a primeira chamada vale). Sem isto, `LINUX_RESHADE_PIPELINE_CACHE` decide; sem nenhum
+    /// dos dois, não há cache em disco (o `VkPipelineCache` ainda existe, só na memória do processo).
+    pub fn set_path(path: PathBuf) {
+        let _ = PATH.set(path);
+    }
+
+    fn path() -> Option<PathBuf> {
+        PATH.get().cloned().or_else(|| std::env::var_os("LINUX_RESHADE_PIPELINE_CACHE").map(PathBuf::from))
+    }
+
+    /// O cache do dispositivo (criado, com os dados do arquivo, na primeira vez). `null` se a criação falhar: o driver
+    /// aceita isso e simplesmente não guarda nada.
+    pub fn get(device: &ash::Device) -> vk::PipelineCache {
+        let mut caches = CACHES.lock().unwrap_or_else(|e| e.into_inner());
+        let map = caches.get_or_insert_with(HashMap::new);
+        if let Some(c) = map.get(&device.handle().as_raw()) {
+            return *c;
+        }
+        let data = path().and_then(|p| std::fs::read(p).ok()).unwrap_or_default();
+        let info = vk::PipelineCacheCreateInfo::default().initial_data(&data);
+        // SAFETY: `device` válido; `data` vive até o fim da chamada.
+        let cache = unsafe { device.create_pipeline_cache(&info, None) }
+            .or_else(|_| unsafe { device.create_pipeline_cache(&vk::PipelineCacheCreateInfo::default(), None) })
+            .unwrap_or(vk::PipelineCache::null());
+        map.insert(device.handle().as_raw(), cache);
+        cache
+    }
+
+    /// Avisa que um pipeline novo entrou no cache (o arquivo precisa ser regravado).
+    pub(crate) fn touched() {
+        DIRTY.store(true, Ordering::Relaxed);
+    }
+
+    fn write(path: &Path, data: &[u8]) {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let tmp = path.with_extension(format!("tmp{}", std::process::id()));
+        if std::fs::write(&tmp, data).is_ok() && std::fs::rename(&tmp, path).is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+    }
+
+    /// Grava o cache do dispositivo no arquivo, se algo mudou desde a última gravação.
+    pub fn save(device: &ash::Device) {
+        let Some(path) = path() else { return };
+        if !DIRTY.swap(false, Ordering::Relaxed) {
+            return;
+        }
+        let cache = get(device);
+        if cache == vk::PipelineCache::null() {
+            return;
+        }
+        // SAFETY: `cache` é deste `device`.
+        if let Ok(data) = unsafe { device.get_pipeline_cache_data(cache) } {
+            write(&path, &data);
+        }
+    }
+
+    /// Grava e destrói o cache do dispositivo (antes de destruí-lo).
+    ///
+    /// # Safety
+    /// Nenhum pipeline está sendo criado neste dispositivo agora.
+    pub unsafe fn release(device: &ash::Device) {
+        DIRTY.store(true, Ordering::Relaxed);
+        save(device);
+        let mut caches = CACHES.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(c) = caches.as_mut().and_then(|m| m.remove(&device.handle().as_raw()))
+            && c != vk::PipelineCache::null()
+        {
+            unsafe { device.destroy_pipeline_cache(c, None) };
+        }
+    }
+}
+
 /// Para onde um passe escreve.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Output {
@@ -155,7 +247,8 @@ pub unsafe fn create_pipeline(
             .layout(layout)
             .render_pass(render_pass)
             .subpass(0);
-        let result = device.create_graphics_pipelines(vk::PipelineCache::null(), &[info], None);
+        let result = device.create_graphics_pipelines(cache::get(device), &[info], None);
+        cache::touched();
         device.destroy_shader_module(vert, None);
         device.destroy_shader_module(frag, None);
         result.map(|p| p[0]).map_err(|(_, e)| e)
@@ -172,7 +265,8 @@ pub unsafe fn create_compute_pipeline(device: &ash::Device, layout: vk::Pipeline
         let name = std::ffi::CString::new(entry).map_err(|_| vk::Result::ERROR_INITIALIZATION_FAILED)?;
         let stage = vk::PipelineShaderStageCreateInfo::default().stage(vk::ShaderStageFlags::COMPUTE).module(module).name(&name);
         let info = vk::ComputePipelineCreateInfo::default().stage(stage).layout(layout);
-        let result = device.create_compute_pipelines(vk::PipelineCache::null(), &[info], None);
+        let result = device.create_compute_pipelines(cache::get(device), &[info], None);
+        cache::touched();
         device.destroy_shader_module(module, None);
         result.map(|p| p[0]).map_err(|(_, e)| e)
     }

@@ -10,6 +10,7 @@
 
 mod convert;
 mod pipeline;
+pub use pipeline::cache as pipeline_cache;
 mod record;
 mod resources;
 mod sources;

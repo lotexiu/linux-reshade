@@ -54,6 +54,8 @@ pub unsafe extern "system" fn create_device(
         }
 
         let handle = *p_device;
+        // Os pipelines dos efeitos ficam num cache em arquivo (a segunda cadeia igual monta muito mais rápido).
+        postfx::pipeline_cache::set_path(ipc::state_dir().join("pipeline-cache.bin"));
         let device = ash::Device::load_with(
             |name| std::mem::transmute(next_gdpa(handle, name.as_ptr())),
             handle,
@@ -97,6 +99,7 @@ pub unsafe extern "system" fn destroy_device(device: vk::Device, p_allocator: *c
             }
             crate::effect::reap_semaphores(&data.device, true);
             crate::depth::destroy(&data);
+            postfx::pipeline_cache::release(&data.device);
             (data.device.fp_v1_0().destroy_device)(device, p_allocator);
         }
     }

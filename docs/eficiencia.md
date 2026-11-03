@@ -1,0 +1,49 @@
+# Eficiência dos efeitos e o que o runtime pode oferecer
+
+Medido na GPU real (RTX 3060), 1920x1080, cadeia do preset "10 RTGI completo com especular", profundidade falsa, 60 quadros,
+com `LINUX_RESHADE_CHAIN_PROFILE=1` (teste `a_chain_of_compiled_bundles_runs`, usando os bundles do cache, que têm as imagens).
+Soma 34 ms; no jogo a cadeia roda mais leve porque a GPU está em outro estado de clock, mas a proporção é a mesma.
+
+| Efeito | ms | Onde gasta |
+|---|---|---|
+| RTGI Diffuse | 10,1 | traçado (`TraceWrapCubicCS` 5,1), pirâmide de profundidade própria (`DownsampleDepthCS` 1,8), reprojeção temporal 0,9 |
+| DOF | 6,0 | momentos em mipmap (`DownsampleMomentsPS` 2,4), bokeh 0,7, filtros |
+| RTGI Specular | 5,9 | pirâmide Hi-Z própria (`SpecularHiZDownsampleCS` 2,3), traçado 0,9, radiância em mip 1,0 |
+| Launchpad | 4,6 | escrita de features e profundidade (1,8), normais (1,0), albedo (0,9) |
+| Sharpen | 2,3 | um passe só (`MainPS`) |
+| ExposureFusion | 1,8 | pirâmide Retinex |
+| FilmGrain | 1,7 | `ApplyGrainCS` 1,0 + `ResolvePS` 0,8: grão de química do filme |
+| ReGrade | 1,6 | aplicação da LUT |
+
+## O que se repete entre efeitos (e o runtime pode dar uma vez só)
+
+- **Pirâmides de profundidade**: Launchpad, RTGI Diffuse e RTGI Specular cada um monta a sua (`DownsampleDepth` 1,8 ms,
+  `HiZ` 2,3 ms, features do Launchpad 1,8 ms). Um serviço do runtime que entregasse profundidade linear e a pirâmide
+  (mín/máx e média) como textura nomeada, calculada uma vez por quadro, tiraria perto de 4 ms desta cadeia.
+- **Normais**: o Launchpad as calcula; qualquer efeito de luz que não use o Launchpad as calcularia de novo.
+- **Histórico temporal**: cada efeito temporal (RTGI, Specular) cria e troca (ping-pong) as próprias texturas de quadro anterior.
+- **Ruído azul**: texturas de arquivo carregadas e amostradas por cada efeito.
+
+## Recursos do runtime que servem a qualquer efeito (sem ser feitos para um efeito só)
+
+1. **Cache de pipelines em disco** (feito). Montar a cadeia do preset 10 levou 320 ms com o cache frio do driver e 116 ms com o
+   nosso cache quente; na primeira sessão sem cache do driver (Flatpak) chegou a 4,7 s. Vale para todos os efeitos e atenua o
+   congelamento ao trocar de preset.
+2. **Serviços de profundidade**: semânticas novas (`LINEARDEPTH`, `DEPTHMIPS`, `NORMALS`) que o runtime preenche uma vez por quadro,
+   em meia resolução quando o efeito aceitar. É o recurso de maior retorno medido.
+3. **Escala de qualidade global**: uma constante (especialização) que reduz as texturas internas de todos os efeitos (1x, 1/2, 1/4)
+   e um modo "orçamento de GPU" que ajusta a escala sozinho com a medição de tempo por passe que a layer já faz.
+4. **Histórico gerenciado**: anotação `history = N` numa textura, e o runtime cuida da troca e do reinício quando a resolução muda.
+5. **Execução alternada**: anotação para um passe rodar a cada N quadros (ou em tabuleiro) e reaproveitar o resultado, útil para
+   GI, bloom, adaptação de exposição.
+6. **Formato dos alvos intermediários**: trocar RGBA16F por R11G11B10F nos intermediários cujo alfa nunca é lido (menos banda).
+7. **Subgrupos (wave ops)** nos passes de compute quando a GPU tem, para reduções e pirâmides.
+
+## Candidatos a versão nova (do mais caro, melhor do grupo)
+
+1. **GI difusa** (RTGI Diffuse): usar o serviço de profundidade, traçar em meia resolução com reconstrução, histórico gerenciado.
+2. **DOF**: momentos em passe único de compute com subgrupos, bokeh em meia resolução.
+3. **Sharpen** e **grão**: custo desproporcional (2,3 e 1,7 ms). Um sharpen adaptativo estilo CAS custa cerca de um décimo; um grão
+   por hash também. São os mais fáceis para provar a ideia.
+
+Ordem sugerida: serviços de profundidade (2), depois escala de qualidade (3), depois reescrever sharpen/grão como prova e a GI.

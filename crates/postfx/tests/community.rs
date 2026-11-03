@@ -252,6 +252,15 @@ fn a_chain_of_compiled_bundles_runs() {
                     let total: f64 = rows.iter().map(|r| r.2).sum();
                     rows.sort_by(|a, b| b.2.total_cmp(&a.2));
                     eprintln!("PERFIL por passe (média, total {:.2} ms):", total / 1000.0);
+                    let mut per_effect: std::collections::BTreeMap<usize, f64> = std::collections::BTreeMap::new();
+                    for (e, _, us) in &rows {
+                        *per_effect.entry(*e).or_default() += us;
+                    }
+                    let mut per_effect: Vec<_> = per_effect.into_iter().collect();
+                    per_effect.sort_by(|a, b| b.1.total_cmp(&a.1));
+                    for (e, us) in &per_effect {
+                        eprintln!("  TOTAL do efeito {e} ({}): {:.2} ms", step_bundles.get(*e).map_or("?".to_string(), |b| b.manifest.techniques.first().map_or("?".to_string(), |t| t.name.clone())), us / 1000.0);
+                    }
                     for (e, l, us) in rows.iter().take(25) {
                         eprintln!("  efeito {e} passe {l}: {:.3} ms", us / 1000.0);
                     }

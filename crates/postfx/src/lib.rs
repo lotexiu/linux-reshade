@@ -18,5 +18,5 @@ pub mod shared;
 
 pub use backbuffer::BackbufferCopies;
 pub use chain::{build_missing, Chain, ChainParts, Skipped, Step};
-pub use effect::{DepthInput, Effect, Target};
+pub use effect::{pipeline_cache, DepthInput, Effect, Target};
 pub use error::Error;
