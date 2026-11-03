@@ -313,8 +313,24 @@ impl Compiler {
     }
 
     /// As pastas de efeitos de verdade (com as subpastas das entradas `**`), na ordem de busca.
+    ///
+    /// Percorrer as subpastas custa (milhares de arquivos, às vezes num disco lento) e muita coisa pergunta isso por efeito
+    /// (`source`, `source_modified`): o resultado guardado vale enquanto nenhuma das pastas mudou (uma subpasta nova
+    /// muda a data da pasta que a contém).
     pub fn effect_dirs(&self) -> Vec<PathBuf> {
-        config::expand(&self.effects)
+        use std::sync::Mutex;
+        type Cached = (Vec<config::SearchPath>, Vec<(PathBuf, Option<SystemTime>)>);
+        static CACHE: Mutex<Option<Cached>> = Mutex::new(None);
+        let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((key, dirs)) = cache.as_ref()
+            && *key == self.effects
+            && dirs.iter().all(|(d, stamp)| modified(d) == *stamp)
+        {
+            return dirs.iter().map(|(d, _)| d.clone()).collect();
+        }
+        let dirs = config::expand(&self.effects);
+        *cache = Some((self.effects.clone(), dirs.iter().map(|d| (d.clone(), modified(d))).collect()));
+        dirs
     }
 
     /// Identifica as pastas de busca de efeitos e de texturas: muda quando o usuário troca as pastas, e o que foi
@@ -346,7 +362,8 @@ impl Compiler {
                 let path = entry.path();
                 let Some(name) = path.file_name().and_then(|n| n.to_str()).and_then(|n| n.strip_suffix(".fx")) else { continue };
                 // O primeiro diretório da lista vence, como em `source`.
-                if valid_name(name) && path.is_file() {
+                let is_file = entry.file_type().is_ok_and(|t| t.is_file()) || path.is_file(); // o segundo, para links
+                if valid_name(name) && is_file {
                     found.entry(name.to_string()).or_insert_with(|| dir.clone());
                 }
             }

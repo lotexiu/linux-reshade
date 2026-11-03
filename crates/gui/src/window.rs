@@ -51,8 +51,9 @@ pub struct Ui {
     add_list: gtk::ListBox,
     add_rows: RefCell<Vec<AddRow>>,
     add_filter: Rc<RefCell<AddFilter>>,
-    folder_model: gtk::StringList,
-    folder_picker: gtk::DropDown,
+    /// Há uma montagem da lista "Adicionar efeito" em andamento (em pedaços, quando o ociosa).
+    add_building: Cell<bool>,
+    folder_list: gtk::ListBox,
     add_progress: gtk::Label,
     /// Quantas análises de efeitos a lista já mostra (para só reescrevê-la quando mudam).
     add_infos_shown: Cell<usize>,
@@ -223,8 +224,31 @@ impl Ui {
             .into_iter()
             .map(|f| (f, gtk::CheckButton::with_label(f.label())))
             .collect();
-        let folder_model = gtk::StringList::new(&["Todas as pastas"]);
-        let folder_picker = gtk::DropDown::new(Some(folder_model.clone()), gtk::Expression::NONE);
+        // A lista de pastas fica dentro do próprio menu (um seletor suspenso abriria outra janela por cima, que ficava
+        // aberta depois da escolha) e tem busca, porque são muitas.
+        let folder_search = gtk::SearchEntry::new();
+        folder_search.set_placeholder_text(Some("Procurar pasta"));
+        let folder_list = gtk::ListBox::new();
+        folder_list.set_selection_mode(gtk::SelectionMode::Single);
+        let folder_query = Rc::new(RefCell::new(String::new()));
+        {
+            let query = folder_query.clone();
+            folder_list.set_filter_func(move |row| {
+                let q = query.borrow();
+                // A linha "Todas as pastas" (nome vazio) sempre aparece.
+                q.is_empty() || row.widget_name().is_empty() || row.widget_name().to_lowercase().contains(q.as_str())
+            });
+            let (list, query) = (folder_list.clone(), folder_query.clone());
+            folder_search.connect_search_changed(move |e| {
+                *query.borrow_mut() = e.text().to_lowercase();
+                list.invalidate_filter();
+            });
+        }
+        let folder_scroller = gtk::ScrolledWindow::new();
+        folder_scroller.set_child(Some(&folder_list));
+        folder_scroller.set_min_content_height(180);
+        folder_scroller.set_min_content_width(260);
+        folder_scroller.set_hscrollbar_policy(gtk::PolicyType::Never);
         let clear_filters = gtk::Button::with_label("Limpar");
         let filters_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
         margins(&filters_box, 8);
@@ -232,7 +256,8 @@ impl Ui {
         for (_, b) in &chip_buttons {
             filters_box.append(b);
         }
-        filters_box.append(&folder_picker);
+        filters_box.append(&folder_search);
+        filters_box.append(&folder_scroller);
         filters_box.append(&clear_filters);
         let filters_popover = gtk::Popover::new();
         filters_popover.set_child(Some(&filters_box));
@@ -277,17 +302,17 @@ impl Ui {
                     label.set_label(&filters_label(&filter.borrow()));
                 });
             }
-            let (list, filter, label, model) = (add_list.clone(), add_filter.clone(), filters_button.clone(), folder_model.clone());
-            folder_picker.connect_selected_notify(move |dd| {
-                let pick = dd.selected();
-                filter.borrow_mut().folder = if pick == 0 { String::new() } else { model.string(pick).map(|s| s.to_string()).unwrap_or_default() };
+            let (list, filter, label) = (add_list.clone(), add_filter.clone(), filters_button.clone());
+            folder_list.connect_row_selected(move |_, row| {
+                let Some(row) = row else { return };
+                filter.borrow_mut().folder = row.widget_name().to_string();
                 list.invalidate_filter();
                 label.set_label(&filters_label(&filter.borrow()));
             });
-            let (only_ok, picker, chips) = (only_ok.clone(), folder_picker.clone(), chip_buttons.iter().map(|(_, b)| b.clone()).collect::<Vec<_>>());
+            let (only_ok, folders, chips) = (only_ok.clone(), folder_list.clone(), chip_buttons.iter().map(|(_, b)| b.clone()).collect::<Vec<_>>());
             clear_filters.connect_clicked(move |_| {
                 only_ok.set_active(false);
-                picker.set_selected(0);
+                folders.select_row(folders.row_at_index(0).as_ref());
                 for b in &chips {
                     b.set_active(false);
                 }
@@ -394,8 +419,8 @@ impl Ui {
             add_list,
             add_rows: RefCell::new(Vec::new()),
             add_filter,
-            folder_model,
-            folder_picker,
+            add_building: Cell::new(false),
+            folder_list,
             add_progress,
             add_infos_shown: Cell::new(usize::MAX),
             add_effects: RefCell::new(Vec::new()),
@@ -420,6 +445,16 @@ impl Ui {
     /// Liga os widgets fixos da janela às ações do modelo.
     fn connect(self: &Rc<Self>, redraw: impl Fn() + Clone + 'static, name_entry: gtk::Entry, create: gtk::Button, new_popover: gtk::Popover) {
         let weak = Rc::downgrade(self);
+
+        // Abrir "Adicionar efeito" começa a montar a lista na hora, sem esperar a próxima atualização.
+        self.add_popover.connect_show({
+            let weak = weak.clone();
+            move |_| {
+                if let Some(ui) = weak.upgrade() {
+                    glib::idle_add_local_once(move || ui.apply());
+                }
+            }
+        });
 
         self.enabled.connect_active_notify({
             let (weak, redraw) = (weak.clone(), redraw.clone());
@@ -674,41 +709,71 @@ impl Ui {
                 names.sort();
                 names.dedup();
                 let keep = self.add_filter.borrow().folder.clone();
-                self.folder_model.splice(1, self.folder_model.n_items() - 1, &names.iter().map(|n| n.as_str()).collect::<Vec<_>>());
-                self.folder_picker.set_selected(names.iter().position(|n| **n == keep).map_or(0, |i| i as u32 + 1));
+                while let Some(child) = self.folder_list.first_child() {
+                    self.folder_list.remove(&child);
+                }
+                let mut selected = None;
+                for (i, name) in std::iter::once("").chain(names.iter().map(|n| n.as_str())).enumerate() {
+                    let row = gtk::ListBoxRow::new();
+                    row.set_widget_name(name);
+                    let label = gtk::Label::new(Some(if name.is_empty() { "Todas as pastas" } else { name }));
+                    label.set_halign(gtk::Align::Start);
+                    margins(&label, 4);
+                    row.set_child(Some(&label));
+                    self.folder_list.append(&row);
+                    if name == keep {
+                        selected = Some(i);
+                    }
+                }
+                self.folder_list.select_row(self.folder_list.row_at_index(selected.unwrap_or(0) as i32).as_ref());
                 self.add_filter.borrow_mut().folders = s.folders.clone();
                 self.add_list.invalidate_filter();
             }
-            if *self.add_effects.borrow() != s.effects {
+            // A lista tem mais de mil linhas: só é montada quando o menu abre, e aos poucos (senão a janela trava).
+            let open = self.add_popover.is_visible();
+            if open && *self.add_effects.borrow() != s.effects {
                 while let Some(child) = self.add_list.first_child() {
                     self.add_list.remove(&child);
                 }
-                let mut rows = Vec::new();
-                for name in &s.effects {
-                    let row = gtk::ListBoxRow::new();
-                    row.set_widget_name(name);
-                    let title = gtk::Label::new(Some(name));
-                    title.set_halign(gtk::Align::Start);
-                    title.set_xalign(0.0);
-                    let detail = gtk::Label::new(None);
-                    detail.set_halign(gtk::Align::Start);
-                    detail.set_xalign(0.0);
-                    detail.set_wrap(true);
-                    detail.add_css_class("caption");
-                    let b = gtk::Box::new(gtk::Orientation::Vertical, 0);
-                    margins(&b, 4);
-                    b.append(&title);
-                    b.append(&detail);
-                    row.set_child(Some(&b));
-                    self.add_list.append(&row);
-                    rows.push(AddRow { name: name.clone(), title, detail });
-                }
-                *self.add_rows.borrow_mut() = rows;
+                self.add_rows.borrow_mut().clear();
                 *self.add_effects.borrow_mut() = s.effects.clone();
                 self.add_infos_shown.set(usize::MAX);
             }
+            if open && self.add_rows.borrow().len() < self.add_effects.borrow().len() && !self.add_building.replace(true) {
+                let ui = self.clone();
+                glib::idle_add_local(move || {
+                    const CHUNK: usize = 60;
+                    let effects = ui.add_effects.borrow();
+                    let mut rows = ui.add_rows.borrow_mut();
+                    for name in effects.iter().skip(rows.len()).take(CHUNK) {
+                        let row = gtk::ListBoxRow::new();
+                        row.set_widget_name(name);
+                        let title = gtk::Label::new(Some(name));
+                        title.set_halign(gtk::Align::Start);
+                        title.set_xalign(0.0);
+                        let detail = gtk::Label::new(None);
+                        detail.set_halign(gtk::Align::Start);
+                        detail.set_xalign(0.0);
+                        detail.set_wrap(true);
+                        detail.add_css_class("caption");
+                        let b = gtk::Box::new(gtk::Orientation::Vertical, 0);
+                        margins(&b, 4);
+                        b.append(&title);
+                        b.append(&detail);
+                        row.set_child(Some(&b));
+                        ui.add_list.append(&row);
+                        rows.push(AddRow { name: name.clone(), title, detail });
+                    }
+                    if rows.len() < effects.len() {
+                        return glib::ControlFlow::Continue;
+                    }
+                    ui.add_infos_shown.set(usize::MAX); // as linhas novas ainda não têm o que a análise sabe
+                    ui.add_building.set(false);
+                    glib::ControlFlow::Break
+                });
+            }
             // O que a análise já sabe: vermelho para os incompatíveis, e as características embaixo.
-            if self.add_infos_shown.get() != s.infos.len() {
+            if open && self.add_infos_shown.get() != s.infos.len() && self.add_rows.borrow().len() == self.add_effects.borrow().len() {
                 for row in self.add_rows.borrow().iter() {
                     match s.infos.get(&row.name) {
                         Some(info) => {

@@ -139,6 +139,8 @@ pub struct Home {
     schemas: HashMap<String, Bundle>,
     /// Quantas análises havia da última vez que se leram todas (para só reler quando mudam).
     analysis_seen: Option<usize>,
+    /// Quando se procurou por última vez análises que faltavam (uma refeita no lugar da antiga não muda a contagem).
+    analysis_checked: Option<std::time::Instant>,
     snapshot: HomeSnapshot,
 }
 
@@ -173,7 +175,7 @@ impl Home {
     }
 
     pub fn with_layers(compiler: Result<Compiler, String>, presets_dir: Option<PathBuf>, state: ipc::Writer, layers: LayersSource) -> Self {
-        let mut home = Self { compiler, presets_dir, state, layers, game: None, loaded: None, schemas: HashMap::new(), analysis_seen: None, snapshot: HomeSnapshot::default() };
+        let mut home = Self { compiler, presets_dir, state, layers, game: None, loaded: None, schemas: HashMap::new(), analysis_seen: None, analysis_checked: None, snapshot: HomeSnapshot::default() };
         if let Err(why) = &home.compiler {
             home.snapshot.notice = Some(format!("sem compilador de efeitos: {why}"));
         } else if home.presets_dir.is_none() {
@@ -278,8 +280,19 @@ impl Home {
     fn refresh_analysis(&mut self) {
         let Ok(compiler) = &self.compiler else { return };
         let saved = analysis::count_saved(compiler);
-        if self.analysis_seen != Some(saved) || self.snapshot.infos.len() != saved.min(self.snapshot.effects.len()) {
-            self.snapshot.infos = self.snapshot.effects.iter().filter_map(|n| analysis::load(compiler, n).map(|i| (n.clone(), i))).collect();
+        // Só lê as análises que faltam (cada leitura é um arquivo e uma checagem do `.fx`; são mais de mil).
+        let incomplete = self.snapshot.infos.len() < self.snapshot.effects.len() && self.analysis_checked.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1));
+        if self.analysis_seen != Some(saved) || incomplete {
+            self.analysis_checked = Some(std::time::Instant::now());
+            let effects = &self.snapshot.effects;
+            self.snapshot.infos.retain(|n, _| effects.binary_search(n).is_ok());
+            for n in effects {
+                if !self.snapshot.infos.contains_key(n)
+                    && let Some(info) = analysis::load(compiler, n)
+                {
+                    self.snapshot.infos.insert(n.clone(), info);
+                }
+            }
             self.analysis_seen = Some(saved);
         }
         self.snapshot.analysis = (self.snapshot.infos.len(), self.snapshot.effects.len());
