@@ -19,3 +19,4 @@ shortcuts-portal = { path = "../shortcuts-portal" }
 fx-bundle = { path = "../fx-bundle" }
 preset = { path = "../preset" }
 panel = { path = "../panel" }
+rustix = { version = "1", default-features = false, features = ["std", "process"] }

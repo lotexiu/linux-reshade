@@ -66,6 +66,8 @@ pub enum Command {
     Off,
     Toggle,
     Daemon,
+    /// Só os atalhos globais (o daemon inicia este processo quando há um jogo aberto).
+    Keys,
     /// Pede uma captura de tela a cada jogo com a layer aberta (o daemon ou o `watch` grava os PNG).
     Screenshot,
     /// Liga ou desliga a medição de desempenho da layer (aparece em `layers`).
@@ -214,6 +216,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "off" => no_args(Command::Off),
         "toggle" => no_args(Command::Toggle),
         "daemon" => no_args(Command::Daemon),
+        "keys" => no_args(Command::Keys),
         "screenshot" => no_args(Command::Screenshot),
         "stats" => match tail {
             [x] if x == "on" => Ok(Command::Stats(true)),

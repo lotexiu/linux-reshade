@@ -161,6 +161,10 @@ pub fn run(command: Command, state: &ipc::Writer) -> ExitCode {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => fail(e),
         },
+        Command::Keys => match daemon::run_keys(state) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => fail(e),
+        },
         Command::Use { bundle: None, layer } => with_target(layer, state, use_none),
         Command::Inherit { layer } => with_target(Some(layer), state, inherit),
         Command::Use { bundle: Some(arg), layer } if !cli::is_path(&arg.to_string_lossy()) => with_target(layer, state, |t| select_by_name(&arg.to_string_lossy(), t)),

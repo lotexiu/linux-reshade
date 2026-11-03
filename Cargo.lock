@@ -815,6 +815,7 @@ dependencies = [
  "ipc",
  "panel",
  "preset",
+ "rustix",
  "shortcuts",
  "shortcuts-portal",
 ]
