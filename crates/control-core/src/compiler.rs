@@ -443,8 +443,8 @@ impl Compiler {
         self.source(name).ok().and_then(|p| modified(&p))
     }
 
-    /// Algum bundle já compilado de `name` (o mais recente), em qualquer resolução. Serve para ler os
-    /// controles do efeito sem compilar nada.
+    /// Algum bundle já compilado de `name` (o mais recente), em qualquer resolução e com quaisquer macros (as variantes
+    /// `Nome.m<hash>` do jogo aberto contam). Serve para ler os controles do efeito sem compilar nada: são os mesmos.
     pub fn any_bundle(&self, name: &str) -> Option<PathBuf> {
         std::fs::read_dir(&self.cache)
             .ok()?
@@ -452,7 +452,7 @@ impl Compiler {
             .filter_map(|e| {
                 let path = e.path();
                 let (n, _, _) = parse_bundle_name(path.file_name()?.to_str()?)?;
-                (n == name).then_some(())?;
+                (base_name(&n) == name).then_some(())?;
                 Some((modified(&path.join("manifest.json"))?, path))
             })
             .max()
@@ -942,6 +942,15 @@ mod tests {
         assert_eq!(f.compiler.schema_bundle(&template, &live).unwrap(), f.compiler.bundle_dir("Sepia", 1280, 720));
         // Uma escolha que não é por nome não tem o que resolver.
         assert!(f.compiler.schema_bundle("/qualquer/bundle", &[]).is_err());
+    }
+
+    #[test]
+    fn any_bundle_also_finds_a_variant_compiled_with_macros() {
+        let f = fake("any-variant", OK_TOOL);
+        let defines = vec![("QUALITY".to_string(), "2".to_string())];
+        f.compiler.ensure_with("Sepia", 100, 100, &defines).unwrap();
+        let key = variant_key("Sepia", &defines);
+        assert_eq!(f.compiler.any_bundle("Sepia"), Some(f.compiler.bundle_dir(&key, 100, 100)));
     }
 
     #[test]
