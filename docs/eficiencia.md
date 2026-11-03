@@ -23,6 +23,15 @@ Os milissegundos acima vêm do teste da cadeia fora do jogo e **só valem como p
 do jogo, então a conclusão "o Sharpen e o grão custam muito mais do que um sharpen simples" **não está provada**: um passe trivial
 já custa 1,6 ms ali. O custo real por efeito vem do jogo aberto (`lrctl stats on`, que lista a GPU de cada etapa).
 
+## Medido no jogo (Roblox/Sober, 1920x1080, preset 10, `lrctl stats on`)
+
+GPU dos efeitos: **18,05 ms** por quadro: RTGI Diffuse 8,07, RTGI Specular 3,34, Launchpad 2,77, DOF 2,17, e menos de 0,5 cada:
+Sharpen 0,39, FilmGrain 0,45, SMAA 0,36, ExposureFusion 0,34, ReGrade 0,14. Então o piso de um passe é cerca de 0,1 a 0,4 ms (o teste
+fora do jogo inflava isso de 4 a 10 vezes) e Sharpen/grão **não** são o problema: só os dois RTGI, o Launchpad e o DOF pesam.
+
+Nesta cena o jogo roda a 45 quadros/s com e sem efeitos (21,9 ms sem, 23,2 ms com): ela é limitada pelo processador do jogo e a GPU dos
+efeitos se esconde atrás disso. Acelerar os efeitos só aparece em cenas limitadas pela GPU (por exemplo o minigame a 240 quadros/s).
+
 ## O que se repete entre efeitos (e o runtime pode dar uma vez só)
 
 - **Pirâmides de profundidade**: Launchpad, RTGI Diffuse e RTGI Specular cada um monta a sua (`DownsampleDepth` 1,8 ms,
@@ -53,4 +62,4 @@ já custa 1,6 ms ali. O custo real por efeito vem do jogo aberto (`lrctl stats o
 2. **DOF**: momentos em passe único de compute com subgrupos, bokeh em meia resolução.
 3. **Sharpen** e **grão**: a medição fora do jogo não mostra que sejam caros (ver o aviso); decidir depois de medir no jogo.
 
-Ordem sugerida: medir no jogo, serviços de profundidade (2), escala de qualidade (3), depois a GI.
+Ordem sugerida: serviços de profundidade (2), escala de qualidade (3), depois a GI.
