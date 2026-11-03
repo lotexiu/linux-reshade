@@ -3,9 +3,9 @@
 // para cenas em que a GPU é o limite. Ordem: LR_Depth, LR_GI, depois a cor.
 #include "LR_Common.fxh"
 
-uniform float fBounce < ui_type = "slider"; ui_label = "Luz rebatida"; ui_min = 0.0; ui_max = 4.0; > = 1.0;
+uniform float fBounce < ui_type = "slider"; ui_label = "Luz rebatida"; ui_min = 0.0; ui_max = 16.0; > = 4.0;
 uniform float fAO < ui_type = "slider"; ui_label = "Oclusão ambiente"; ui_min = 0.0; ui_max = 2.0; > = 0.8;
-uniform float fRadius < ui_type = "slider"; ui_label = "Raio (unidades do mundo)"; ui_min = 0.5; ui_max = 40.0; > = 8.0;
+uniform float fRadius < ui_type = "slider"; ui_label = "Raio (unidades do mundo)"; ui_min = 0.5; ui_max = 80.0; > = 24.0;
 uniform float fBlurDepth < ui_type = "slider"; ui_label = "Tolerância de profundidade do desfoque"; ui_min = 0.01; ui_max = 1.0; > = 0.1;
 
 #define LR_SAMPLES 12
