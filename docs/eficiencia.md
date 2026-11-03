@@ -15,6 +15,14 @@ Soma 34 ms; no jogo a cadeia roda mais leve porque a GPU está em outro estado d
 | FilmGrain | 1,7 | `ApplyGrainCS` 1,0 + `ResolvePS` 0,8: grão de química do filme |
 | ReGrade | 1,6 | aplicação da LUT |
 
+## Aviso sobre estes números
+
+Os milissegundos acima vêm do teste da cadeia fora do jogo e **só valem como proporção**. Lá, um passe que só devolve a imagem
+(`tex2Dfetch` e escrita) custa 1,6 ms a 1080p e um que escreve uma cor constante 0,69 ms; o custo cresce com os pixels (0,39 ms a
+540p, 1,6 a 1080p, 6,5 a 2160p), mas é muito maior do que a GPU deveria gastar nisso. O teste mede com a GPU num estado diferente do
+do jogo, então a conclusão "o Sharpen e o grão custam muito mais do que um sharpen simples" **não está provada**: um passe trivial
+já custa 1,6 ms ali. O custo real por efeito vem do jogo aberto (`lrctl stats on`, que lista a GPU de cada etapa).
+
 ## O que se repete entre efeitos (e o runtime pode dar uma vez só)
 
 - **Pirâmides de profundidade**: Launchpad, RTGI Diffuse e RTGI Specular cada um monta a sua (`DownsampleDepth` 1,8 ms,
@@ -43,7 +51,6 @@ Soma 34 ms; no jogo a cadeia roda mais leve porque a GPU está em outro estado d
 
 1. **GI difusa** (RTGI Diffuse): usar o serviço de profundidade, traçar em meia resolução com reconstrução, histórico gerenciado.
 2. **DOF**: momentos em passe único de compute com subgrupos, bokeh em meia resolução.
-3. **Sharpen** e **grão**: custo desproporcional (2,3 e 1,7 ms). Um sharpen adaptativo estilo CAS custa cerca de um décimo; um grão
-   por hash também. São os mais fáceis para provar a ideia.
+3. **Sharpen** e **grão**: a medição fora do jogo não mostra que sejam caros (ver o aviso); decidir depois de medir no jogo.
 
-Ordem sugerida: serviços de profundidade (2), depois escala de qualidade (3), depois reescrever sharpen/grão como prova e a GI.
+Ordem sugerida: medir no jogo, serviços de profundidade (2), escala de qualidade (3), depois a GI.
