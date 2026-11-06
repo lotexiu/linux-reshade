@@ -584,22 +584,9 @@ impl Ui {
         self.updating.set(false);
     }
 
-    /// O que exige refazer as linhas: a ordem, os nomes, as teclas e as definições. Ligado/desligado e o estado no jogo NÃO entram:
-    /// mudam no lugar (`update_row`), porque refazer a lista a cada clique troca a caixa sob o ponteiro e o clique seguinte se perde.
+    /// O que exige mexer na lista: a ordem e a assinatura de cada linha (ver `EffectRow::signature_of`).
     fn signature_of(groups: &[EffectGroup]) -> String {
-        groups
-            .iter()
-            .map(|g| {
-                let multi = g.techniques.len() > 1;
-                let techniques: Vec<String> = g
-                    .techniques
-                    .iter()
-                    // Num efeito com várias técnicas, o estado no jogo de cada uma está escrito dentro do painel dele.
-                    .map(|t| format!("{}:{}:{}:{}", t.id, t.label, t.key, if multi { format!("{:?}", t.runtime) } else { String::new() }))
-                    .collect();
-                format!("{}|{}|{}\n", g.file, g.macros, techniques.join(";"))
-            })
-            .collect()
+        groups.iter().map(|g| format!("{}\n", EffectRow::signature_of(g))).collect()
     }
 
     /// A lista de efeitos: refeita quando a estrutura muda; senão só atualiza os valores dos controles.
@@ -643,24 +630,49 @@ impl Ui {
         })
     }
 
+    /// Põe a lista de linhas no estado de `groups` mexendo só no que mudou, como o `key=` de uma lista do React: a linha de um efeito que
+    /// continua igual é a MESMA (não perde o foco, o painel aberto nem o clique em andamento), uma que mudou é refeita, uma nova entra e
+    /// uma que saiu sai; a ordem se ajusta movendo as linhas, sem recriá-las.
     fn rebuild(self: &Rc<Self>, groups: &[EffectGroup]) {
-        // Refazer a lista leva a rolagem ao topo: guarda a posição e a devolve depois que o tamanho novo foi calculado.
         let adjustment = self.scroller.vadjustment();
         let scroll = adjustment.value();
-        while let Some(child) = self.list.first_child() {
-            self.list.remove(&child);
-        }
-        let mut rows = Vec::new();
-        let last = groups.len().saturating_sub(1);
         let ctx = self.row_ctx();
+        let mut old: std::collections::HashMap<String, EffectRow> = self.rows.take().into_iter().map(|r| (r.file.clone(), r)).collect();
+        let last = groups.len().saturating_sub(1);
+        let mut rows = Vec::with_capacity(groups.len());
+        let mut structural = false;
         for (index, g) in groups.iter().enumerate() {
-            rows.push(EffectRow::new(&ctx, index, last, g));
+            let signature = EffectRow::signature_of(g);
+            let row = match old.remove(&g.file) {
+                Some(r) if r.signature == signature => r,
+                other => {
+                    if let Some(gone) = other {
+                        self.list.remove(&gone.row);
+                    }
+                    structural = true;
+                    EffectRow::new(&ctx, index, last, g)
+                }
+            };
+            row.set_position(index, last);
+            rows.push(row);
         }
-        for r in &rows {
-            self.list.append(&r.row);
+        for (_, gone) in old {
+            self.list.remove(&gone.row);
+            structural = true;
+        }
+        // Ordem: cada linha vai à posição dela (as que já estão no lugar não se mexem).
+        for (index, r) in rows.iter().enumerate() {
+            let in_place = self.list.row_at_index(index as i32).is_some_and(|current| current == r.row);
+            if !in_place {
+                if r.row.parent().is_some() {
+                    self.list.remove(&r.row);
+                }
+                self.list.insert(&r.row, index as i32);
+            }
         }
         *self.rows.borrow_mut() = rows;
-        if scroll > 0.0 {
+        if structural && scroll > 0.0 {
+            // Linhas novas mudam o tamanho: a rolagem é devolvida depois que ele é recalculado.
             for delay in [0u64, 40, 150] {
                 let adjustment = adjustment.clone();
                 glib::timeout_add_local_once(std::time::Duration::from_millis(delay), move || adjustment.set_value(scroll.min((adjustment.upper() - adjustment.page_size()).max(0.0))));
@@ -860,6 +872,31 @@ impl Ui {
         check(self.home.borrow().snapshot().enabled, "o interruptor não ligou os efeitos");
         self.enabled.set_active(false);
         check(!self.home.borrow().snapshot().enabled, "o interruptor não desligou os efeitos");
+
+        // 4b. acrescentar e tirar OUTRO efeito não refaz a linha do primeiro (a lista reaproveita as linhas, como o `key=` do React)
+        let first = self.rows.borrow().iter().find(|r| r.file == file).map(|r| r.row.clone());
+        if effect_name != "Tonemap" && self.choose_effect("Tonemap") {
+            check(self.rows.borrow().iter().any(|r| r.file == "Tonemap.fx"), "o segundo efeito não apareceu na lista");
+            let same = self.rows.borrow().iter().find(|r| r.file == file).map(|r| r.row.clone());
+            check(first.is_some() && first == same, "acrescentar outro efeito refez a linha do primeiro");
+            let order: Vec<String> = self.rows.borrow().iter().map(|r| r.file.clone()).collect();
+            let shown: Vec<String> = std::iter::successors(self.list.first_child(), |w| w.next_sibling()).map(|w| w.widget_name().to_string()).collect();
+            check(shown.len() == order.len(), &format!("a lista mostra {} linhas, o modelo tem {}", shown.len(), order.len()));
+            // Mover um efeito para cima: a lista segue a ordem do modelo e as linhas continuam as mesmas.
+            let tonemap_row = self.rows.borrow().iter().find(|r| r.file == "Tonemap.fx").map(|r| r.row.clone());
+            self.act(|h| h.move_effect("Tonemap.fx", -1));
+            let model: Vec<String> = self.home.borrow().snapshot().groups.iter().map(|g| g.file.clone()).collect();
+            let rows: Vec<String> = self.rows.borrow().iter().map(|r| r.file.clone()).collect();
+            let shown: Vec<gtk::Widget> = std::iter::successors(self.list.first_child(), |w| w.next_sibling()).collect();
+            let shown_rows: Vec<gtk::Widget> = self.rows.borrow().iter().map(|r| r.row.clone().upcast()).collect();
+            check(model == rows, &format!("a ordem das linhas {rows:?} não segue o modelo {model:?}"));
+            check(shown == shown_rows, "a ordem na tela não segue a das linhas");
+            check(tonemap_row.is_some() && tonemap_row == self.rows.borrow().iter().find(|r| r.file == "Tonemap.fx").map(|r| r.row.clone()), "mover refez a linha");
+            self.remove_effect("Tonemap");
+            let same = self.rows.borrow().iter().find(|r| r.file == file).map(|r| r.row.clone());
+            check(first.is_some() && first == same, "tirar outro efeito refez a linha do primeiro");
+            check(!self.rows.borrow().iter().any(|r| r.file == "Tonemap.fx"), "o segundo efeito não saiu da lista");
+        }
 
         // 5. deixar o preset como estava
         self.remove_effect(effect_name);

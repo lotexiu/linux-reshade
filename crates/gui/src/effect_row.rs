@@ -38,9 +38,32 @@ pub struct EffectRow {
     pub alert_slot: gtk::Box,
     pub controls: Option<RefCell<ControlsView>>,
     pub row: gtk::ListBoxRow,
+    /// O que a linha mostra e só muda refazendo-a (nomes, teclas, definições...): a mesma assinatura, a linha serve (ver `signature_of`).
+    pub signature: String,
+    up: gtk::Button,
+    down: gtk::Button,
 }
 
 impl EffectRow {
+    /// O que exige refazer a linha: o arquivo, as definições, os nomes e as teclas das técnicas. Ligado/desligado e o estado no jogo NÃO
+    /// entram: mudam no lugar (`update`), porque refazer a linha troca a caixa sob o ponteiro e o clique seguinte se perde.
+    pub fn signature_of(g: &EffectGroup) -> String {
+        let multi = g.techniques.len() > 1;
+        let techniques: Vec<String> = g
+            .techniques
+            .iter()
+            // Num efeito com várias técnicas, o estado no jogo de cada uma está escrito dentro do painel dele.
+            .map(|t| format!("{}:{}:{}:{}", t.id, t.label, t.key, if multi { format!("{:?}", t.runtime) } else { String::new() }))
+            .collect();
+        format!("{}|{}|{}", g.file, g.macros, techniques.join(";"))
+    }
+
+    /// Põe a linha na posição `index` (de `0` a `last`): só o que depende dela, os botões de subir e descer.
+    pub fn set_position(&self, index: usize, last: usize) {
+        self.up.set_sensitive(index > 0);
+        self.down.set_sensitive(index < last);
+    }
+
     /// O texto e a cor do que a layer fez com uma técnica no jogo aberto.
     fn runtime_label(state: &ipc::TechniqueState) -> gtk::Label {
         let (text, class) = match state {
@@ -383,6 +406,6 @@ impl EffectRow {
         row.set_activatable(false);
         row.set_child(Some(&outer));
         let haystack = std::iter::once(g.name.clone()).chain(std::iter::once(g.file.clone())).chain(g.techniques.iter().flat_map(|t| [t.label.clone(), t.id.name.clone()])).collect::<Vec<_>>().join(" ").to_lowercase();
-        EffectRow { file: g.file.clone(), haystack, check, sub_checks, dot, alert_slot, controls, row }
+        EffectRow { file: g.file.clone(), haystack, check, sub_checks, dot, alert_slot, controls, row, signature: Self::signature_of(g), up, down }
     }
 }
