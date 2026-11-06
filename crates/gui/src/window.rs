@@ -8,6 +8,7 @@ use crate::flatpak_view::FlatpakView;
 use crate::games::GamesView;
 use gtk4 as gtk;
 use crate::depth_picker::DepthPicker;
+use control_core::i18n::{fmt, tr};
 use crate::macros::MacroEditor;
 use gtk::glib;
 use gtk::prelude::*;
@@ -20,10 +21,16 @@ use std::time::Duration;
 
 /// Intervalo entre duas leituras do estado (jogos, flag, mudanças feitas pelo `lrctl` ou editando o arquivo).
 const REFRESH: Duration = Duration::from_millis(500);
-const GLOBAL_GAME: &str = "Preset global";
+fn global_game() -> &'static str {
+    tr("Global preset")
+}
 /// O último item da lista de jogos: abre a página que liga o linux-reshade em apps Flatpak.
-const ADD_FLATPAK: &str = "＋ Adicionar jogo Flatpak…";
-const INHERIT_PRESET: &str = "(usar o preset global)";
+fn add_flatpak() -> &'static str {
+    tr("＋ Add Flatpak game…")
+}
+fn inherit_preset() -> &'static str {
+    tr("(use the global preset)")
+}
 
 pub struct Ui {
     pub window: gtk::ApplicationWindow,
@@ -51,7 +58,7 @@ pub struct Ui {
     signature: RefCell<String>,
     /// Efeitos (arquivos) com os parâmetros abertos: sobrevive às refeituras da lista.
     expanded: Rc<RefCell<HashSet<String>>>,
-    /// A página "Adicionar efeito" e a pilha que a alterna com a lista do preset.
+    /// A página tr("Add effect") e a pilha que a alterna com a lista do preset.
     add_view: Rc<AddEffectView>,
     stack: gtk::Stack,
     flatpak_view: Rc<FlatpakView>,
@@ -118,16 +125,16 @@ impl Ui {
 
         let enabled = gtk::Switch::new();
         enabled.set_valign(gtk::Align::Center);
-        let game = gtk::DropDown::from_strings(&[GLOBAL_GAME, ADD_FLATPAK]);
+        let game = gtk::DropDown::from_strings(&[global_game(), add_flatpak()]);
         game.set_hexpand(true);
-        let preset = gtk::DropDown::from_strings(&[INHERIT_PRESET]);
+        let preset = gtk::DropDown::from_strings(&[inherit_preset()]);
         preset.set_hexpand(true);
         let new_preset = gtk::MenuButton::new();
-        new_preset.set_label("Novo");
-        new_preset.set_tooltip_text(Some("Novo preset para este jogo (cópia do atual)"));
-        let macros = MacroEditor::new("Definições…", "Definições de pré-processador do preset, para todos os efeitos (como no ReShade). Mudar recompila os efeitos afetados.");
+        new_preset.set_label(tr("New"));
+        new_preset.set_tooltip_text(Some(tr("New preset for this game (copy of the current one)")));
+        let macros = MacroEditor::new(tr("Definitions…"), tr("Preprocessor definitions of the preset, for all effects (as in ReShade). Changing them recompiles the affected effects."));
         let delete_preset = gtk::Button::from_icon_name("user-trash-symbolic");
-        delete_preset.set_tooltip_text(Some("Apagar este preset"));
+        delete_preset.set_tooltip_text(Some(tr("Delete this preset")));
         let depth_picker = DepthPicker::new();
         let depth_note = gtk::Label::new(None);
         depth_note.set_halign(gtk::Align::Start);
@@ -144,8 +151,8 @@ impl Ui {
 
         let search = gtk::SearchEntry::new();
         search.set_hexpand(true);
-        search.set_placeholder_text(Some("Procurar nos efeitos do preset"));
-        let add_button = gtk::Button::with_label("Adicionar efeito");
+        search.set_placeholder_text(Some(tr("Search the preset's effects")));
+        let add_button = gtk::Button::with_label(tr("Add effect"));
 
         let list = gtk::ListBox::new();
         list.set_selection_mode(gtk::SelectionMode::None);
@@ -163,8 +170,8 @@ impl Ui {
 
         // "Novo preset": um nome e criar.
         let name_entry = gtk::Entry::new();
-        name_entry.set_placeholder_text(Some("Nome do preset"));
-        let create = gtk::Button::with_label("Criar");
+        name_entry.set_placeholder_text(Some(tr("Preset name")));
+        let create = gtk::Button::with_label(tr("Create"));
         create.add_css_class("suggested-action");
         let new_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         margins(&new_box, 8);
@@ -175,7 +182,7 @@ impl Ui {
         new_preset.set_popover(Some(&new_popover));
 
         let games_view = GamesView::new();
-        let games_title = gtk::Label::new(Some("Jogos abertos"));
+        let games_title = gtk::Label::new(Some(tr("Open games")));
         games_title.set_halign(gtk::Align::Start);
         games_title.add_css_class("heading");
         let games_expander = gtk::Expander::new(None);
@@ -193,18 +200,18 @@ impl Ui {
         let page = gtk::Box::new(gtk::Orientation::Vertical, 10);
         margins(&page, 14);
         let flatpak_button = gtk::Button::with_label("Flatpak…");
-        flatpak_button.set_tooltip_text(Some("Este jogo roda como app Flatpak: abre a página onde se vê e se desfaz a configuração dele"));
+        flatpak_button.set_tooltip_text(Some(tr("This game runs as a Flatpak app: opens the page where its setup is shown and undone")));
         flatpak_button.set_visible(false);
         game.set_hexpand(true);
-        page.append(&line("Jogo", &[game.upcast_ref(), flatpak_button.upcast_ref()]));
-        page.append(&line("Preset", &[preset.upcast_ref(), new_preset.upcast_ref(), delete_preset.upcast_ref()]));
+        page.append(&line(tr("Game"), &[game.upcast_ref(), flatpak_button.upcast_ref()]));
+        page.append(&line(tr("Preset"), &[preset.upcast_ref(), new_preset.upcast_ref(), delete_preset.upcast_ref()]));
         page.append(&preset_note);
         let depth_line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         depth_line.append(&depth_note);
         depth_line.append(&depth_picker.button);
         page.append(&depth_line);
         macros.button.set_halign(gtk::Align::Start);
-        page.append(&line("Macros", &[macros.button.upcast_ref()]));
+        page.append(&line(tr("Macros"), &[macros.button.upcast_ref()]));
         let tools = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         tools.append(&search);
         tools.append(&add_button);
@@ -223,14 +230,14 @@ impl Ui {
 
         let header = gtk::HeaderBar::new();
         let toggle = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        toggle.append(&gtk::Label::new(Some("Efeitos ligados")));
+        toggle.append(&gtk::Label::new(Some(tr("Effects on"))));
         toggle.append(&enabled);
         header.pack_end(&toggle);
         let shortcuts_button = gtk::Button::from_icon_name("emblem-system-symbolic");
-        shortcuts_button.set_tooltip_text(Some("Configurações: atalhos, capturas de tela, pastas, desempenho e cache"));
+        shortcuts_button.set_tooltip_text(Some(tr("Settings: shortcuts, screenshots, folders, performance and cache")));
         header.pack_start(&shortcuts_button);
 
-        // A página "Adicionar efeito" e a lista do preset se alternam numa pilha (sem popover: ver `add_effect.rs`). Os callbacks da
+        // A página tr("Add effect") e a lista do preset se alternam numa pilha (sem popover: ver `add_effect.rs`). Os callbacks da
         // página só guardam uma referência fraca da interface, que ainda não existe aqui.
         let ui_ref: Rc<RefCell<Weak<Ui>>> = Rc::new(RefCell::new(Weak::new()));
         let add_view = AddEffectView::new(
@@ -271,7 +278,7 @@ impl Ui {
 
         let window = gtk::ApplicationWindow::builder().application(app).title("linux-reshade").default_width(600).default_height(780).child(&stack).build();
         window.set_titlebar(Some(&header));
-        // Esc na página "Adicionar efeito" volta à lista do preset (um campo de busca com texto usa o primeiro Esc para limpá-lo).
+        // Esc na página tr("Add effect") volta à lista do preset (um campo de busca com texto usa o primeiro Esc para limpá-lo).
         let escape = gtk::EventControllerKey::new();
         escape.connect_key_pressed({
             let ui_ref = ui_ref.clone();
@@ -517,16 +524,16 @@ impl Ui {
             self.act(|h| h.delete_preset(&name));
             return;
         }
-        let dialog = gtk::Window::builder().transient_for(&self.window).modal(true).title("Apagar preset").default_width(380).resizable(false).build();
+        let dialog = gtk::Window::builder().transient_for(&self.window).modal(true).title(tr("Delete preset")).default_width(380).resizable(false).build();
         let body = gtk::Box::new(gtk::Orientation::Vertical, 12);
         margins(&body, 16);
-        let text = gtk::Label::new(Some(&format!("Apagar o preset \"{name}\"?\nO arquivo é removido e as configurações dele se perdem.")));
+        let text = gtk::Label::new(Some(&fmt("Delete the preset \"{}\"?\nThe file is removed and its settings are lost.", &[&name])));
         text.set_wrap(true);
         text.set_halign(gtk::Align::Start);
         text.set_xalign(0.0);
-        let never = gtk::CheckButton::with_label("Não perguntar novamente (dá para voltar a perguntar nas configurações)");
-        let cancel = gtk::Button::with_label("Cancelar");
-        let delete = gtk::Button::with_label("Apagar");
+        let never = gtk::CheckButton::with_label(tr("Don't ask again (you can turn this back on in the settings)"));
+        let cancel = gtk::Button::with_label(tr("Cancel"));
+        let delete = gtk::Button::with_label(tr("Delete"));
         delete.add_css_class("destructive-action");
         let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         buttons.set_halign(gtk::Align::End);
@@ -587,9 +594,9 @@ impl Ui {
             // Jogos.
             let ids: Vec<Option<String>> = std::iter::once(None).chain(s.games.iter().map(|g| Some(g.id.clone()))).collect();
             if *self.game_ids.borrow() != ids {
-                let mut items = vec![GLOBAL_GAME.to_string()];
+                let mut items = vec![global_game().to_string()];
                 items.extend(s.games.iter().map(|g| if g.open { format!("● {}", g.id) } else { g.id.clone() }));
-                items.push(ADD_FLATPAK.to_string());
+                items.push(add_flatpak().to_string());
                 let refs: Vec<&str> = items.iter().map(String::as_str).collect();
                 self.game.set_model(Some(&gtk::StringList::new(&refs)));
                 *self.game_ids.borrow_mut() = ids.clone();
@@ -605,9 +612,9 @@ impl Ui {
             self.new_preset.set_sensitive(has_game);
             self.macros.set_text(&s.preset_macros);
             self.delete_preset.set_sensitive(s.active_preset.is_some());
-            self.new_preset.set_tooltip_text(Some(if has_game { "Novo preset para este jogo (cópia do atual)" } else { "Escolha um jogo para criar um preset dele" }));
+            self.new_preset.set_tooltip_text(Some(if has_game { tr("New preset for this game (copy of the current one)") } else { tr("Pick a game to create a preset for it") }));
             if *self.preset_names.borrow() != s.presets {
-                let mut items = vec![INHERIT_PRESET.to_string()];
+                let mut items = vec![inherit_preset().to_string()];
                 items.extend(s.presets.iter().cloned());
                 let refs: Vec<&str> = items.iter().map(String::as_str).collect();
                 self.preset.set_model(Some(&gtk::StringList::new(&refs)));
@@ -618,10 +625,10 @@ impl Ui {
                 self.preset.set_selected(active);
             }
             self.preset_note.set_text(&match (&s.preset, has_game) {
-                (Some(p), true) if p.inherited => format!("Este jogo usa o preset global ({}). A primeira alteração cria o preset dele.", p.name),
+                (Some(p), true) if p.inherited => fmt("This game uses the global preset ({}). The first change creates its own preset.", &[&p.name]),
                 (Some(p), _) => format!("{}", p.path.display()),
-                (None, true) => "Este jogo não tem preset. Adicione um efeito para criar o dele.".to_string(),
-                (None, false) => "Ainda não há preset global. Adicione um efeito para criá-lo (vale para os jogos sem preset próprio).".to_string(),
+                (None, true) => tr("This game has no preset. Add an effect to create one.").to_string(),
+                (None, false) => tr("There is no global preset yet. Add an effect to create it (it applies to games without their own preset).").to_string(),
             });
 
             match &s.depth_note {
@@ -639,7 +646,7 @@ impl Ui {
 
             self.depth_picker.set(&s.depth_choices, s.depth_pick);
 
-            // A página "Adicionar efeito" (só monta a lista enquanto está na tela).
+            // A página tr("Add effect") (só monta a lista enquanto está na tela).
             self.add_view.set(&s.effects, &s.folders, &s.infos, s.analysis, self.stack.visible_child_name().as_deref() == Some("add"));
 
             self.show_groups(&s.groups);
@@ -649,7 +656,7 @@ impl Ui {
 
             self.empty.set_visible(s.groups.is_empty());
             self.empty.set_text(if s.groups.is_empty() {
-                "Nenhum efeito no preset.\nUse \"Adicionar efeito\" para começar."
+                tr("No effects in the preset.\nUse \"Add effect\" to start.")
             } else {
                 ""
             });
@@ -757,7 +764,7 @@ impl Ui {
 
 
     /// O que a tela sabe dos jogos, em texto (para os testes automáticos conferirem de fora).
-    /// Mexe na página "Adicionar efeito" como uma pessoa (abrir, abrir os filtros, escolher uma pasta, digitar, voltar, reabrir) e
+    /// Mexe na página tr("Add effect") como uma pessoa (abrir, abrir os filtros, escolher uma pasta, digitar, voltar, reabrir) e
     /// devolve o que deu errado: uma página que some, um campo que não aparece. Os avisos e erros do GTK durante o roteiro também
     /// contam (é assim que um widget com dois pais aparece).
     pub async fn smoke_popovers(self: &Rc<Self>) -> Vec<String> {
@@ -866,7 +873,7 @@ impl Ui {
 
     /// Adiciona um efeito ao preset do jogo escolhido, como pelo botão. `false` se o efeito não existe.
     pub fn choose_effect(self: &Rc<Self>, name: &str) -> bool {
-        // A lista da página "Adicionar efeito" só é montada quando ela está na tela: vai direto ao modelo (o mesmo que o clique faz).
+        // A lista da página tr("Add effect") só é montada quando ela está na tela: vai direto ao modelo (o mesmo que o clique faz).
         if self.home.borrow().snapshot().effects.iter().any(|e| e == name) {
             self.act(|h| h.add_effect(name));
             return true;
@@ -937,7 +944,7 @@ impl Ui {
             check(false, "o efeito não gerou nenhum controle");
         }
 
-        // 3b. criar um preset pelo botão "Criar" do popover (precisa de um jogo escolhido)
+        // 3b. criar um preset pelo botão tr("Create") do popover (precisa de um jogo escolhido)
         if self.home.borrow().snapshot().game.is_some() {
             self.new_name.set_text("smoke-novo");
             self.new_create.emit_clicked();

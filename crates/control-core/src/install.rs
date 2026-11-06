@@ -5,6 +5,7 @@
 //! para a cópia (que se atualiza quando o programa muda).
 
 use std::path::{Path, PathBuf};
+use crate::i18n::{fmt, tr};
 
 const LAYER_LIB: &str = "liblinux_reshade_layer.so";
 const MANIFEST_NAME: &str = "VK_LAYER_LOTEXIU_linux_reshade.json";
@@ -38,7 +39,7 @@ pub fn resource_root() -> Option<PathBuf> {
 pub fn first_run() -> Result<(), String> {
     let env = |name: &str| std::env::var_os(name);
     // A pasta de dados do usuário (a configurada, ou a padrão) já tem Shaders: nada a fazer.
-    let dir = config::Config::load().data_dir.or_else(|| config::default_data_dir(&env)).ok_or("não sei onde ficam seus dados (HOME vazio)")?;
+    let dir = config::Config::load().data_dir.or_else(|| config::default_data_dir(&env)).ok_or(tr("do not know where your data lives (HOME is empty)"))?;
     if dir.join("Shaders").is_dir() {
         return Ok(());
     }
@@ -122,13 +123,13 @@ pub fn layer_installed() -> bool {
 pub fn install_layer() -> Result<PathBuf, String> {
     let source = crate::flatpak::layer_library()?;
     let target = installed_library();
-    std::fs::create_dir_all(target.parent().ok_or("sem pasta")?).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(target.parent().ok_or(tr("no folder"))?).map_err(|e| e.to_string())?;
     // Escreve ao lado e troca: um jogo aberto que já mapeou a biblioteca antiga não a vê mudar por baixo.
     let tmp = target.with_extension("so.new");
-    std::fs::copy(&source, &tmp).map_err(|e| format!("copiando a camada: {e}"))?;
+    std::fs::copy(&source, &tmp).map_err(|e| fmt("copying the layer: {}", &[&e]))?;
     std::fs::rename(&tmp, &target).map_err(|e| e.to_string())?;
     let manifest = manifest_path();
-    std::fs::create_dir_all(manifest.parent().ok_or("sem pasta")?).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(manifest.parent().ok_or(tr("no folder"))?).map_err(|e| e.to_string())?;
     std::fs::write(&manifest, manifest_json(&target)).map_err(|e| format!("{}: {e}", manifest.display()))?;
     Ok(target)
 }
@@ -160,8 +161,8 @@ pub fn set_autostart(on: bool) -> Result<(), String> {
         let _ = std::fs::remove_file(&path);
         return Ok(());
     }
-    let command = daemon_command().ok_or("não achei o comando do daemon")?;
-    std::fs::create_dir_all(path.parent().ok_or("sem pasta")?).map_err(|e| e.to_string())?;
+    let command = daemon_command().ok_or(tr("could not find the daemon command"))?;
+    std::fs::create_dir_all(path.parent().ok_or(tr("no folder"))?).map_err(|e| e.to_string())?;
     let desktop = format!("[Desktop Entry]\nType=Application\nName=linux-reshade (daemon)\nComment=Compila os efeitos dos jogos abertos e registra os atalhos\nExec={command}\nTerminal=false\nX-GNOME-Autostart-enabled=true\nNoDisplay=true\n");
     std::fs::write(&path, desktop).map_err(|e| e.to_string())
 }

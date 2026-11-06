@@ -196,7 +196,7 @@ fn tex_position(m: &fx_bundle::Manifest, tex: &Texture) -> usize {
 fn file_texture_supported(bundle: &Bundle, tex: &Texture, index: usize) -> Result<(), Error> {
     let source = fx_bundle::images::source_of(tex).unwrap_or("?");
     if bundle.image(index).is_none() {
-        return Err(unsupported(format!("textura {:?}: o bundle não tem a imagem de {source:?}", tex.name)));
+        return Err(unsupported(format!("texture {:?}: the bundle has no image for {source:?}", tex.name)));
     }
     if convert::pack_pixels(tex.format, &[0; 4]).is_none() {
         return Err(unsupported(format!("textura {:?}: formato {:?} a partir de um arquivo", tex.name, tex.format)));
@@ -362,7 +362,7 @@ impl Effect {
         mut shared: Option<&mut Shared>,
     ) -> Result<(), Error> {
         let m = &bundle.manifest;
-        let tech = m.techniques.get(technique).ok_or_else(|| Error::Invalid(format!("técnica {technique} não existe")))?;
+        let tech = m.techniques.get(technique).ok_or_else(|| Error::Invalid(format!("technique {technique} does not exist")))?;
         let count = target.images.len();
         if count == 0 {
             return Err(Error::Invalid("alvo sem imagens".into()));
@@ -399,7 +399,7 @@ impl Effect {
                     Some("COLOR") => samples_color[k] = true,
                     Some("DEPTH") => {
                         let Some(depth) = &target.depth else {
-                            return Err(unsupported(format!("passe {k}: amostra a profundidade e este jogo não a oferece (ou ainda não foi achada)")));
+                            return Err(unsupported(format!("pass {k}: samples the depth and this game does not offer it (or it has not been found yet)")));
                         };
                         if depth.layout == vk::ImageLayout::UNDEFINED {
                             return Err(unsupported(format!("passe {k}: amostra a profundidade, mas o layout da imagem é desconhecido")));
@@ -875,7 +875,7 @@ impl Effect {
                 .ok_or_else(|| Error::Invalid(format!("textura {:?}", storage.texture)))?;
             let image = &self.textures[index];
             if image.image == vk::Image::null() {
-                return Err(unsupported(format!("imagem de armazenamento {:?}: a textura {:?} não tem imagem", storage.name, tex.name)));
+                return Err(unsupported(format!("storage image {:?}: the texture {:?} has no image", storage.name, tex.name)));
             }
             if storage.level >= image.levels {
                 return Err(Error::Invalid(format!("storage {:?}: nível {} de uma textura com {} níveis", storage.name, storage.level, image.levels)));

@@ -1,4 +1,4 @@
-//! O botão "Profundidade…": lista as imagens de profundidade que a layer achou no jogo aberto (e a opção automática) para a
+//! O botão tr("Depth…"): lista as imagens de profundidade que a layer achou no jogo aberto (e a opção automática) para a
 //! pessoa escolher qual os efeitos usam. Sem `DropDown` dentro do popover (ele trava os cliques ao fechar): botões de opção.
 
 use gtk::prelude::*;
@@ -7,6 +7,7 @@ use ipc::DepthPick;
 use panel::DepthChoice;
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
+use control_core::i18n::{fmt, tr};
 
 pub struct DepthPicker {
     pub button: gtk::MenuButton,
@@ -28,8 +29,8 @@ impl DepthPicker {
         let popover = gtk::Popover::new();
         popover.set_child(Some(&list));
         let button = gtk::MenuButton::new();
-        button.set_label("Profundidade…");
-        button.set_tooltip_text(Some("Escolhe qual imagem de profundidade os efeitos usam neste jogo (vale até fechá-lo)"));
+        button.set_label(tr("Depth…"));
+        button.set_tooltip_text(Some(tr("Chooses which depth image the effects use in this game (until it is closed)")));
         button.set_popover(Some(&popover));
         button.set_visible(false);
         Rc::new(Self { button, list, on_change: RefCell::new(None), building: Cell::new(false), signature: RefCell::new(String::new()) })
@@ -52,32 +53,32 @@ impl DepthPicker {
             self.list.remove(&child);
         }
         let weak = Rc::downgrade(self);
-        let first = option("Automática (a layer escolhe)", pick == DepthPick::Auto, None, DepthPick::Auto, &weak);
+        let first = option(tr("Automatic (the layer chooses)"), pick == DepthPick::Auto, None, DepthPick::Auto, &weak);
         self.list.append(&first);
         for c in choices {
             let mut text = c.label.clone();
             if c.automatic {
-                text.push_str(" · a automática");
+                text.push_str(tr(" · the automatic one"));
             }
             if let Some(why) = &c.unusable {
-                text.push_str(&format!(" · não serve: {why}"));
+                text.push_str(&fmt(" · unusable: {}", &[why]));
             }
             let row = option(&text, pick == DepthPick::Candidate(c.number), Some(&first), DepthPick::Candidate(c.number), &weak);
             // Uma candidata que não serve (proporção diferente da tela, sem desenhos...) a layer ignora: não dá para escolhê-la.
             if let Some(why) = &c.unusable {
                 row.set_sensitive(false);
-                row.set_tooltip_text(Some(&format!("A layer não usa esta imagem: {why}")));
+                row.set_tooltip_text(Some(&fmt("The layer does not use this image: {}", &[why])));
             }
             self.list.append(&row);
         }
 
         // A profundidade antes de uma limpeza específica (como o ReShade): o número é estável entre quadros.
-        self.list.append(&numbered_option("Antes da limpeza", matches!(pick, DepthPick::Clear(_)), match pick { DepthPick::Clear(n) => n, _ => 1 }, &first, &weak, DepthPick::Clear));
+        self.list.append(&numbered_option(tr("Before the clear"), matches!(pick, DepthPick::Clear(_)), match pick { DepthPick::Clear(n) => n, _ => 1 }, &first, &weak, DepthPick::Clear));
 
         // A profundidade depois de um passe específico (avançado).
         let line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         let current_pass = if let DepthPick::Pass(n) = pick { n } else { 1 };
-        let pass_option = gtk::CheckButton::with_label("Depois do passe");
+        let pass_option = gtk::CheckButton::with_label(tr("After the pass"));
         pass_option.set_group(Some(&first));
         pass_option.set_active(matches!(pick, DepthPick::Pass(_)));
         let spin = gtk::SpinButton::with_range(1.0, 200.0, 1.0);
@@ -98,13 +99,13 @@ impl DepthPicker {
                 }
             }
         });
-        let use_button = gtk::Button::with_label("Usar");
+        let use_button = gtk::Button::with_label(tr("Use"));
         use_button.connect_clicked(move |_| apply());
         line.append(&pass_option);
         line.append(&spin);
         line.append(&use_button);
         self.list.append(&line);
-        let hint = gtk::Label::new(Some("A escolha vale enquanto o jogo estiver aberto. Se o resultado piorar, volte para Automática."));
+        let hint = gtk::Label::new(Some(tr("The choice lasts while the game is open. If the result gets worse, go back to Automatic.")));
         hint.set_wrap(true);
         hint.set_xalign(0.0);
         hint.add_css_class("dim-label");
@@ -167,7 +168,7 @@ fn numbered_option(label: &str, active: bool, current: u32, group: &gtk::CheckBu
             }
         }
     });
-    let use_button = gtk::Button::with_label("Usar");
+    let use_button = gtk::Button::with_label(tr("Use"));
     use_button.connect_clicked(move |_| apply());
     line.append(&option);
     line.append(&spin);

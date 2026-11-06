@@ -7,6 +7,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use crate::i18n::{fmt, tr};
 
 pub const EXTENSION_ID: &str = "org.freedesktop.Platform.VulkanLayer.linux_reshade";
 const EXTENSION_NAME: &str = "linux_reshade";
@@ -145,7 +146,7 @@ pub fn revokes(cache: &Path) -> Vec<String> {
 // ---- o comando `flatpak` ----
 
 fn flatpak(args: &[&str]) -> Result<String, String> {
-    let out = Command::new("flatpak").args(args).output().map_err(|e| format!("não consegui rodar o flatpak: {e}"))?;
+    let out = Command::new("flatpak").args(args).output().map_err(|e| fmt("could not run flatpak: {}", &[&e]))?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     } else {
@@ -180,7 +181,7 @@ pub fn global_enabled() -> bool {
 /// A versão do ponto de extensão da layer de gráficos que o runtime de um app oferece.
 pub fn extension_version(runtime: &str) -> Result<String, String> {
     let metadata = flatpak(&["info", "--show-metadata", runtime])?;
-    parse_extension_version(&metadata).ok_or_else(|| format!("o runtime {runtime} não tem o ponto de extensão VulkanLayer"))
+    parse_extension_version(&metadata).ok_or_else(|| fmt("the runtime {} has no VulkanLayer extension point", &[&runtime]))
 }
 
 // ---- onde estão a layer e os arquivos de trabalho ----
@@ -194,11 +195,11 @@ pub fn layer_library() -> Result<PathBuf, String> {
         return Ok(path);
     }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let dir = exe.parent().ok_or("sem pasta do executável")?;
+    let dir = exe.parent().ok_or(tr("no executable folder"))?;
     [dir.join("../lib").join(LAYER_LIB), dir.join(LAYER_LIB)]
         .into_iter()
         .find(|p| p.is_file())
-        .ok_or_else(|| format!("não achei {LAYER_LIB} (defina LINUX_RESHADE_LAYER_LIB)"))
+        .ok_or_else(|| fmt("could not find {} (set LINUX_RESHADE_LAYER_LIB)", &[&LAYER_LIB]))
 }
 
 fn work_dir() -> PathBuf {
@@ -237,7 +238,7 @@ pub fn ensure_extension(version: &str) -> Result<(), String> {
     let _ = std::fs::remove_dir_all(&ext);
     std::fs::create_dir_all(ext.join("files/lib")).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(ext.join("files/share/vulkan/implicit_layer.d")).map_err(|e| e.to_string())?;
-    std::fs::copy(&lib, ext.join("files/lib").join(LAYER_LIB)).map_err(|e| format!("copiando a layer: {e}"))?;
+    std::fs::copy(&lib, ext.join("files/lib").join(LAYER_LIB)).map_err(|e| fmt("copying the layer: {}", &[&e]))?;
     std::fs::write(
         ext.join("metadata"),
         format!("[Runtime]\nname={EXTENSION_ID}\nruntime=org.freedesktop.Platform/x86_64/{version}\nsdk=org.freedesktop.Sdk/x86_64/{version}\n\n[ExtensionOf]\nref=runtime/org.freedesktop.Platform/x86_64/{version}\n"),

@@ -1,6 +1,7 @@
 //! A lista de jogos com a layer ativa, como `lrctl layers` a mostra.
 
 use ipc::{EffectState, LiveLayer, TechniqueState};
+use crate::i18n::fmt;
 
 /// O nome do `VkFormat` mais comum em swapchains; o número, se for outro.
 pub fn format_name(format: i32) -> String {
@@ -12,7 +13,7 @@ pub fn format_name(format: i32) -> String {
         58 => "A2R10G10B10_UNORM".into(),
         64 => "A2B10G10R10_UNORM".into(),
         97 => "R16G16B16A16_SFLOAT".into(),
-        other => format!("formato {other}"),
+        other => fmt("format {}", &[&other]),
     }
 }
 
@@ -126,15 +127,9 @@ pub fn render(layers: &[LiveLayer]) -> String {
 /// O desempenho de um jogo em linhas (usado pelo `lrctl layers` e pelo painel).
 pub fn perf_text(p: &ipc::PerfStats) -> String {
     let ms = |us: u32| format!("{:.2} ms", f64::from(us) / 1000.0);
-    let mut text = format!(
-        "  {:.1} quadros/s ({} por quadro)\n  processador, por quadro: layer {} (efeitos {}, profundidade {}); ganchos de desenho nas threads do jogo ~{}\n  GPU dos efeitos: {}\n",
-        f64::from(p.fps_centi) / 100.0,
-        ms(p.frame_us),
-        ms(p.layer_us),
-        ms(p.effects_us),
-        ms(p.depth_us),
-        ms(p.hooks_us),
-        ms(p.gpu_us),
+    let mut text = fmt(
+        "  {} frames/s ({} per frame)\n  CPU, per frame: layer {} (effects {}, depth {}); draw hooks on the game threads ~{}\n  GPU of the effects: {}\n",
+        &[&format!("{:.1}", f64::from(p.fps_centi) / 100.0), &ms(p.frame_us), &ms(p.layer_us), &ms(p.effects_us), &ms(p.depth_us), &ms(p.hooks_us), &ms(p.gpu_us)],
     );
     for (name, us) in &p.gpu_steps {
         text.push_str(&format!("    {name}: {}\n", ms(*us)));
@@ -165,7 +160,7 @@ pub fn depth_format_name(format: i32) -> String {
         128 => "D16_UNORM_S8".into(),
         129 => "D24_UNORM_S8".into(),
         130 => "D32_SFLOAT_S8".into(),
-        other => format!("formato {other}"),
+        other => fmt("format {}", &[&other]),
     }
 }
 
@@ -203,7 +198,7 @@ mod tests {
     fn known_formats_have_names_and_unknown_ones_show_the_number() {
         assert_eq!(format_name(44), "B8G8R8A8_UNORM");
         assert_eq!(format_name(50), "B8G8R8A8_SRGB");
-        assert_eq!(format_name(999), "formato 999");
+        assert_eq!(format_name(999), "format 999");
     }
 
     #[test]

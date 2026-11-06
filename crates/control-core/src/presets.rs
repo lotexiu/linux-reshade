@@ -7,6 +7,7 @@ use fx_bundle::{Bundle, uniforms};
 use preset::game::{self, Source};
 use preset::{Preset, TechId};
 use std::path::{Path, PathBuf};
+use crate::i18n::fmt;
 
 /// Qual preset editar.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,10 +24,10 @@ pub fn resolve(presets_dir: &Path, target: &Target) -> Result<PathBuf, String> {
         Target::File(path) => Ok(path.clone()),
         Target::Game(id) => {
             if !game::valid_game_id(id) {
-                return Err(format!("id de jogo inválido: {id:?}"));
+                return Err(fmt("invalid game id: {}", &[&format!("{id:?}")]));
             }
             game::find(presets_dir, id).map(|f| f.path).ok_or_else(|| {
-                format!("{id}: não há preset (nem o dele, nem {}/{}); crie um com 'lrctl preset new <nome> --game {id}'", presets_dir.display(), game::GLOBAL_PRESET)
+                fmt("{}: there is no preset (neither its own nor {}/{}); create one with 'lrctl preset new <name> --game {}'", &[&id, &presets_dir.display(), &game::GLOBAL_PRESET, &id])
             })
         }
     }
@@ -76,12 +77,12 @@ pub fn parse_technique(preset: &Preset, text: &str) -> TechId {
 pub fn new_for_game(presets_dir: &Path, game_id: &str, name: &str) -> Result<PathBuf, String> {
     let file = if name.to_ascii_lowercase().ends_with(".ini") { name.to_string() } else { format!("{name}.ini") };
     if !game::valid_preset_file(&file) {
-        return Err(format!("nome de preset inválido: {name:?}"));
+        return Err(fmt("invalid preset name: {}", &[&format!("{name:?}")]));
     }
-    let dir = game::game_dir(presets_dir, game_id).ok_or_else(|| format!("id de jogo inválido: {game_id:?}"))?;
+    let dir = game::game_dir(presets_dir, game_id).ok_or_else(|| fmt("invalid game id: {}", &[&format!("{game_id:?}")]))?;
     let path = dir.join(&file);
     if path.exists() {
-        return Err(format!("{} já existe", path.display()));
+        return Err(fmt("{} already exists", &[&path.display()]));
     }
     let text = match game::find(presets_dir, game_id) {
         Some(found) => std::fs::read(&found.path).map_err(|e| format!("{}: {e}", found.path.display()))?,
@@ -114,7 +115,7 @@ pub fn list_for_game(presets_dir: &Path, game_id: &str) -> Vec<String> {
 pub fn cycle_preset(presets_dir: &Path, game_id: &str, delta: i32) -> Result<String, String> {
     let names = list_for_game(presets_dir, game_id);
     if names.is_empty() {
-        return Err(format!("{game_id}: o jogo não tem presets próprios"));
+        return Err(fmt("{}: the game has no presets of its own", &[&game_id]));
     }
     let current = game::find(presets_dir, game_id).and_then(|f| f.path.file_stem().map(|s| s.to_string_lossy().into_owned()));
     let position = current.and_then(|c| names.iter().position(|n| n.eq_ignore_ascii_case(&c)));
@@ -132,9 +133,9 @@ pub fn cycle_preset(presets_dir: &Path, game_id: &str, delta: i32) -> Result<Str
 pub fn use_preset(presets_dir: &Path, game_id: &str, name: Option<&str>) -> Result<(), String> {
     let file = name.map(|n| if n.to_ascii_lowercase().ends_with(".ini") { n.to_string() } else { format!("{n}.ini") });
     if let Some(file) = &file {
-        let path = game::game_dir(presets_dir, game_id).ok_or_else(|| format!("id de jogo inválido: {game_id:?}"))?.join(file);
+        let path = game::game_dir(presets_dir, game_id).ok_or_else(|| fmt("invalid game id: {}", &[&format!("{game_id:?}")]))?.join(file);
         if !path.is_file() {
-            return Err(format!("{} não existe", path.display()));
+            return Err(fmt("{} does not exist", &[&path.display()]));
         }
     }
     game::set_game_preset(presets_dir, game_id, file.as_deref()).map_err(|e| e.to_string())
@@ -144,12 +145,12 @@ pub fn use_preset(presets_dir: &Path, game_id: &str, name: Option<&str>) -> Resu
 pub fn delete_for_game(presets_dir: &Path, game_id: &str, name: &str) -> Result<(), String> {
     let file = if name.to_ascii_lowercase().ends_with(".ini") { name.to_string() } else { format!("{name}.ini") };
     if !game::valid_preset_file(&file) {
-        return Err(format!("nome de preset inválido: {name:?}"));
+        return Err(fmt("invalid preset name: {}", &[&format!("{name:?}")]));
     }
-    let dir = game::game_dir(presets_dir, game_id).ok_or_else(|| format!("id de jogo inválido: {game_id:?}"))?;
+    let dir = game::game_dir(presets_dir, game_id).ok_or_else(|| fmt("invalid game id: {}", &[&format!("{game_id:?}")]))?;
     let path = dir.join(&file);
     if !path.is_file() {
-        return Err(format!("{} não existe", path.display()));
+        return Err(fmt("{} does not exist", &[&path.display()]));
     }
     // Se era o escolhido em game.ini, o jogo deixa de apontar para um arquivo que não existe mais.
     let was_active = game::find(presets_dir, game_id).is_some_and(|f| f.path == path);
@@ -175,7 +176,7 @@ pub fn preset_value(values: &[f64]) -> String {
 pub fn set_uniform(preset: &mut Preset, compiler: &Compiler, file: &str, uniform: &str, values: &[f64]) -> Result<Vec<String>, String> {
     let name = file.strip_suffix(".fx").unwrap_or(file);
     if !valid_name(name) {
-        return Err(format!("nome de efeito inválido: {file:?}"));
+        return Err(fmt("invalid effect name: {}", &[&format!("{file:?}")]));
     }
     let mut warnings = Vec::new();
     let dir = match compiler.any_bundle(name) {
@@ -185,7 +186,7 @@ pub fn set_uniform(preset: &mut Preset, compiler: &Compiler, file: &str, uniform
     let bundle = Bundle::load(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let u = uniforms::find(&bundle.manifest, uniform).ok_or_else(|| {
         let known: Vec<_> = bundle.manifest.uniforms.iter().filter(|u| !uniforms::is_runtime_source(u)).map(|u| u.name.as_str()).collect();
-        format!("{file} não tem o parâmetro {uniform:?} (existem: {})", known.join(", "))
+        fmt("{} has no parameter {} (available: {})", &[&file, &format!("{uniform:?}"), &known.join(", ")])
     })?;
     uniforms::encode(u, values).map_err(|e| e.to_string())?;
     warnings.extend(params::range_warnings(u, values));
@@ -290,7 +291,7 @@ mod tests {
         assert!(set_uniform(&mut p, &f.compiler, "../x.fx", "A", &[1.0]).is_err());
         // Efeito ainda não compilado: compila para conferir; sem o parâmetro, recusa.
         let err = set_uniform(&mut p, &f.compiler, "Invert.fx", "Qualquer", &[1.0]).unwrap_err();
-        assert!(err.contains("não tem o parâmetro"), "{err}");
+        assert!(err.contains("has no parameter"), "{err}");
         assert!(f.compiler.any_bundle("Invert").is_some());
         assert!(set_uniform(&mut p, &f.compiler, "Inexistente.fx", "A", &[1.0]).is_err());
         assert_eq!(p.value("Invert.fx", "Qualquer"), None, "nada foi gravado");

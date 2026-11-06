@@ -4,6 +4,7 @@
 use crate::compiler::{self, Compiler};
 use std::path::Path;
 use std::time::{Duration, Instant};
+use crate::i18n::{fmt, tr};
 
 /// O que há no cache.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -97,7 +98,7 @@ pub fn time_compiles(compiler: &Compiler, effects: &[String], mut progress: impl
             compiler.invalidate(name);
             let start = Instant::now();
             let result = compiler.ensure(name, w, h);
-            let timing = Timing { effect: name.clone(), took: start.elapsed(), error: result.err().map(|e| e.to_string().lines().next().unwrap_or("falhou").to_string()) };
+            let timing = Timing { effect: name.clone(), took: start.elapsed(), error: result.err().map(|e| e.to_string().lines().next().unwrap_or(tr("failed")).to_string()) };
             progress(&timing);
             timing
         })
@@ -107,15 +108,15 @@ pub fn time_compiles(compiler: &Compiler, effects: &[String], mut progress: impl
 /// O texto do relatório de [`time_compiles`]: total, média e os mais lentos.
 pub fn report(timings: &[Timing]) -> String {
     if timings.is_empty() {
-        return "Nenhum efeito para medir.".to_string();
+        return tr("No effects to measure.").to_string();
     }
     let total: Duration = timings.iter().map(|t| t.took).sum();
     let mut sorted: Vec<&Timing> = timings.iter().collect();
     sorted.sort_by_key(|t| std::cmp::Reverse(t.took));
-    let mut out = format!("{} efeitos compilados em {:.2} s (média {:.0} ms)\n\n", timings.len(), total.as_secs_f64(), total.as_millis() as f64 / timings.len() as f64);
+    let mut out = fmt("{} effects compiled in {} s (average {} ms)\n\n", &[&timings.len(), &format!("{:.2}", total.as_secs_f64()), &format!("{:.0}", total.as_millis() as f64 / timings.len() as f64)]);
     for t in sorted {
         match &t.error {
-            Some(e) => out.push_str(&format!("{:>8} ms  {}  (erro: {e})\n", t.took.as_millis(), t.effect)),
+            Some(e) => out.push_str(&format!("{:>8} ms  {}  ({})\n", t.took.as_millis(), t.effect, fmt("error: {}", &[e]))),
             None => out.push_str(&format!("{:>8} ms  {}\n", t.took.as_millis(), t.effect)),
         }
     }
@@ -132,7 +133,7 @@ mod tests {
         let text = report(&[t("A", 10), t("B", 300), t("C", 50)]);
         let (b, c, a) = (text.find("B").unwrap(), text.find("C").unwrap(), text.find("  A").unwrap());
         assert!(b < c && c < a, "{text}");
-        assert!(text.starts_with("3 efeitos compilados em 0.36 s"), "{text}");
-        assert_eq!(report(&[]), "Nenhum efeito para medir.");
+        assert!(text.starts_with("3 effects compiled in 0.36 s"), "{text}");
+        assert_eq!(report(&[]), tr("No effects to measure."));
     }
 }

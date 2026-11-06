@@ -4,6 +4,7 @@ use control_core::layers::{effect_text, format_name};
 use gtk4 as gtk;
 use gtk::prelude::*;
 use ipc::{EffectState, LiveLayer};
+use control_core::i18n::tr;
 
 pub struct GamesView {
     pub root: gtk::Box,
@@ -29,7 +30,7 @@ impl GamesView {
         }
         let rows: Vec<_> = layers.iter().flat_map(|l| l.status.swapchains.iter().map(move |s| (l, s))).collect();
         if rows.is_empty() {
-            let empty = gtk::Label::new(Some("Nenhum jogo com a layer ativa.\nAbra um jogo com LINUX_RESHADE=1 nas opções de lançamento."));
+            let empty = gtk::Label::new(Some(tr("No game with the layer active.\nOpen a game with LINUX_RESHADE=1 in its launch options.")));
             empty.set_halign(gtk::Align::Start);
             empty.add_css_class("dim-label");
             self.root.append(&empty);

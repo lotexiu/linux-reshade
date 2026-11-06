@@ -5,6 +5,7 @@ use fx_bundle::manifest::{Scalar, Uniform, Value};
 use fx_bundle::{Bundle, uniforms};
 use ipc::{ChannelWriter, ParamSource, ParamStore, PublishError, Writer};
 use std::fmt;
+use crate::i18n::{fmt, tr};
 
 /// Os parâmetros de **um jogo** sobre os globais: lê o bloco do jogo e, se ele não tem, o global (o jogo
 /// começa herdando os valores de todos); grava sempre no canal do jogo.
@@ -47,13 +48,13 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::NotFound { name, available } => {
-                write!(f, "não existe o parâmetro {name:?}")?;
-                if available.is_empty() { write!(f, " (este efeito não tem parâmetros)") } else { write!(f, " (existem: {})", available.join(", ")) }
+                write!(f, "{}", fmt("there is no parameter {}", &[&format!("{name:?}")]))?;
+                if available.is_empty() { write!(f, " ({})", tr("this effect has no parameters")) } else { write!(f, " ({})", fmt("available: {}", &[&available.join(", ")])) }
             }
-            Error::RuntimeSource { name, source } => write!(f, "{name:?} é preenchido pelo runtime (source = {source:?}); não é um controle"),
-            Error::BadValue(why) => write!(f, "valor inválido: {why}"),
+            Error::RuntimeSource { name, source } => write!(f, "{}", fmt("{} is filled in by the runtime (source = {}); it is not a control", &[&format!("{name:?}"), &format!("{source:?}")])),
+            Error::BadValue(why) => write!(f, "{}", fmt("invalid value: {}", &[why])),
             Error::Bundle(e) => write!(f, "{e}"),
-            Error::Publish(e) => write!(f, "não consegui publicar os parâmetros: {e}"),
+            Error::Publish(e) => write!(f, "{}", fmt("could not publish the parameters: {}", &[e])),
         }
     }
 }
@@ -158,7 +159,7 @@ fn lookup<'a>(bundle: &'a Bundle, name: &str) -> Result<&'a Uniform, Error> {
 /// O valor atual de um parâmetro.
 pub fn get(bundle: &Bundle, state: &dyn ipc::ParamStore, name: &str) -> Result<Vec<f64>, Error> {
     let u = lookup(bundle, name)?;
-    uniforms::decode(u, &current_block(bundle, state)).ok_or_else(|| Error::BadValue(format!("{name:?} não é um escalar nem um vetor")))
+    uniforms::decode(u, &current_block(bundle, state)).ok_or_else(|| Error::BadValue(fmt("{} is neither a scalar nor a vector", &[&format!("{name:?}")])))
 }
 
 #[derive(Debug, PartialEq)]
@@ -176,7 +177,7 @@ pub fn set(bundle: &Bundle, state: &dyn ipc::ParamStore, name: &str, values: &[f
     let mut block = current_block(bundle, state);
     let old = uniforms::decode(u, &block).unwrap_or_default();
     let at = u.offset as usize;
-    block.get_mut(at..at + bytes.len()).ok_or_else(|| Error::BadValue("o uniform não cabe no buffer".into()))?.copy_from_slice(&bytes);
+    block.get_mut(at..at + bytes.len()).ok_or_else(|| Error::BadValue(tr("the uniform does not fit in the buffer").into()))?.copy_from_slice(&bytes);
     state.publish_params(bundle.params_id(), &block).map_err(Error::Publish)?;
 
     Ok(Change { old, new: uniforms::decode(u, &block).unwrap_or_default(), warnings: range_warnings(u, values) })
@@ -188,7 +189,7 @@ pub fn range_warnings(u: &Uniform, values: &[f64]) -> Vec<String> {
     if let Some((min, max)) = first_number(u, "ui_min").zip(first_number(u, "ui_max")) {
         for v in values {
             if *v < min || *v > max {
-                warnings.push(format!("{v} está fora da faixa sugerida pelo efeito [{min} .. {max}]"));
+                warnings.push(fmt("{} is outside the range suggested by the effect [{} .. {}]", &[&v, &min, &max]));
             }
         }
     }
@@ -226,7 +227,7 @@ pub fn parse_values(args: &[String]) -> Result<Vec<f64>, Error> {
         .map(|t| match t.trim().to_ascii_lowercase().as_str() {
             "true" | "on" | "sim" => Ok(1.0),
             "false" | "off" | "nao" | "não" => Ok(0.0),
-            n => n.parse::<f64>().map_err(|_| Error::BadValue(format!("{t:?} não é um número"))),
+            n => n.parse::<f64>().map_err(|_| Error::BadValue(fmt("{} is not a number", &[&format!("{t:?}")]))),
         })
         .collect()
 }
@@ -278,7 +279,7 @@ mod tests {
         let change = set(&bundle, &state, "Strength", &[3.0]).unwrap();
         assert_eq!(change.new, vec![3.0], "o efeito decide o que fazer com o valor");
         assert_eq!(change.warnings.len(), 1);
-        assert!(change.warnings[0].contains("fora da faixa"));
+        assert!(change.warnings[0].contains("outside the range"));
     }
 
     #[test]

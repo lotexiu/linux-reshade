@@ -7,6 +7,7 @@ use fx_bundle::Manifest;
 use fx_bundle::images::source_of;
 use ini::Ini;
 use std::path::PathBuf;
+use crate::i18n::tr;
 
 /// Uma característica de um efeito (o que o filtro da lista oferece).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -31,12 +32,12 @@ impl Feature {
     /// O texto que a interface mostra.
     pub fn label(self) -> &'static str {
         match self {
-            Feature::Depth => "Usa profundidade",
-            Feature::Color => "Usa a imagem do jogo",
-            Feature::Textures => "Usa imagens de arquivo",
-            Feature::Mipmaps => "Usa mipmaps",
-            Feature::Srgb => "Usa sRGB",
-            Feature::Compute => "Usa compute",
+            Feature::Depth => tr("depth"),
+            Feature::Color => tr("game image"),
+            Feature::Textures => tr("image files"),
+            Feature::Mipmaps => tr("mipmaps"),
+            Feature::Srgb => tr("sRGB"),
+            Feature::Compute => tr("compute"),
         }
     }
 
@@ -77,7 +78,7 @@ impl EffectInfo {
     pub fn reason(&self) -> Option<String> {
         match (&self.error, self.problems.first()) {
             (Some(e), _) => Some(e.clone()),
-            (None, Some(p)) => Some(p.clone()),
+            (None, Some(p)) => Some(crate::i18n::tr_dyn(p)),
             _ => None,
         }
     }
@@ -139,10 +140,10 @@ pub fn from_error(name: &str, error: &CompileError) -> EffectInfo {
     let mut info = EffectInfo { name: name.to_string(), ..EffectInfo::default() };
     if text.contains("armazenamento") || text.contains("storage") {
         info.features.push(Feature::Compute);
-        info.problems.push("usa imagens de armazenamento (compute), ainda não suportadas".to_string());
+        info.problems.push(tr("uses storage images (compute), not supported yet").to_string());
     } else {
         // A primeira linha basta para a lista; o texto inteiro está no log do compilador.
-        info.error = Some(text.lines().find(|l| !l.trim().is_empty()).unwrap_or("falha ao compilar").trim().to_string());
+        info.error = Some(text.lines().find(|l| !l.trim().is_empty()).unwrap_or(tr("compilation failed")).trim().to_string());
     }
     info
 }
@@ -160,7 +161,7 @@ fn one_line(text: &str) -> String {
 }
 
 /// Versão do formato e das regras da análise: mudou, as guardadas deixam de valer.
-const VERSION: &str = "3";
+const VERSION: &str = "4";
 
 /// Guarda a análise no cache.
 pub fn save(compiler: &Compiler, info: &EffectInfo) -> std::io::Result<()> {
@@ -208,7 +209,7 @@ pub fn ensure(compiler: &Compiler, name: &str) -> EffectInfo {
             let manifest = std::fs::read_to_string(ensured.dir_owned().join("manifest.json")).ok().and_then(|t| Manifest::parse(&t).ok());
             match manifest {
                 Some(m) => analyze(name, &m),
-                None => EffectInfo { name: name.to_string(), error: Some("o bundle compilado não tem um manifesto legível".into()), ..EffectInfo::default() },
+                None => EffectInfo { name: name.to_string(), error: Some(tr("the compiled bundle has no readable manifest").into()), ..EffectInfo::default() },
             }
         }
         Err(e) => from_error(name, &e),

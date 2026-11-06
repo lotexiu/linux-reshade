@@ -62,9 +62,9 @@ pub unsafe extern "system" fn create_swapchain(
         let swapchain = *p_swapchain;
         let images = swapchain_images(&data, device, swapchain);
         let unusable = if !supported {
-            Some("o swapchain não aceita o uso extra que o efeito precisa (COLOR_ATTACHMENT | TRANSFER_SRC | TRANSFER_DST)".to_string())
+            Some("the swapchain does not accept the extra usage the effect needs (COLOR_ATTACHMENT | TRANSFER_SRC | TRANSFER_DST)".to_string())
         } else if images.is_empty() {
-            Some("não consegui obter as imagens do swapchain".to_string())
+            Some("could not get the swapchain images".to_string())
         } else {
             None
         };

@@ -1,5 +1,5 @@
-//! A página "Jogos Flatpak": lista os apps Flatpak instalados (como o Flatseal) e liga o linux-reshade neles com um clique: o painel instala
-//! a extensão da layer e ajusta as permissões do app. Para desfazer há o botão "Remover alterações…", que avisa o que será desfeito.
+//! A página tr("Flatpak games"): lista os apps Flatpak instalados (como o Flatseal) e liga o linux-reshade neles com um clique: o painel instala
+//! a extensão da layer e ajusta as permissões do app. Para desfazer há o botão tr("Remove changes…"), que avisa o que será desfeito.
 //!
 //! É uma página da janela (um `gtk::Stack`), como `add_effect.rs`, e não um menu. O trabalho (rodar o `flatpak`, que leva segundos) roda
 //! fora da thread da tela; a linha do app fica desabilitada e mostra o andamento até ele terminar.
@@ -10,6 +10,7 @@ use gtk::prelude::*;
 use gtk4 as gtk;
 use std::cell::RefCell;
 use std::rc::Rc;
+use control_core::i18n::{fmt, tr};
 
 struct Row {
     app: App,
@@ -35,37 +36,37 @@ fn margins(w: &impl IsA<gtk::Widget>, all: i32) {
 
 fn state_text(state: State) -> &'static str {
     match state {
-        State::Off => "Desligado",
-        State::On => "Ligado",
-        State::Global => "Ligado (configuração global)",
-        State::DisabledHere => "Desligado só neste app",
+        State::Off => tr("Off"),
+        State::On => tr("On"),
+        State::Global => tr("On (global setting)"),
+        State::DisabledHere => tr("Off for this app only"),
     }
 }
 
 fn button_text(state: State) -> &'static str {
     match state {
-        State::Off => "Ativar",
-        State::On => "Remover alterações…",
-        State::Global => "Desligar neste app",
-        State::DisabledHere => "Seguir a configuração global",
+        State::Off => tr("Enable"),
+        State::On => tr("Remove changes…"),
+        State::Global => tr("Turn off for this app"),
+        State::DisabledHere => tr("Follow the global setting"),
     }
 }
 
 impl FlatpakView {
     pub fn new(on_back: impl Fn() + 'static) -> Rc<Self> {
         let back = gtk::Button::from_icon_name("go-previous-symbolic");
-        back.set_tooltip_text(Some("Voltar"));
+        back.set_tooltip_text(Some(tr("Back")));
         back.connect_clicked(move |_| on_back());
-        let title = gtk::Label::new(Some("Jogos Flatpak"));
+        let title = gtk::Label::new(Some(tr("Flatpak games")));
         title.add_css_class("title-3");
         title.set_hexpand(true);
         title.set_xalign(0.0);
         let search = gtk::SearchEntry::new();
-        search.set_placeholder_text(Some("Procurar app"));
+        search.set_placeholder_text(Some(tr("Search app")));
         let top = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         top.append(&back);
         top.append(&title);
-        let hint = gtk::Label::new(Some("Apps Flatpak rodam numa caixa que não enxerga a layer do sistema. Ativar instala a extensão da layer para o runtime do app e libera o que ela precisa (como no Flatseal). Vale na próxima vez que o app abrir."));
+        let hint = gtk::Label::new(Some(tr("Flatpak apps run in a sandbox that cannot see the system's layer. Enabling installs the layer extension for the app's runtime and grants what it needs (as in Flatseal). It takes effect the next time the app opens.")));
         hint.set_wrap(true);
         hint.set_xalign(0.0);
         hint.add_css_class("dim-label");
@@ -124,10 +125,10 @@ impl FlatpakView {
     /// Lê os apps e o estado de cada um (fora da thread da tela) e refaz a lista.
     pub fn reload(self: &Rc<Self>) {
         if !flatpak::available() {
-            self.message("O comando 'flatpak' não está instalado nesta máquina.", true);
+            self.message(tr("The 'flatpak' command is not installed on this machine."), true);
             return;
         }
-        self.message("Lendo os apps Flatpak…", false);
+        self.message(tr("Reading the Flatpak apps…"), false);
         let me = self.clone();
         glib::spawn_future_local(async move {
             let loaded = gtk::gio::spawn_blocking(|| flatpak::installed_apps().map(|apps| apps.into_iter().map(|a| (flatpak::state(&a.id), a)).inspect(|(state, app)| flatpak::remember(app, *state)).collect::<Vec<_>>())).await;
@@ -137,7 +138,7 @@ impl FlatpakView {
                     me.show(apps);
                 }
                 Ok(Err(why)) => me.message(&why, true),
-                Err(_) => me.message("A leitura dos apps falhou.", true),
+                Err(_) => me.message(tr("Reading the apps failed."), true),
             }
         });
     }
@@ -197,9 +198,9 @@ impl FlatpakView {
             // Remover mexe nas permissões do app: avisa antes.
             State::On => {
                 let dialog = gtk::AlertDialog::builder()
-                    .message(format!("Remover as alterações em {}?", app.name))
-                    .detail("Isto desfaz o que o linux-reshade colocou neste app Flatpak: o acesso à memória compartilhada e à pasta dos efeitos compilados, e as variáveis LINUX_RESHADE. O jogo volta a abrir sem efeitos. A extensão da layer continua instalada para outros apps.")
-                    .buttons(["Cancelar", "Remover alterações"])
+                    .message(fmt("Remove the changes in {}?", &[&app.name]))
+                    .detail(tr("This undoes what linux-reshade set up for this Flatpak app: access to shared memory and to the compiled effects folder, and the LINUX_RESHADE variables. The game opens without effects again. The layer extension stays installed for other apps."))
+                    .buttons([tr("Cancel"), tr("Remove changes")])
                     .cancel_button(0)
                     .default_button(0)
                     .modal(true)
@@ -227,9 +228,9 @@ impl FlatpakView {
             let Some(row) = rows.get(index) else { return };
             row.button.set_sensitive(false);
             row.status.set_text(match target {
-                State::On => "Instalando a extensão e ajustando as permissões…",
-                State::Off => "Removendo as alterações…",
-                _ => "Ajustando…",
+                State::On => tr("Installing the extension and adjusting the permissions…"),
+                State::Off => tr("Removing the changes…"),
+                _ => tr("Adjusting…"),
             });
         }
         let me = self.clone();
@@ -242,7 +243,7 @@ impl FlatpakView {
                 State::Global => flatpak::follow_global(&app.id),
             })
             .await;
-            let result = work.unwrap_or_else(|_| Err("a operação falhou".to_string()));
+            let result = work.unwrap_or_else(|_| Err(tr("the operation failed").to_string()));
             let now = gtk::gio::spawn_blocking(move || flatpak::state(&id)).await.unwrap_or(State::Off);
             let mut rows = me.rows.borrow_mut();
             if let Some(row) = rows.get_mut(index) {

@@ -431,7 +431,7 @@ fn safe_swap() -> bool {
             self.drop_retiring(device);
             Self::destroy_fx(&mut self.fx, device);
         }
-        self.fx = Fx::Failed("destruído".into());
+        self.fx = Fx::Failed("destroyed".into());
         crate::status::remove(self.handle);
     }
 
@@ -539,7 +539,7 @@ fn build_partial(a: BuildArgs, reuse: Vec<Option<usize>>, mut shared: postfx::sh
     for (n, step) in a.steps.iter().enumerate() {
         let t = step.bundle.manifest.target;
         if (t.width, t.height) != (a.extent.width, a.extent.height) {
-            return Err(Failure { why: format!("etapa {n}: o bundle foi compilado para {}x{} e o swapchain é {}x{}", t.width, t.height, a.extent.width, a.extent.height), shared: Some(shared) });
+            return Err(Failure { why: format!("step {n}: the bundle was compiled for {}x{} and the swapchain is {}x{}", t.width, t.height, a.extent.width, a.extent.height), shared: Some(shared) });
         }
     }
     let device = &a.device;
@@ -628,7 +628,7 @@ fn build_chain(a: BuildArgs) -> Result<Built, String> {
     for (n, step) in a.steps.iter().enumerate() {
         let t = step.bundle.manifest.target;
         if (t.width, t.height) != (a.extent.width, a.extent.height) {
-            return Err(format!("etapa {n}: o bundle foi compilado para {}x{} e o swapchain é {}x{}", t.width, t.height, a.extent.width, a.extent.height));
+            return Err(format!("step {n}: the bundle was compiled for {}x{} and the swapchain is {}x{}", t.width, t.height, a.extent.width, a.extent.height));
         }
     }
     let device = &a.device;
@@ -662,7 +662,7 @@ fn build_chain(a: BuildArgs) -> Result<Built, String> {
             log!("etapa {} pulada: {}", s.step, s.why);
         }
         if chain.is_empty() && !steps.is_empty() {
-            return Err(format!("nenhuma etapa é suportada ({})", skipped.iter().map(|s| format!("etapa {}: {}", s.step, s.why)).collect::<Vec<_>>().join("; ")));
+            return Err(format!("no step is supported ({})", skipped.iter().map(|s| format!("step {}: {}", s.step, s.why)).collect::<Vec<_>>().join("; ")));
         }
         // Os parâmetros seguem as etapas que ficaram na cadeia (as puladas não têm efeito a alimentar).
         let origin: Vec<usize> = (0..chain.len()).filter_map(|i| chain.origin(i)).collect();
@@ -689,7 +689,7 @@ fn build_chain(a: BuildArgs) -> Result<Built, String> {
                     }
                     let mut partial = Fx::Ready(built);
                     SwapchainFx::destroy_fx(&mut partial, device);
-                    return Err(format!("falha ao criar semáforo/fence (erro {})", error.as_raw()));
+                    return Err(format!("failed to create semaphore/fence (error {})", error.as_raw()));
                 }
             }
         }
@@ -921,7 +921,7 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
                 let names: Vec<String> = built
                     .origin
                     .iter()
-                    .map(|&i| fx.steps.get(i).and_then(|s| s.bundle.manifest.techniques.get(s.technique)).map_or_else(|| format!("etapa {i}"), |t| t.name.clone()))
+                    .map(|&i| fx.steps.get(i).and_then(|s| s.bundle.manifest.techniques.get(s.technique)).map_or_else(|| format!("step {i}"), |t| t.name.clone()))
                     .collect();
                 built.gpu = family.and_then(|f| GpuTimer::new(data, f, fx.images.len(), names));
             }

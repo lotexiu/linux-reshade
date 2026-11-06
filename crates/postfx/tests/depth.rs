@@ -62,7 +62,7 @@ fn without_a_depth_image_an_effect_that_needs_depth_is_refused_with_the_reason()
     unsafe {
         let targets = gpu.targets(1, input);
         match Effect::new(&gpu.device, &gpu.memory, &bundle(), 0, &target(&targets.images, &gpu, None), gpu.queue) {
-            Err(Error::Unsupported(why)) => assert!(why.contains("profundidade"), "{why}"),
+            Err(Error::Unsupported(why)) => assert!(why.contains("depth"), "{why}"),
             other => panic!("esperava Unsupported, veio {:?}", other.map(|_| ())),
         }
         // Layout desconhecido: também recusa (a barreira descartaria o conteúdo).

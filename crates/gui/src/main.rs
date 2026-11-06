@@ -41,6 +41,7 @@ use gtk::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
+use control_core::i18n::fmt;
 
 #[derive(Default)]
 struct Options {
@@ -132,7 +133,7 @@ fn main() -> glib::ExitCode {
     let state = match ipc::Writer::create() {
         Ok(w) => w,
         Err(e) => {
-            eprintln!("lrpanel: não consegui abrir {}: {e}", ipc::state_path().display());
+            eprintln!("lrpanel: {}", fmt("could not open {}: {}", &[&ipc::state_path().display(), &e]));
             return glib::ExitCode::FAILURE;
         }
     };

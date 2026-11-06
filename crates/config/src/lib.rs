@@ -137,11 +137,11 @@ pub struct Config {
 
 /// Os atalhos que o `config.ini` guarda na seção `[INPUT]` (os nomes são os do `ReShade.ini`) e o que cada um faz.
 pub const KEY_NAMES: [(&str, &str); 5] = [
-    ("KeyEffects", "Ligar/desligar os efeitos"),
-    ("KeyNextPreset", "Próximo preset do jogo"),
-    ("KeyPreviousPreset", "Preset anterior do jogo"),
-    ("KeyScreenshot", "Capturar a tela do jogo (com e sem efeitos)"),
-    ("KeyReload", "Recarregar os efeitos (recompilar)"),
+    ("KeyEffects", "Turn the effects on/off"),
+    ("KeyNextPreset", "Next preset of the game"),
+    ("KeyPreviousPreset", "Previous preset of the game"),
+    ("KeyScreenshot", "Capture the game screen (with and without effects)"),
+    ("KeyReload", "Reload the effects (recompile)"),
 ];
 
 /// O atalho de fábrica de cada tecla (vazio: sem atalho).

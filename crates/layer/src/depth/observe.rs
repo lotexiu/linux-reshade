@@ -155,11 +155,11 @@ impl FrameStats {
             .filter_map(|(image, a)| {
                 let info = self.infos.get(image)?;
                 let unusable = if a.draws == 0 || (a.vertices <= 3 && a.indirect == 0) {
-                    Some("sem desenhos")
+                    Some("no draws")
                 } else if info.samples > 1 && !info.sampled {
-                    Some("MSAA sem uso SAMPLED (reabra o jogo com a observação armada)")
+                    Some("MSAA without SAMPLED usage (reopen the game with the observation armed)")
                 } else if !similar_aspect(info.width, info.height, frame.0, frame.1) {
-                    Some("proporção diferente da tela")
+                    Some("different aspect ratio than the screen")
                 } else {
                     None
                 };
@@ -312,7 +312,7 @@ mod tests {
         assert_eq!(chosen.len(), 1);
         assert_eq!((chosen[0].width, chosen[0].vertices), (1920, 500_000));
         let shadow = c.iter().find(|c| c.width == 2048).unwrap();
-        assert_eq!(shadow.unusable, Some("proporção diferente da tela"));
+        assert_eq!(shadow.unusable, Some("different aspect ratio than the screen"));
     }
 
     #[test]
@@ -335,7 +335,7 @@ mod tests {
         s.merge(&[pass(1, 200, 100_000), pass(2, 0, 0)], &i);
         let c = s.candidates((1920, 1080), &HashMap::new());
         assert!(c.iter().find(|c| c.samples == 4).unwrap().unusable.is_some_and(|why| why.starts_with("MSAA")), "MSAA sem SAMPLED não serve");
-        assert_eq!(c.iter().find(|c| c.draws == 0).unwrap().unusable, Some("sem desenhos"));
+        assert_eq!(c.iter().find(|c| c.draws == 0).unwrap().unusable, Some("no draws"));
         assert!(c.iter().all(|c| !c.chosen));
     }
 

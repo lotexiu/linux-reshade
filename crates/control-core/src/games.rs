@@ -15,6 +15,7 @@ use preset::{Macros, Preset};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::SystemTime;
+use crate::i18n::{fmt};
 
 /// O que já foi publicado para uma layer.
 struct Published {
@@ -250,7 +251,7 @@ impl Games {
             };
             match channel.publish_plan(&plan) {
                 Ok(()) => report.published.push((game.to_string(), plan.steps.len())),
-                Err(e) => report.warnings.push((game.to_string(), format!("não consegui publicar o plano: {e}"))),
+                Err(e) => report.warnings.push((game.to_string(), fmt("could not publish the plan: {}", &[&e]))),
             }
         }
     }

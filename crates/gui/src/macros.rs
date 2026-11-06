@@ -6,6 +6,7 @@ use gtk4 as gtk;
 use panel::macro_defs::{self, KnownMacro, MacroKind};
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
+use control_core::i18n::tr;
 
 /// Quanto esperar depois do último clique num número antes de aplicar (cada mudança recompila o efeito).
 const NUMBER_DEBOUNCE_MS: u64 = 700;
@@ -99,7 +100,7 @@ impl MacroEditor {
             self.list.append(&known_row(k, macro_defs::get(&text, k.name), &weak));
         }
         let custom = macro_defs::custom(&text);
-        let heading = gtk::Label::new(Some("Outras definições"));
+        let heading = gtk::Label::new(Some(tr("Other definitions")));
         heading.set_halign(gtk::Align::Start);
         heading.add_css_class("heading");
         heading.set_margin_top(8);
@@ -132,7 +133,7 @@ fn right(w: &impl IsA<gtk::Widget>) {
 }
 
 fn known_row(k: &'static KnownMacro, value: Option<String>, weak: &Weak<MacroEditor>) -> gtk::Box {
-    let (line, _) = row(k.label, &format!("{}\n({})", k.hint, k.name));
+    let (line, _) = row(tr(k.label), &format!("{}\n({})", tr(k.hint), k.name));
     match k.kind {
         MacroKind::Switch { default } => {
             let on = value.as_deref().map_or(default, |v| v != "0");
@@ -163,7 +164,7 @@ fn known_row(k: &'static KnownMacro, value: Option<String>, weak: &Weak<MacroEdi
                 Some(_) => 1,
             };
             let mut first: Option<gtk::ToggleButton> = None;
-            for (i, (caption, written)) in [("Automático", None), ("Sim", Some("1")), ("Não", Some("0"))].into_iter().enumerate() {
+            for (i, (caption, written)) in [(tr("Automatic"), None), (tr("Yes"), Some("1")), (tr("No"), Some("0"))].into_iter().enumerate() {
                 let b = gtk::ToggleButton::with_label(caption);
                 match &first {
                     Some(f) => b.set_group(Some(f)),
@@ -219,7 +220,7 @@ fn known_row(k: &'static KnownMacro, value: Option<String>, weak: &Weak<MacroEdi
 }
 
 fn custom_row(name: &str, value: &str, weak: &Weak<MacroEditor>) -> gtk::Box {
-    let (line, _) = row(name, "Definição sua, fora da lista conhecida");
+    let (line, _) = row(name, tr("Your own definition, not in the known list"));
     let entry = gtk::Entry::new();
     entry.set_text(value);
     entry.set_width_chars(10);
@@ -246,7 +247,7 @@ fn custom_row(name: &str, value: &str, weak: &Weak<MacroEditor>) -> gtk::Box {
     });
     entry.add_controller(focus);
     let remove = gtk::Button::from_icon_name("user-trash-symbolic");
-    remove.set_tooltip_text(Some("Remover esta definição"));
+    remove.set_tooltip_text(Some(tr("Remove this definition")));
     remove.connect_clicked({
         let (weak, name) = (weak.clone(), name.to_string());
         move |_| {
@@ -264,13 +265,13 @@ fn custom_row(name: &str, value: &str, weak: &Weak<MacroEditor>) -> gtk::Box {
 fn add_row(weak: &Weak<MacroEditor>) -> gtk::Box {
     let line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     let name = gtk::Entry::new();
-    name.set_placeholder_text(Some("NOME"));
+    name.set_placeholder_text(Some(tr("NAME")));
     name.set_hexpand(true);
     let value = gtk::Entry::new();
-    value.set_placeholder_text(Some("valor"));
+    value.set_placeholder_text(Some(tr("value")));
     value.set_width_chars(8);
     let add = gtk::Button::from_icon_name("list-add-symbolic");
-    add.set_tooltip_text(Some("Adicionar a definição"));
+    add.set_tooltip_text(Some(tr("Add the definition")));
     let go = {
         let (weak, name, value) = (weak.clone(), name.clone(), value.clone());
         move || {

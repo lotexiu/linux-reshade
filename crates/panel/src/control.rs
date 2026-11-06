@@ -62,6 +62,11 @@ fn number(a: &Annotations, key: &str) -> Option<f64> {
     }
 }
 
+/// Texto de efeito para a tela: um NUL no meio derruba o GTK (que usa strings C), então vira espaço.
+fn no_nul(s: &str) -> String {
+    s.replace('\0', " ")
+}
+
 fn flag(a: &Annotations, key: &str) -> bool {
     matches!(a.get(key), Some(Value::Scalar(Scalar::Bool(true)))) || number(a, key).is_some_and(|n| n != 0.0)
 }
@@ -130,9 +135,9 @@ pub fn controls_of(bundle: &Bundle, block: &[u8]) -> Vec<Control> {
             let value = uniforms::decode(u, block)?;
             Some(Control {
                 name: u.name.clone(),
-                label: text(&u.annotations, "ui_label").unwrap_or(&u.name).to_string(),
-                tooltip: text(&u.annotations, "ui_tooltip").map(str::to_string),
-                category: text(&u.annotations, "ui_category").map(str::to_string),
+                label: no_nul(text(&u.annotations, "ui_label").unwrap_or(&u.name)),
+                tooltip: text(&u.annotations, "ui_tooltip").map(no_nul),
+                category: text(&u.annotations, "ui_category").map(no_nul),
                 type_name: type_name(u),
                 kind,
                 components: value.len(),

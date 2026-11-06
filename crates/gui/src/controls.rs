@@ -5,6 +5,7 @@ use gtk::prelude::*;
 use panel::{Control, Kind};
 use std::cell::Cell;
 use std::rc::Rc;
+use control_core::i18n::tr;
 
 /// Chamado quando o usuário muda um controle: `(nome, valores)`.
 pub type OnChange = Rc<dyn Fn(&str, &[f64])>;
@@ -121,7 +122,7 @@ impl ControlsView {
             line.append(w);
         }
         let reset = gtk::Button::from_icon_name("edit-undo-symbolic");
-        reset.set_tooltip_text(Some("Restaurar o valor padrão"));
+        reset.set_tooltip_text(Some(tr("Restore the default value")));
         reset.set_valign(gtk::Align::Center);
         let (name, default, on_change) = (control.name.clone(), control.default.clone(), self.on_change.clone());
         reset.connect_clicked(move |_| on_change(&name, &default));

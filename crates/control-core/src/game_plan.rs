@@ -13,6 +13,7 @@ use crate::compiler::{Compiler, Defines, valid_define, valid_name, variant_key};
 use fx_bundle::{Bundle, uniforms};
 use ipc::{Plan, PlanStep};
 use preset::{Macros, Preset, TechId, merge_macros};
+use crate::i18n::{fmt};
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Built {
@@ -57,13 +58,13 @@ pub fn uniform_block(bundle: &Bundle, preset: &Preset, file: &str, warnings: &mu
             continue;
         }
         let Some(values) = parse_components(text) else {
-            warnings.push(format!("{file}: {name}={text:?} não é número"));
+            warnings.push(fmt("{}: {}={} is not a number", &[&file, &name, &format!("{text:?}")]));
             continue;
         };
         match uniforms::encode(u, &values) {
             Ok(bytes) => match block.get_mut(u.offset as usize..u.offset as usize + bytes.len()) {
                 Some(slot) => slot.copy_from_slice(&bytes),
-                None => warnings.push(format!("{file}: {name} não cabe no buffer")),
+                None => warnings.push(fmt("{}: {} does not fit in the buffer", &[&file, &name])),
             },
             Err(e) => warnings.push(format!("{file}: {e}")),
         }
@@ -87,7 +88,7 @@ pub fn defines_for(preset: &Preset, global: &Macros, file: &str, warnings: &mut 
     all.retain(|(name, value)| {
         let ok = valid_define(name, value);
         if !ok {
-            warnings.push(format!("{file}: definição {name}={value:?} inválida; ignorada"));
+            warnings.push(fmt("{}: invalid definition {}={}; ignored", &[&file, &name, &format!("{value:?}")]));
         }
         ok
     });
@@ -101,12 +102,12 @@ pub fn build(compiler: &Compiler, preset: &Preset, global: &Macros, auto_depth: 
     let mut built = Built::default();
     for id in enabled_order(preset) {
         let Some(file) = id.file.as_deref() else {
-            built.warnings.push(format!("técnica {} sem arquivo (esperava Nome@Arquivo.fx)", id.name));
+            built.warnings.push(fmt("technique {} has no file (expected Name@File.fx)", &[&id.name]));
             continue;
         };
         let name = file.strip_suffix(".fx").unwrap_or(file);
         if !valid_name(name) {
-            built.warnings.push(format!("{id}: nome de efeito inválido"));
+            built.warnings.push(fmt("{}: invalid effect name", &[&id]));
             continue;
         }
         let mut warnings = Vec::new();
@@ -130,7 +131,7 @@ pub fn build(compiler: &Compiler, preset: &Preset, global: &Macros, auto_depth: 
             }
         };
         if !bundle.manifest.techniques.iter().any(|t| t.name == id.name) {
-            built.warnings.push(format!("{id}: o efeito não declara esta técnica"));
+            built.warnings.push(fmt("{}: the effect does not declare this technique", &[&id]));
             continue;
         }
         let block = uniform_block(&bundle, preset, file, &mut built.warnings);
@@ -197,8 +198,8 @@ mod tests {
         let text = built.warnings.join("\n");
         assert!(text.contains("Fantasma@Fantasma.fx"), "{text}");
         assert!(text.contains("Quebrado@Quebrado.fx"), "{text}");
-        assert!(text.contains("SemArquivo sem arquivo"), "{text}");
-        assert!(text.contains("Outra@Sepia.fx: o efeito não declara esta técnica"), "{text}");
+        assert!(text.contains("SemArquivo has no file"), "{text}");
+        assert!(text.contains("Outra@Sepia.fx: the effect does not declare this technique"), "{text}");
         assert_eq!(built.warnings.len(), 5, "{text}");
     }
 
@@ -208,7 +209,7 @@ mod tests {
         let preset = Preset::parse("Techniques=Sepia@Sepia.fx\n\n[Sepia.fx]\nStrength=muito\nNaoExiste=3\n");
         let built = build(&f.compiler, &preset, &Macros::new(), &Macros::new(), 8, 4);
         assert_eq!(strength(&built.plan.steps[0]), 1.0);
-        assert_eq!(built.warnings, ["Sepia.fx: Strength=\"muito\" não é número"], "uniform desconhecido é ignorado sem aviso");
+        assert_eq!(built.warnings, ["Sepia.fx: Strength=\"muito\" is not a number"], "uniform desconhecido é ignorado sem aviso");
     }
 
     #[test]

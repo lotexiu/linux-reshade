@@ -106,7 +106,7 @@ fn a_failing_step_is_named_and_nothing_leaks() {
         let targets = gpu.targets(1, input);
         let steps = [Step { bundle: &invert_fx, technique: 0 }, Step { bundle: &invert_fx, technique: 9 }];
         match Chain::new(&gpu.device, &gpu.memory, &steps, &target(&targets.images, &gpu), gpu.queue) {
-            Err(Error::Invalid(why)) => assert!(why.starts_with("etapa 1:"), "{why}"),
+            Err(Error::Invalid(why)) => assert!(why.starts_with("step 1:"), "{why}"),
             other => panic!("esperava Invalid na etapa 1, veio {:?}", other.map(|_| ())),
         }
         gpu.destroy_targets(targets);

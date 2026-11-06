@@ -1,11 +1,12 @@
 //! A janela de atalhos: uma linha por tecla do `config.ini` (seção `[INPUT]`), com a tecla atual, um botão que captura a próxima
-//! combinação digitada, "Limpar" e "Padrão". O daemon reinicia sozinho ao ver a mudança e passa a usar a tecla nova.
+//! combinação digitada, tr("Clear") e tr("Default"). O daemon reinicia sozinho ao ver a mudança e passa a usar a tecla nova.
 
 use gtk::prelude::*;
 use gtk4 as gtk;
 use shortcuts::trigger;
 use std::cell::RefCell;
 use std::rc::Rc;
+use control_core::i18n::{fmt, tr};
 
 /// Uma linha da janela: qual tecla do config.ini, o botão que mostra o atalho e o aviso embaixo.
 struct Row {
@@ -21,25 +22,25 @@ fn current(config: &config::Config, key: &str) -> String {
 
 fn show(row: &Row, stored: &str) {
     if stored.trim().is_empty() {
-        row.button.set_label("Sem atalho");
+        row.button.set_label(tr("No shortcut"));
         row.note.set_text("");
         return;
     }
     match trigger::normalize(stored) {
         Ok(t) => {
             row.button.set_label(&trigger::display(&t));
-            let warn = "Sem modificador: essa tecla deixa de funcionar em todos os programas enquanto o daemon estiver rodando.";
+            let warn = tr("No modifier: this key stops working in every program while the daemon is running.");
             row.note.set_text(if trigger::is_bare_key(&t) { warn } else { "" });
         }
         Err(why) => {
             row.button.set_label(stored);
-            row.note.set_text(&format!("Não entendi esta tecla ({why}); ela é ignorada."));
+            row.note.set_text(&fmt("This key was not understood ({}); it is ignored.", &[&why]));
         }
     }
 }
 
 fn save(key: &str, value: &str) -> Result<(), String> {
-    let path = config::Config::load().config_path().ok_or("sem pasta de dados: rode `lrctl config init`")?;
+    let path = config::Config::load().config_path().ok_or(tr("no data folder: run `lrctl config init`"))?;
     config::set_key(&path, key, value).map_err(|e| format!("{}: {e}", path.display()))
 }
 
@@ -83,7 +84,7 @@ fn shortcuts_page(window: &gtk::Window) -> gtk::Box {
     page.set_margin_bottom(16);
     page.set_margin_start(16);
     page.set_margin_end(16);
-    let intro = gtk::Label::new(Some("Atalhos globais: valem com o jogo em foco. Clique na tecla e digite a nova combinação (Esc cancela). Quem aplica o atalho é o daemon (`lrctl daemon`), que se reinicia sozinho ao ver a mudança."));
+    let intro = gtk::Label::new(Some(tr("Global shortcuts: they work with the game in focus. Click the key and type the new combination (Esc cancels). The daemon (`lrctl daemon`) applies the shortcut, and restarts by itself when it sees the change.")));
     intro.set_wrap(true);
     intro.set_xalign(0.0);
     intro.add_css_class("dim-label");
@@ -105,12 +106,12 @@ fn shortcuts_page(window: &gtk::Window) -> gtk::Box {
     for (index, (key, description)) in config::KEY_NAMES.iter().enumerate() {
         let row = &rows[index];
         let line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let label = gtk::Label::new(Some(description));
+        let label = gtk::Label::new(Some(tr(description)));
         label.set_xalign(0.0);
         label.set_hexpand(true);
         row.button.set_size_request(190, -1);
-        let clear = gtk::Button::with_label("Limpar");
-        let factory = gtk::Button::with_label("Padrão");
+        let clear = gtk::Button::with_label(tr("Clear"));
+        let factory = gtk::Button::with_label(tr("Default"));
         line.append(&label);
         line.append(&row.button);
         line.append(&clear);
@@ -129,7 +130,7 @@ fn shortcuts_page(window: &gtk::Window) -> gtk::Box {
             if let Some(previous) = waiting_click.borrow_mut().replace(index) {
                 show(&rows_click[previous], &current(&config::Config::load(), rows_click[previous].key));
             }
-            button.set_label("Pressione a tecla…");
+            button.set_label(tr("Press the key…"));
         });
         let (rows_clear, status_clear) = (rows.clone(), status.clone());
         let key = *key;
@@ -171,13 +172,13 @@ fn shortcuts_page(window: &gtk::Window) -> gtk::Box {
                 match save(rows_key[index].key, &text) {
                     Ok(()) => {
                         show(&rows_key[index], &text);
-                        status_key.set_text("Salvo. O daemon aplica em até 2 s.");
+                        status_key.set_text(tr("Saved. The daemon applies it within 2 s."));
                     }
                     Err(why) => status_key.set_text(&why),
                 }
             }
             Some(Err(why)) => {
-                status_key.set_text(&format!("Essa tecla não serve: {why}"));
+                status_key.set_text(&fmt("That key does not work: {}", &[&why]));
             }
         }
         gtk::glib::Propagation::Stop
@@ -192,6 +193,62 @@ fn page_box() -> gtk::Box {
     page.set_margin_bottom(16);
     page.set_margin_start(16);
     page.set_margin_end(16);
+    page
+}
+
+/// A aba "Geral": o idioma da interface e a pergunta antes de apagar um preset.
+fn general_page(window: &gtk::Window) -> gtk::Box {
+    let page = page_box();
+    let languages = control_core::i18n::LANGUAGES;
+    let current = languages.iter().position(|l| l.code == control_core::i18n::code()).unwrap_or(0) as u32;
+
+    let line = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let label = gtk::Label::new(Some(tr("Language")));
+    label.set_hexpand(true);
+    label.set_xalign(0.0);
+    let names: Vec<&str> = languages.iter().map(|l| l.name).collect();
+    let dropdown = gtk::DropDown::from_strings(&names);
+    dropdown.set_selected(current);
+    line.append(&label);
+    line.append(&dropdown);
+
+    let note = hint(tr("The language applies the next time the panel opens."));
+    let restart = gtk::Button::with_label(tr("Restart the panel now"));
+    restart.set_halign(gtk::Align::Start);
+    restart.set_visible(false);
+    dropdown.connect_selected_notify({
+        let (note, restart) = (note.clone(), restart.clone());
+        move |dd| {
+            let Some(language) = languages.get(dd.selected() as usize) else { return };
+            control_core::i18n::save(language.code);
+            let changed = language.code != control_core::i18n::code();
+            restart.set_visible(changed);
+            note.set_text(if changed { tr("Saved. Restart the panel to see it in the new language.") } else { tr("The language applies the next time the panel opens.") });
+        }
+    });
+    restart.connect_clicked({
+        let window = window.clone();
+        move |_| {
+            // No AppImage o executável fica numa montagem que some ao sair; quem relança é o próprio arquivo.
+            let exe = std::env::var_os("APPIMAGE").map(std::path::PathBuf::from).or_else(|| std::env::current_exe().ok());
+            if let Some(exe) = exe {
+                if std::process::Command::new(exe).spawn().is_ok() {
+                    if let Some(app) = window.application() {
+                        app.quit();
+                    }
+                }
+            }
+        }
+    });
+
+    let ask = gtk::CheckButton::with_label(tr("Ask before deleting a preset"));
+    ask.set_active(crate::settings::confirm_delete_preset());
+    ask.connect_toggled(|b| crate::settings::set_confirm_delete_preset(b.is_active()));
+
+    page.append(&line);
+    page.append(&note);
+    page.append(&restart);
+    page.append(&ask);
     page
 }
 
@@ -216,7 +273,7 @@ fn ini_list(section: &str, key: &str, default: &str) -> String {
     config_file().and_then(|f| ini::Ini::load(&f).ok()).map(|i| i.get_list(section, key)).filter(|l| !l.is_empty()).map_or_else(|| default.to_string(), |l| l.join(", "))
 }
 
-/// Uma linha de pasta: o texto editável, "Escolher…" (ou "Adicionar pasta…" numa lista) e o salvamento.
+/// Uma linha de pasta: o texto editável, tr("Choose…") (ou tr("Add folder…") numa lista) e o salvamento.
 fn folder_row(page: &gtk::Box, window: &gtk::Window, label: &str, tip: &str, current: String, list: bool, save: impl Fn(&str) -> Result<(), String> + 'static, status: &gtk::Label) {
     let title = gtk::Label::new(Some(label));
     title.set_xalign(0.0);
@@ -227,7 +284,7 @@ fn folder_row(page: &gtk::Box, window: &gtk::Window, label: &str, tip: &str, cur
     entry.set_hexpand(true);
     entry.set_text(&current);
     entry.set_tooltip_text(Some(tip));
-    let choose = gtk::Button::with_label(if list { "Adicionar pasta…" } else { "Escolher…" });
+    let choose = gtk::Button::with_label(if list { tr("Add folder…") } else { tr("Choose…") });
     line.append(&entry);
     line.append(&choose);
     page.append(&line);
@@ -235,7 +292,7 @@ fn folder_row(page: &gtk::Box, window: &gtk::Window, label: &str, tip: &str, cur
     let commit = {
         let (entry, status, save) = (entry.clone(), status.clone(), save.clone());
         move || match save(entry.text().trim()) {
-            Ok(()) => status.set_text("Salvo. O daemon reinicia sozinho; feche e abra o painel para ele também usar o novo valor."),
+            Ok(()) => status.set_text(tr("Saved. The daemon restarts by itself; close and reopen the panel so it also uses the new value.")),
             Err(why) => status.set_text(&why),
         }
     };
@@ -273,50 +330,50 @@ fn folder_row(page: &gtk::Box, window: &gtk::Window, label: &str, tip: &str, cur
 
 fn folders_page(window: &gtk::Window) -> gtk::Box {
     let page = page_box();
-    page.append(&hint("As pastas ficam no config.ini. Uma entrada com /** inclui as subpastas. O que é relativo (./) conta a partir da pasta do config.ini."));
+    page.append(&hint(tr("The folders are kept in config.ini. An entry ending in /** includes the subfolders. Relative paths (./) count from the config.ini folder.")));
     let status = gtk::Label::new(None);
     status.set_xalign(0.0);
     status.set_wrap(true);
     let list = |section: &'static str, key: &'static str| {
         move |text: &str| -> Result<(), String> {
-            let path = config_file().ok_or("sem pasta de dados: rode `lrctl config init`")?;
+            let path = config_file().ok_or(tr("no data folder: run `lrctl config init`"))?;
             let items: Vec<String> = text.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
             config::set_list(&path, section, key, &items).map_err(|e| format!("{}: {e}", path.display()))
         }
     };
     let single = |section: &'static str, key: &'static str| {
         move |text: &str| -> Result<(), String> {
-            let path = config_file().ok_or("sem pasta de dados: rode `lrctl config init`")?;
+            let path = config_file().ok_or(tr("no data folder: run `lrctl config init`"))?;
             config::set_value(&path, section, key, text).map_err(|e| format!("{}: {e}", path.display()))
         }
     };
-    folder_row(&page, window, "Efeitos (.fx)", "Pastas onde os efeitos são procurados (a primeira com o nome vence).", ini_list("GENERAL", "EffectSearchPaths", "./Shaders/**"), true, list("GENERAL", "EffectSearchPaths"), &status);
-    folder_row(&page, window, "Texturas dos efeitos", "Pastas das imagens que os efeitos carregam (LUTs, ruído...).", ini_list("GENERAL", "TextureSearchPaths", "./Textures/**"), true, list("GENERAL", "TextureSearchPaths"), &status);
-    folder_row(&page, window, "Presets", "Onde ficam o preset global e a pasta de cada jogo.", ini_text("GENERAL", "PresetsPath", "./Presets"), false, single("GENERAL", "PresetsPath"), &status);
-    folder_row(&page, window, "Efeitos compilados (cache)", "Onde os efeitos compilados ficam guardados; pode ser apagada à vontade.", ini_text("GENERAL", "IntermediateCachePath", &config::Config::load().cache_dir.to_string_lossy()), false, single("GENERAL", "IntermediateCachePath"), &status);
+    folder_row(&page, window, tr("Effects (.fx)"), tr("Folders where effects are searched for (the first with the name wins)."), ini_list("GENERAL", "EffectSearchPaths", "./Shaders/**"), true, list("GENERAL", "EffectSearchPaths"), &status);
+    folder_row(&page, window, tr("Effect textures"), tr("Folders of the images the effects load (LUTs, noise...)."), ini_list("GENERAL", "TextureSearchPaths", "./Textures/**"), true, list("GENERAL", "TextureSearchPaths"), &status);
+    folder_row(&page, window, tr("Presets"), tr("Where the global preset and each game's folder live."), ini_text("GENERAL", "PresetsPath", "./Presets"), false, single("GENERAL", "PresetsPath"), &status);
+    folder_row(&page, window, tr("Compiled effects (cache)"), tr("Where the compiled effects are kept; it can be deleted freely."), ini_text("GENERAL", "IntermediateCachePath", &config::Config::load().cache_dir.to_string_lossy()), false, single("GENERAL", "IntermediateCachePath"), &status);
     page.append(&status);
     page
 }
 
 fn captures_page(window: &gtk::Window) -> gtk::Box {
     let page = page_box();
-    page.append(&hint("A tecla de captura fica na aba Atalhos. Cada jogo com a layer aberta grava o quadro dele."));
+    page.append(&hint(tr("The capture key is in the Shortcuts tab. Each game with the layer open saves its own frame.")));
     let status = gtk::Label::new(None);
     status.set_xalign(0.0);
     status.set_wrap(true);
     let default = config::Config::load().screenshot_dir.to_string_lossy().into_owned();
-    folder_row(&page, window, "Pasta das capturas", "Cada jogo ganha uma subpasta; os arquivos levam a data e a hora.", ini_text("SCREENSHOT", "SavePath", &default), false, |text| {
-        let path = config_file().ok_or("sem pasta de dados: rode `lrctl config init`")?;
+    folder_row(&page, window, tr("Captures folder"), tr("Each game gets a subfolder; files carry the date and time."), ini_text("SCREENSHOT", "SavePath", &default), false, |text| {
+        let path = config_file().ok_or(tr("no data folder: run `lrctl config init`"))?;
         config::set_value(&path, "SCREENSHOT", "SavePath", text).map_err(|e| format!("{}: {e}", path.display()))
     }, &status);
-    let both = gtk::CheckButton::with_label("Guardar também o quadro sem efeitos (para comparar), com o final \"_sem-efeitos\"");
+    let both = gtk::CheckButton::with_label(tr("Also save the frame without effects (to compare), ending in \"_no-effects\""));
     both.set_active(config::Config::load().screenshot_before);
     {
         let status = status.clone();
         both.connect_toggled(move |b| {
             let Some(path) = config_file() else { return };
             match config::set_value(&path, "SCREENSHOT", "SaveBeforeShot", if b.is_active() { "1" } else { "0" }) {
-                Ok(()) => status.set_text("Salvo."),
+                Ok(()) => status.set_text(tr("Saved.")),
                 Err(e) => status.set_text(&format!("{}: {e}", path.display())),
             }
         });
@@ -329,7 +386,7 @@ fn captures_page(window: &gtk::Window) -> gtk::Box {
 /// Os últimos `max` bytes de um arquivo de texto, a partir de uma linha inteira.
 fn tail_of(path: &std::path::Path, max: u64) -> String {
     use std::io::{Read, Seek, SeekFrom};
-    let Ok(mut file) = std::fs::File::open(path) else { return format!("(não consegui abrir {})", path.display()) };
+    let Ok(mut file) = std::fs::File::open(path) else { return fmt("(could not open {})", &[&path.display()]) };
     let len = file.metadata().map_or(0, |m| m.len());
     let start = len.saturating_sub(max);
     let _ = file.seek(SeekFrom::Start(start));
@@ -344,10 +401,10 @@ fn log_files() -> Vec<(String, std::path::PathBuf)> {
     let state = std::env::var_os("XDG_STATE_HOME").map(std::path::PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/state"))).map(|d| d.join(config::LOCATION_DIR));
     let mut files = Vec::new();
     if let Some(dir) = state {
-        files.push(("Daemon".to_string(), dir.join("daemon.log")));
-        files.push(("Layer (jogos nativos, vkcube)".to_string(), dir.join("layer.log")));
+        files.push((tr("Daemon").to_string(), dir.join("daemon.log")));
+        files.push((tr("Layer (native games, vkcube)").to_string(), dir.join("layer.log")));
     }
-    files.push(("Layer (Flatpak, Sober)".to_string(), std::path::PathBuf::from("/tmp/linux-reshade-flatpak.log")));
+    files.push((tr("Layer (Flatpak, Sober)").to_string(), std::path::PathBuf::from("/tmp/linux-reshade-flatpak.log")));
     files.into_iter().filter(|(_, p)| p.exists()).collect()
 }
 
@@ -355,7 +412,7 @@ fn log_page() -> gtk::Box {
     let page = page_box();
     let files = log_files();
     if files.is_empty() {
-        page.append(&hint("Nenhum log encontrado: o daemon grava em ~/.local/state/linux-reshade/daemon.log, e a layer em LINUX_RESHADE_LOG."));
+        page.append(&hint(tr("No log found: the daemon writes to ~/.local/state/linux-reshade/daemon.log, and the layer to LINUX_RESHADE_LOG.")));
         return page;
     }
     let names: Vec<&str> = files.iter().map(|(n, _)| n.as_str()).collect();
@@ -384,7 +441,7 @@ fn log_page() -> gtk::Box {
         let refresh = refresh.clone();
         chooser.connect_selected_notify(move |_| refresh());
     }
-    let button = gtk::Button::with_label("Atualizar");
+    let button = gtk::Button::with_label(tr("Refresh"));
     {
         let refresh = refresh.clone();
         button.connect_clicked(move |_| refresh());
@@ -401,8 +458,8 @@ fn log_page() -> gtk::Box {
 
 fn performance_page(window: &gtk::Window) -> gtk::Box {
     let page = page_box();
-    page.append(&hint("Mede quanto a layer custa por quadro no processador e quanto a GPU gasta em cada efeito. Medir custa um pouco; ligue só para ver."));
-    let toggle = gtk::CheckButton::with_label("Medir o desempenho");
+    page.append(&hint(tr("Measures how much the layer costs per frame on the CPU and how much the GPU spends on each effect. Measuring costs a little; turn it on only to look.")));
+    let toggle = gtk::CheckButton::with_label(tr("Measure performance"));
     toggle.set_active(ipc::stats_on());
     toggle.connect_toggled(|b| {
         let _ = ipc::set_stats_on(b.is_active());
@@ -426,11 +483,11 @@ fn performance_page(window: &gtk::Window) -> gtk::Box {
                 let name = if l.status.app.is_empty() { l.id.clone() } else { l.status.app.clone() };
                 match &l.status.perf {
                     Some(perf) => out.push_str(&format!("{name}\n{}\n", control_core::layers::perf_text(perf))),
-                    None => out.push_str(&format!("{name}\n  (sem medição{})\n\n", if ipc::stats_on() { ": aguardando o próximo segundo" } else { ": ligue a medição acima" })),
+                    None => out.push_str(&format!("{name}\n  ({}{})\n\n", tr("no measurement"), if ipc::stats_on() { tr(": waiting for the next second") } else { tr(": turn the measurement on above") })),
                 }
             }
             if layers.is_empty() {
-                out = "Nenhum jogo com a layer aberto.".to_string();
+                out = tr("No game with the layer open.").to_string();
             }
             text.set_text(&out);
         }
@@ -450,7 +507,7 @@ fn performance_page(window: &gtk::Window) -> gtk::Box {
 /// Quanto ocupa o cache dos efeitos compilados, em texto.
 fn cache_usage_text(compiler: &control_core::compiler::Compiler) -> String {
     let u = control_core::maintenance::usage(compiler);
-    format!("{}\n{} efeitos compilados, {} análises, {:.1} MB", compiler.cache.display(), u.bundles, u.analyses, u.bytes as f64 / 1e6)
+    format!("{}\n{}", compiler.cache.display(), fmt("{} compiled effects, {} analyses, {} MB", &[&u.bundles, &u.analyses, &format!("{:.1}", u.bytes as f64 / 1e6)]))
 }
 
 /// Os nomes dos efeitos do preset global (sem repetir), para medir a compilação deles.
@@ -472,7 +529,7 @@ fn global_preset_effects() -> Vec<String> {
 fn cache_page() -> gtk::Box {
     use control_core::maintenance::{self, Clear};
     let page = page_box();
-    page.append(&hint("Os efeitos compilados e as análises de compatibilidade ficam guardados. Limpar à força serve para testar a compilação do zero; o que um jogo aberto usa é recompilado em seguida."));
+    page.append(&hint(tr("Compiled effects and compatibility analyses are kept. Forced clearing is for testing compilation from scratch; whatever an open game uses is recompiled right after.")));
     let compiler = Rc::new(control_core::compiler::Compiler::from_env());
     let usage = gtk::Label::new(None);
     usage.set_xalign(0.0);
@@ -481,7 +538,7 @@ fn cache_page() -> gtk::Box {
         let (usage, compiler) = (usage.clone(), compiler.clone());
         move || usage.set_text(&match &*compiler {
             Ok(c) => cache_usage_text(c),
-            Err(e) => format!("Sem compilador: {e}"),
+            Err(e) => fmt("No compiler: {}", &[&e]),
         })
     };
     refresh_usage();
@@ -492,9 +549,9 @@ fn cache_page() -> gtk::Box {
     status.set_wrap(true);
     let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     for (label, what, tip) in [
-        ("Limpar compilados", Clear::Bundles, "Apaga os efeitos compilados (as análises ficam)"),
-        ("Limpar análises", Clear::Analyses, "Apaga as análises de compatibilidade; o painel as refaz em segundo plano"),
-        ("Limpar tudo", Clear::All, "Apaga os compilados e as análises"),
+        (tr("Clear compiled"), Clear::Bundles, tr("Deletes the compiled effects (the analyses stay)")),
+        (tr("Clear analyses"), Clear::Analyses, tr("Deletes the compatibility analyses; the panel redoes them in the background")),
+        (tr("Clear everything"), Clear::All, tr("Deletes the compiled effects and the analyses")),
     ] {
         let button = gtk::Button::with_label(label);
         button.set_tooltip_text(Some(tip));
@@ -502,7 +559,7 @@ fn cache_page() -> gtk::Box {
         button.connect_clicked(move |_| {
             if let Ok(c) = &*compiler {
                 let n = maintenance::clear(c, what);
-                status.set_text(&format!("{n} itens apagados."));
+                status.set_text(&fmt("{} items deleted.", &[&n]));
                 refresh_usage();
             }
         });
@@ -510,8 +567,8 @@ fn cache_page() -> gtk::Box {
     }
     page.append(&buttons);
 
-    page.append(&hint("Medir a compilação apaga os compilados dos efeitos do preset global e os compila de novo, um por vez (1920x1080, sem macros), contando o tempo de cada um."));
-    let measure = gtk::Button::with_label("Recompilar o preset global e medir");
+    page.append(&hint(tr("Measuring compilation deletes the compiled versions of the global preset's effects and compiles them again, one at a time (1920x1080, no macros), timing each one.")));
+    let measure = gtk::Button::with_label(tr("Recompile the global preset and measure"));
     measure.set_halign(gtk::Align::Start);
     let report = gtk::Label::new(None);
     report.set_xalign(0.0);
@@ -529,11 +586,11 @@ fn cache_page() -> gtk::Box {
             }
             let effects = global_preset_effects();
             if effects.is_empty() {
-                status.set_text("O preset global não tem efeitos.");
+                status.set_text(tr("The global preset has no effects."));
                 return;
             }
             measure_button.set_sensitive(false);
-            status.set_text(&format!("Compilando {} efeitos…", effects.len()));
+            status.set_text(&fmt("Compiling {} effects…", &[&effects.len()]));
             report.set_text("");
             let total = effects.len();
             let (tx, rx) = std::sync::mpsc::channel::<maintenance::Timing>();
@@ -561,12 +618,12 @@ fn cache_page() -> gtk::Box {
                 let n = done.borrow().len();
                 if finished || n >= total {
                     report.set_text(&maintenance::report(&done.borrow()));
-                    status.set_text("Pronto.");
+                    status.set_text(tr("Done."));
                     measure_button.set_sensitive(true);
                     refresh_usage();
                     return gtk::glib::ControlFlow::Break;
                 }
-                status.set_text(&format!("Compilando… {n}/{total}"));
+                status.set_text(&fmt("Compiling… {}/{}", &[&n, &total]));
                 gtk::glib::ControlFlow::Continue
             });
         });
@@ -581,9 +638,9 @@ fn cache_page() -> gtk::Box {
 fn flatpak_page() -> gtk::Box {
     use control_core::flatpak;
     let page = page_box();
-    page.append(&hint("Liga o linux-reshade em todos os apps Flatpak de uma vez, como a configuração global do Flatseal: instala a extensão da layer para cada versão de runtime em uso e libera as permissões na configuração global. Para tirar um app só, use \"Desligar neste app\" na página Jogos Flatpak, ou, no Flatseal, a variável de ambiente LINUX_RESHADE=0 nele."));
+    page.append(&hint(tr("Turns linux-reshade on for all Flatpak apps at once, like Flatseal's global setting: it installs the layer extension for every runtime version in use and grants the permissions in the global configuration. To leave out a single app, use \"Turn off for this app\" on the Flatpak games page, or set the environment variable LINUX_RESHADE=0 on it in Flatseal.")));
     let line = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    let label = gtk::Label::new(Some("Aplicar a todos os apps Flatpak"));
+    let label = gtk::Label::new(Some(tr("Apply to all Flatpak apps")));
     label.set_hexpand(true);
     label.set_xalign(0.0);
     let toggle = gtk::Switch::new();
@@ -597,7 +654,7 @@ fn flatpak_page() -> gtk::Box {
     page.append(&status);
     if !flatpak::available() {
         toggle.set_sensitive(false);
-        status.set_text("O comando 'flatpak' não está instalado nesta máquina.");
+        status.set_text(tr("The 'flatpak' command is not installed on this machine."));
         return page;
     }
     // O estado atual, lido fora da thread da tela.
@@ -621,12 +678,12 @@ fn flatpak_page() -> gtk::Box {
             let on = t.is_active();
             t.set_sensitive(false);
             status.remove_css_class("error");
-            status.set_text(if on { "Instalando as extensões e ajustando as permissões…" } else { "Desfazendo…" });
+            status.set_text(if on { tr("Installing the extensions and adjusting the permissions…") } else { tr("Undoing…") });
             let (t, status) = (t.clone(), status.clone());
             gtk::glib::spawn_future_local(async move {
-                let result = gtk::gio::spawn_blocking(move || if on { flatpak::enable_global() } else { flatpak::disable_global() }).await.unwrap_or_else(|_| Err("a operação falhou".to_string()));
+                let result = gtk::gio::spawn_blocking(move || if on { flatpak::enable_global() } else { flatpak::disable_global() }).await.unwrap_or_else(|_| Err(tr("the operation failed").to_string()));
                 match result {
-                    Ok(()) => status.set_text(if on { "Ligado para todos os apps Flatpak (vale na próxima vez que cada um abrir)." } else { "Desfeito: nenhum app Flatpak carrega mais o linux-reshade pela configuração global." }),
+                    Ok(()) => status.set_text(if on { tr("On for all Flatpak apps (takes effect the next time each one opens).") } else { tr("Undone: no Flatpak app loads linux-reshade through the global setting any more.") }),
                     Err(why) => {
                         status.add_css_class("error");
                         status.set_text(&why);
@@ -652,21 +709,21 @@ fn flatpak_page() -> gtk::Box {
 fn system_page() -> gtk::Box {
     use control_core::install;
     let page = page_box();
-    page.append(&hint("Para jogos que não são Flatpak o linux-reshade precisa de dois itens: a camada do Vulkan instalada para o seu usuário e o daemon rodando (ele compila os efeitos dos jogos abertos e registra os atalhos). Depois de instalar a camada, ligue-a em um jogo com LINUX_RESHADE=1 nas opções de lançamento."));
+    page.append(&hint(tr("For games that are not Flatpak, linux-reshade needs two things: the Vulkan layer installed for your user and the daemon running (it compiles the effects of open games and registers the shortcuts). After installing the layer, turn it on in a game with LINUX_RESHADE=1 in its launch options.")));
 
     let layer_status = gtk::Label::new(None);
     layer_status.set_xalign(0.0);
     layer_status.set_wrap(true);
     layer_status.set_selectable(true);
-    let layer_button = gtk::Button::with_label("Instalar ou atualizar a camada");
+    let layer_button = gtk::Button::with_label(tr("Install or update the layer"));
     layer_button.set_halign(gtk::Align::Start);
     let show_layer = {
         let layer_status = layer_status.clone();
         Rc::new(move || {
             layer_status.set_text(&if install::layer_installed() {
-                format!("Camada do Vulkan: instalada e atual\n{}", install::manifest_path().display())
+                fmt("Vulkan layer: installed and up to date\n{}", &[&install::manifest_path().display()])
             } else {
-                "Camada do Vulkan: não instalada (ou desatualizada)".to_string()
+                tr("Vulkan layer: not installed (or out of date)").to_string()
             });
         })
     };
@@ -675,19 +732,19 @@ fn system_page() -> gtk::Box {
         let (layer_status, show_layer) = (layer_status.clone(), show_layer.clone());
         move |_| match install::install_layer() {
             Ok(_) => show_layer(),
-            Err(why) => layer_status.set_text(&format!("Não consegui instalar: {why}")),
+            Err(why) => layer_status.set_text(&fmt("Could not install: {}", &[&why])),
         }
     });
 
     let daemon_status = gtk::Label::new(None);
     daemon_status.set_xalign(0.0);
-    let daemon_button = gtk::Button::with_label("Iniciar o daemon agora");
+    let daemon_button = gtk::Button::with_label(tr("Start the daemon now"));
     daemon_button.set_halign(gtk::Align::Start);
     let show_daemon = {
         let (daemon_status, daemon_button) = (daemon_status.clone(), daemon_button.clone());
         Rc::new(move || {
             let running = ipc::daemon_lock::is_running();
-            daemon_status.set_text(if running { "Daemon: rodando" } else { "Daemon: parado" });
+            daemon_status.set_text(if running { tr("Daemon: running") } else { tr("Daemon: stopped") });
             daemon_button.set_sensitive(!running);
         })
     };
@@ -703,7 +760,7 @@ fn system_page() -> gtk::Box {
     });
 
     let autostart_line = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    let autostart_label = gtk::Label::new(Some("Iniciar o daemon junto com a sessão"));
+    let autostart_label = gtk::Label::new(Some(tr("Start the daemon with the session")));
     autostart_label.set_hexpand(true);
     autostart_label.set_xalign(0.0);
     let autostart = gtk::Switch::new();
@@ -737,16 +794,18 @@ fn system_page() -> gtk::Box {
 fn about_page() -> gtk::Box {
     let page = page_box();
     let config = config::Config::load();
-    let show = |p: Option<&std::path::Path>| p.map_or("(não configurado)".to_string(), |p| p.display().to_string());
-    let text = format!(
-        "linux-reshade {}\nCamada Vulkan compatível com o ReShade, para Linux.\n\nPasta de dados: {}\nconfig.ini: {}\nPresets: {}\nCache dos efeitos compilados: {}\nCapturas de tela: {}\nEstado compartilhado (memória): {}\n\nOpções do ReShade e o que falta: docs/reshade-opcoes.md",
-        env!("CARGO_PKG_VERSION"),
-        show(config.data_dir.as_deref()),
-        show(config.config_path().as_deref()),
-        show(config.presets_dir.as_deref()),
-        config.cache_dir.display(),
-        config.screenshot_dir.display(),
-        ipc::state_dir().display(),
+    let show = |p: Option<&std::path::Path>| p.map_or(tr("(not configured)").to_string(), |p| p.display().to_string());
+    let text = fmt(
+        "linux-reshade {}\nReShade-compatible Vulkan layer for Linux.\n\nData folder: {}\nconfig.ini: {}\nPresets: {}\nCompiled effects cache: {}\nScreenshots: {}\nShared state (memory): {}\n\nReShade options and what is missing: docs/reshade-opcoes.md",
+        &[
+            &env!("CARGO_PKG_VERSION"),
+            &show(config.data_dir.as_deref()),
+            &show(config.config_path().as_deref()),
+            &show(config.presets_dir.as_deref()),
+            &config.cache_dir.display(),
+            &config.screenshot_dir.display(),
+            &ipc::state_dir().display(),
+        ],
     );
     let label = gtk::Label::new(Some(&text));
     label.set_xalign(0.0);
@@ -758,17 +817,18 @@ fn about_page() -> gtk::Box {
 
 /// A janela de configurações: atalhos, capturas de tela e pastas.
 pub fn open(parent: &gtk::ApplicationWindow) -> gtk::Window {
-    let window = gtk::Window::builder().title("Configurações").transient_for(parent).modal(true).default_width(700).default_height(600).build();
+    let window = gtk::Window::builder().title(tr("Settings")).transient_for(parent).modal(true).default_width(700).default_height(600).build();
     let notebook = gtk::Notebook::new();
-    notebook.append_page(&shortcuts_page(&window), Some(&gtk::Label::new(Some("Atalhos"))));
-    notebook.append_page(&captures_page(&window), Some(&gtk::Label::new(Some("Capturas de tela"))));
-    notebook.append_page(&folders_page(&window), Some(&gtk::Label::new(Some("Pastas"))));
-    notebook.append_page(&performance_page(&window), Some(&gtk::Label::new(Some("Desempenho"))));
+    notebook.append_page(&general_page(&window), Some(&gtk::Label::new(Some(tr("General")))));
+    notebook.append_page(&shortcuts_page(&window), Some(&gtk::Label::new(Some(tr("Shortcuts")))));
+    notebook.append_page(&captures_page(&window), Some(&gtk::Label::new(Some(tr("Screenshots")))));
+    notebook.append_page(&folders_page(&window), Some(&gtk::Label::new(Some(tr("Folders")))));
+    notebook.append_page(&performance_page(&window), Some(&gtk::Label::new(Some(tr("Performance")))));
     notebook.append_page(&cache_page(), Some(&gtk::Label::new(Some("Cache"))));
     notebook.append_page(&system_page(), Some(&gtk::Label::new(Some("Sistema"))));
     notebook.append_page(&flatpak_page(), Some(&gtk::Label::new(Some("Flatpak"))));
-    notebook.append_page(&log_page(), Some(&gtk::Label::new(Some("Registro"))));
-    notebook.append_page(&about_page(), Some(&gtk::Label::new(Some("Sobre"))));
+    notebook.append_page(&log_page(), Some(&gtk::Label::new(Some(tr("Log")))));
+    notebook.append_page(&about_page(), Some(&gtk::Label::new(Some(tr("About")))));
     window.set_child(Some(&notebook));
     // Esc fecha a janela. Enquanto a aba de atalhos espera uma tecla, o Esc cancela só a captura (o controle dela, na fase de captura,
     // consome a tecla antes deste).
@@ -797,12 +857,12 @@ pub fn open(parent: &gtk::ApplicationWindow) -> gtk::Window {
 pub fn capture_key(parent: &impl IsA<gtk::Window>, title: &str, on_done: impl Fn(String) + 'static) {
     let window = gtk::Window::builder().title(title).transient_for(parent).modal(true).default_width(360).build();
     let page = page_box();
-    let message = gtk::Label::new(Some("Pressione a tecla (ou combinação) desejada.\nEsc cancela."));
+    let message = gtk::Label::new(Some(tr("Press the desired key (or combination).\nEsc cancels.")));
     message.set_wrap(true);
     let status = gtk::Label::new(None);
     status.set_wrap(true);
     status.add_css_class("error");
-    let clear = gtk::Button::with_label("Tirar o atalho");
+    let clear = gtk::Button::with_label(tr("Remove the shortcut"));
     page.append(&message);
     page.append(&status);
     page.append(&clear);
@@ -828,7 +888,7 @@ pub fn capture_key(parent: &impl IsA<gtk::Window>, title: &str, on_done: impl Fn
                 on_done(text);
                 window_key.close();
             }
-            Some(Err(why)) => status_key.set_text(&format!("Essa tecla não serve: {why}")),
+            Some(Err(why)) => status_key.set_text(&fmt("That key does not work: {}", &[&why])),
         }
         gtk::glib::Propagation::Stop
     });

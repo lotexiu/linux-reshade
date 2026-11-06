@@ -20,6 +20,7 @@ pub mod flatpak;
 pub mod game_plan;
 pub mod install;
 pub mod games;
+pub mod i18n;
 pub mod layers;
 pub mod location;
 pub mod maintenance;

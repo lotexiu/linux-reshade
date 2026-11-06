@@ -21,3 +21,8 @@ Leia `docs/CONTINUAR.md` ("Arquitetura da interface") antes de começar. Resumo:
 - Rode `scripts/dev.sh ui-smoke`: deve imprimir `lrpanel smoke-popovers: ok`. Ele falha se algo some ou se o GTK emite aviso/erro.
 - `lrpanel --smoke <Efeito> --game <id>` confere o resto (adicionar, ligar/desligar, sliders, presets).
 - Diga ao usuário o que NÃO foi testado (clique real com o ponteiro não é simulável aqui).
+
+## Texto visível
+
+Todo texto que a pessoa lê passa por `control_core::i18n::tr` (fixo) ou `fmt` (com valores); a chave é o texto em inglês e a
+tradução entra em `crates/control-core/locales/pt_BR.tsv`. Ver `docs/idiomas.md`.

@@ -9,6 +9,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::SystemTime;
+use crate::i18n::fmt;
 
 pub struct Compiler {
     /// O executável do `fx2spv`.
@@ -39,12 +40,12 @@ pub enum CompileError {
 impl fmt::Display for CompileError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            CompileError::BadName(n) => write!(f, "{n:?} não é um nome de efeito válido (letras, números, _ - .)"),
+            CompileError::BadName(n) => write!(f, "{}", fmt("{} is not a valid effect name (letters, digits, _ - .)", &[&format!("{n:?}")])),
             CompileError::UnknownEffect { name, searched } => {
                 let dirs: Vec<_> = searched.iter().map(|d| d.display().to_string()).collect();
-                write!(f, "não achei o efeito {name:?} (procurei em: {})", dirs.join(", "))
+                write!(f, "{}", fmt("could not find the effect {} (searched in: {})", &[&format!("{name:?}"), &dirs.join(", ")]))
             }
-            CompileError::Tool { status, output } => write!(f, "o fx2spv falhou ({status}):\n{}", output.trim_end()),
+            CompileError::Tool { status, output } => write!(f, "{}", fmt("fx2spv failed ({}):\n{}", &[status, &output.trim_end()])),
             CompileError::Texture(why) => write!(f, "{why}"),
             CompileError::Io(e) => write!(f, "{e}"),
         }

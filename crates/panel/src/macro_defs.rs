@@ -31,18 +31,18 @@ const fn number(default: f64, min: f64, max: f64, step: f64, digits: u32) -> Mac
 
 /// As definições do `ReShade.fxh` que mexem na leitura da profundidade (as que a maioria precisa).
 pub const KNOWN: &[KnownMacro] = &[
-    KnownMacro { name: "RESHADE_DEPTH_INPUT_IS_UPSIDE_DOWN", label: "Profundidade de cabeça para baixo", hint: "Ligue se o céu aparece embaixo e o chão em cima no DisplayDepth (comum em jogos Unity).", kind: MacroKind::Switch { default: false } },
-    KnownMacro { name: "RESHADE_DEPTH_INPUT_IS_REVERSED", label: "Profundidade invertida", hint: "Perto é 1 e longe é 0. Automático: a layer detecta no jogo aberto.", kind: MacroKind::Auto },
-    KnownMacro { name: "RESHADE_DEPTH_INPUT_IS_MIRRORED", label: "Profundidade espelhada", hint: "Espelha a profundidade na horizontal.", kind: MacroKind::Switch { default: false } },
-    KnownMacro { name: "RESHADE_DEPTH_INPUT_IS_LOGARITHMIC", label: "Profundidade logarítmica", hint: "O jogo guarda a profundidade em escala logarítmica.", kind: MacroKind::Switch { default: false } },
-    KnownMacro { name: "RESHADE_DEPTH_LINEARIZATION_FAR_PLANE", label: "Plano distante", hint: "Distância (em unidades do jogo) tratada como o fundo ao linearizar.", kind: number(1000.0, 1.0, 1_000_000.0, 10.0, 1) },
-    KnownMacro { name: "RESHADE_DEPTH_MULTIPLIER", label: "Multiplicador da profundidade", hint: "Multiplica a profundidade lida.", kind: number(1.0, 0.0, 1000.0, 0.1, 2) },
-    KnownMacro { name: "RESHADE_DEPTH_INPUT_X_SCALE", label: "Escala horizontal", hint: "Para jogos cuja profundidade tem outra proporção que a tela.", kind: number(1.0, 0.01, 10.0, 0.01, 3) },
-    KnownMacro { name: "RESHADE_DEPTH_INPUT_Y_SCALE", label: "Escala vertical", hint: "Para jogos cuja profundidade tem outra proporção que a tela.", kind: number(1.0, 0.01, 10.0, 0.01, 3) },
-    KnownMacro { name: "RESHADE_DEPTH_INPUT_X_OFFSET", label: "Deslocamento horizontal", hint: "Em fração da largura.", kind: number(0.0, -1.0, 1.0, 0.001, 3) },
-    KnownMacro { name: "RESHADE_DEPTH_INPUT_Y_OFFSET", label: "Deslocamento vertical", hint: "Em fração da altura.", kind: number(0.0, -1.0, 1.0, 0.001, 3) },
-    KnownMacro { name: "RESHADE_DEPTH_INPUT_X_PIXEL_OFFSET", label: "Deslocamento horizontal (pixels)", hint: "Em pixels.", kind: number(0.0, -4096.0, 4096.0, 1.0, 0) },
-    KnownMacro { name: "RESHADE_DEPTH_INPUT_Y_PIXEL_OFFSET", label: "Deslocamento vertical (pixels)", hint: "Em pixels.", kind: number(0.0, -4096.0, 4096.0, 1.0, 0) },
+    KnownMacro { name: "RESHADE_DEPTH_INPUT_IS_UPSIDE_DOWN", label: "Upside-down depth", hint: "Turn on if the sky appears at the bottom and the ground on top in DisplayDepth (common in Unity games).", kind: MacroKind::Switch { default: false } },
+    KnownMacro { name: "RESHADE_DEPTH_INPUT_IS_REVERSED", label: "Reversed depth", hint: "Near is 1 and far is 0. Automatic: the layer detects it in the open game.", kind: MacroKind::Auto },
+    KnownMacro { name: "RESHADE_DEPTH_INPUT_IS_MIRRORED", label: "Mirrored depth", hint: "Mirrors the depth horizontally.", kind: MacroKind::Switch { default: false } },
+    KnownMacro { name: "RESHADE_DEPTH_INPUT_IS_LOGARITHMIC", label: "Logarithmic depth", hint: "The game stores depth on a logarithmic scale.", kind: MacroKind::Switch { default: false } },
+    KnownMacro { name: "RESHADE_DEPTH_LINEARIZATION_FAR_PLANE", label: "Far plane", hint: "Distance (in game units) treated as the background when linearizing.", kind: number(1000.0, 1.0, 1_000_000.0, 10.0, 1) },
+    KnownMacro { name: "RESHADE_DEPTH_MULTIPLIER", label: "Depth multiplier", hint: "Multiplies the depth read.", kind: number(1.0, 0.0, 1000.0, 0.1, 2) },
+    KnownMacro { name: "RESHADE_DEPTH_INPUT_X_SCALE", label: "Horizontal scale", hint: "For games whose depth has a different aspect ratio than the screen.", kind: number(1.0, 0.01, 10.0, 0.01, 3) },
+    KnownMacro { name: "RESHADE_DEPTH_INPUT_Y_SCALE", label: "Vertical scale", hint: "For games whose depth has a different aspect ratio than the screen.", kind: number(1.0, 0.01, 10.0, 0.01, 3) },
+    KnownMacro { name: "RESHADE_DEPTH_INPUT_X_OFFSET", label: "Horizontal offset", hint: "As a fraction of the width.", kind: number(0.0, -1.0, 1.0, 0.001, 3) },
+    KnownMacro { name: "RESHADE_DEPTH_INPUT_Y_OFFSET", label: "Vertical offset", hint: "As a fraction of the height.", kind: number(0.0, -1.0, 1.0, 0.001, 3) },
+    KnownMacro { name: "RESHADE_DEPTH_INPUT_X_PIXEL_OFFSET", label: "Horizontal offset (pixels)", hint: "In pixels.", kind: number(0.0, -4096.0, 4096.0, 1.0, 0) },
+    KnownMacro { name: "RESHADE_DEPTH_INPUT_Y_PIXEL_OFFSET", label: "Vertical offset (pixels)", hint: "In pixels.", kind: number(0.0, -4096.0, 4096.0, 1.0, 0) },
 ];
 
 pub fn known(name: &str) -> Option<&'static KnownMacro> {

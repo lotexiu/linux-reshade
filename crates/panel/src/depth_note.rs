@@ -3,6 +3,7 @@
 
 use control_core::layers::depth_format_name;
 use ipc::LiveLayer;
+use control_core::i18n::{fmt, tr};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DepthNote {
@@ -15,21 +16,21 @@ pub struct DepthNote {
 pub fn note(uses_depth: bool, layer: Option<&LiveLayer>) -> Option<DepthNote> {
     let say = |text: String, attention: bool| Some(DepthNote { text, attention });
     let Some(layer) = layer else {
-        return uses_depth.then(|| DepthNote { text: "Este preset tem efeitos de profundidade: valem a partir da próxima abertura do jogo.".into(), attention: false });
+        return uses_depth.then(|| DepthNote { text: tr("This preset has depth effects: they apply from the next time the game opens.").into(), attention: false });
     };
     let chosen = layer.status.depth.iter().find(|d| d.chosen);
     match (chosen, uses_depth) {
         (Some(d), true) if d.sampled && d.layout != 0 => {
             let orientation = match d.reversed {
-                Some(true) => "invertida",
-                Some(false) => "normal",
-                None => "orientação desconhecida",
+                Some(true) => tr("reversed"),
+                Some(false) => tr("normal"),
+                None => tr("unknown orientation"),
             };
-            say(format!("Profundidade em uso: {}x{} {}, {orientation}.", d.width, d.height, depth_format_name(d.format)), false)
+            say(fmt("Depth in use: {}x{} {}, {}.", &[&d.width, &d.height, &depth_format_name(d.format), &orientation]), false)
         }
-        (Some(_), true) => say("O jogo precisa ser reaberto para os efeitos usarem a profundidade (abra-o com o daemon rodando, ou use LINUX_RESHADE_DEPTH=1).".into(), true),
-        (None, true) => say("Ainda não achei a profundidade do jogo: abra uma cena 3D e espere um instante.".into(), true),
-        (Some(d), false) => say(format!("O jogo tem profundidade disponível ({}x{} {}); nenhum efeito do preset a usa.", d.width, d.height, depth_format_name(d.format)), false),
+        (Some(_), true) => say(tr("The game needs to be reopened for the effects to use depth (open it with the daemon running, or use LINUX_RESHADE_DEPTH=1).").into(), true),
+        (None, true) => say(tr("Depth of the game not found yet: open a 3D scene and wait a moment.").into(), true),
+        (Some(d), false) => say(fmt("The game has depth available ({}x{} {}); no effect in the preset uses it.", &[&d.width, &d.height, &depth_format_name(d.format)]), false),
         (None, false) => None,
     }
 }
@@ -55,16 +56,16 @@ pub fn choices(layer: &LiveLayer) -> Vec<DepthChoice> {
         .enumerate()
         .map(|(i, d)| {
             let orientation = match d.reversed {
-                Some(true) => ", invertida",
-                Some(false) => ", normal",
+                Some(true) => tr(", reversed"),
+                Some(false) => tr(", normal"),
                 None => "",
             };
-            let sample = if d.sampled { "" } else { " (precisa reabrir o jogo)" };
+            let sample = if d.sampled { "" } else { tr(" (the game needs to be reopened)") };
             DepthChoice {
                 number: i as u32 + 1,
-                label: format!("{}x{} {} · {} desenhos, {} passes{orientation}{sample}", d.width, d.height, depth_format_name(d.format), d.draws, d.passes),
+                label: format!("{}{orientation}{sample}", fmt("{}x{} {} · {} draws, {} passes", &[&d.width, &d.height, &depth_format_name(d.format), &d.draws, &d.passes])),
                 automatic: d.chosen,
-                unusable: d.unusable.clone(),
+                unusable: d.unusable.as_deref().map(control_core::i18n::tr_dyn),
             }
         })
         .collect()
@@ -87,13 +88,13 @@ mod tests {
     fn choices_follow_the_layers_list_and_mark_the_automatic_one() {
         let mut second = candidate(false, 0);
         second.chosen = false;
-        second.unusable = Some("proporção diferente da tela".into());
+        second.unusable = Some("different aspect ratio than the screen".into());
         let list = choices(&layer(vec![candidate(true, 3), second]));
         assert_eq!(list.len(), 2);
         assert_eq!((list[0].number, list[0].automatic), (1, true));
         assert_eq!((list[1].number, list[1].automatic), (2, false));
-        assert!(list[0].label.contains("1920x1080") && list[1].label.contains("reabrir"), "{list:?}");
-        assert_eq!(list[1].unusable.as_deref(), Some("proporção diferente da tela"));
+        assert!(list[0].label.contains("1920x1080") && list[1].label.contains("reopened"), "{list:?}");
+        assert_eq!(list[1].unusable.as_deref(), Some("different aspect ratio than the screen"));
     }
 
     #[test]
@@ -105,20 +106,20 @@ mod tests {
     #[test]
     fn closed_game_with_depth_effects_waits_for_the_next_launch() {
         let n = note(true, None).unwrap();
-        assert!(!n.attention && n.text.contains("próxima abertura"));
+        assert!(!n.attention && n.text.contains("next time the game opens"));
     }
 
     #[test]
     fn usable_depth_is_reported_with_its_orientation() {
         let n = note(true, Some(&layer(vec![candidate(true, 3)]))).unwrap();
         assert!(!n.attention);
-        assert!(n.text.contains("1920x1080") && n.text.contains("D32_SFLOAT_S8") && n.text.contains("invertida"), "{}", n.text);
+        assert!(n.text.contains("1920x1080") && n.text.contains("D32_SFLOAT_S8") && n.text.contains(tr("reversed")), "{}", n.text);
     }
 
     #[test]
     fn not_sampleable_means_reopen_and_missing_means_open_a_3d_scene() {
-        assert!(note(true, Some(&layer(vec![candidate(false, 3)]))).unwrap().text.contains("reaberto"));
-        assert!(note(true, Some(&layer(Vec::new()))).unwrap().text.contains("cena 3D"));
+        assert!(note(true, Some(&layer(vec![candidate(false, 3)]))).unwrap().text.contains("reopened"));
+        assert!(note(true, Some(&layer(Vec::new()))).unwrap().text.contains("3D scene"));
         assert!(note(true, Some(&layer(Vec::new()))).unwrap().attention);
     }
 }

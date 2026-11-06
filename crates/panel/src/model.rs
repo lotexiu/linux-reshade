@@ -10,6 +10,7 @@ use control_core::{params, select};
 use fx_bundle::Bundle;
 use ipc::{LiveLayer, SelectionRead};
 use std::path::PathBuf;
+use control_core::i18n::{fmt, tr};
 
 /// Qual efeito está escolhido.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,7 +64,7 @@ impl Model {
     pub fn with_layers(compiler: Result<Compiler, String>, state: ipc::Writer, layers: LayersSource) -> Self {
         let mut model = Self { compiler, state, layers, schema: None, snapshot: Snapshot::default() };
         if let Err(why) = &model.compiler {
-            model.snapshot.notice = Some(format!("sem compilador de efeitos: {why}"));
+            model.snapshot.notice = Some(fmt("no effect compiler: {}", &[why]));
         }
         model.refresh();
         model
@@ -125,7 +126,7 @@ impl Model {
     /// Escolhe um efeito por nome: compila para as resoluções dos jogos abertos e publica a escolha.
     pub fn select_effect(&mut self, name: &str) {
         let outcome = match &self.compiler {
-            Err(why) => Err(format!("sem compilador de efeitos: {why}")),
+            Err(why) => Err(fmt("no effect compiler: {}", &[why])),
             Ok(compiler) => {
                 let mut resolutions: Vec<(u32, u32)> = (self.layers)()
                     .iter()
@@ -160,7 +161,7 @@ impl Model {
     pub fn set_control(&mut self, name: &str, values: &[f64]) {
         let result = match &self.schema {
             Some((_, bundle)) => params::set(bundle, &self.state, name, values).map(|c| c.warnings.into_iter().next()).map_err(|e| e.to_string()),
-            None => Err("nenhum efeito escolhido".to_string()),
+            None => Err(tr("no effect chosen").to_string()),
         };
         match result {
             Ok(warning) => self.done(warning),
@@ -172,7 +173,7 @@ impl Model {
     pub fn reset_controls(&mut self) {
         let result = match &self.schema {
             Some((_, bundle)) => params::reset(bundle, &self.state).map_err(|e| e.to_string()),
-            None => Err("nenhum efeito escolhido".to_string()),
+            None => Err(tr("no effect chosen").to_string()),
         };
         self.done(result.err());
     }
@@ -299,7 +300,7 @@ mod tests {
         m.select_effect("Sepia");
         m.set_control("Strength", &[5.0]);
         let notice = m.snapshot().notice.clone().unwrap();
-        assert!(notice.contains("fora da faixa"), "{notice}");
+        assert!(notice.contains("outside the range"), "{notice}");
         assert_eq!(m.snapshot().controls[0].value, vec![5.0]);
     }
 
@@ -346,7 +347,7 @@ mod tests {
         assert!(m.snapshot().notice.as_deref().unwrap().contains("NaoExiste"));
         assert_eq!(m.snapshot().selection, Selection::None);
         m.set_control("Strength", &[0.5]);
-        assert_eq!(m.snapshot().notice.as_deref(), Some("nenhum efeito escolhido"));
+        assert_eq!(m.snapshot().notice.as_deref(), Some(tr("no effect chosen")));
         m.select_effect("Sepia");
         m.set_control("Forca", &[0.5]);
         assert!(m.snapshot().notice.as_deref().unwrap().contains("Forca"));

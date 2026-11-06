@@ -18,6 +18,7 @@ use preset::{Preset, TechId};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
+use control_core::i18n::{fmt, tr};
 
 /// O nome do preset que nasce da primeira edição de um jogo que usava o global.
 pub const DEFAULT_PRESET: &str = "Padrão";
@@ -195,9 +196,9 @@ impl Home {
     pub fn with_layers(compiler: Result<Compiler, String>, presets_dir: Option<PathBuf>, state: ipc::Writer, layers: LayersSource) -> Self {
         let mut home = Self { compiler, presets_dir, state, layers, game: None, loaded: None, schemas: HashMap::new(), analysis_seen: None, analysis_checked: None, version: 0, loaded_rev: 0, layers_rev: 0, infos_rev: 0, view_key: None, snapshot: HomeSnapshot::default() };
         if let Err(why) = &home.compiler {
-            home.snapshot.notice = Some(format!("sem compilador de efeitos: {why}"));
+            home.snapshot.notice = Some(fmt("no effect compiler: {}", &[why]));
         } else if home.presets_dir.is_none() {
-            home.snapshot.notice = Some("nenhuma pasta de dados escolhida: rode 'lrctl config init'".into());
+            home.snapshot.notice = Some(tr("no data folder chosen: run 'lrctl config init'").into());
         }
         // Começa no primeiro jogo aberto, se houver (é o que a pessoa quer ajustar).
         home.game = (home.layers)().first().map(|l| l.status.game_id().to_string()).filter(|id| game::valid_game_id(id));
@@ -211,7 +212,7 @@ impl Home {
     }
 
     fn dir(&self) -> Result<&Path, String> {
-        self.presets_dir.as_deref().ok_or_else(|| "nenhuma pasta de dados escolhida: rode 'lrctl config init'".to_string())
+        self.presets_dir.as_deref().ok_or_else(|| tr("no data folder chosen: run 'lrctl config init'").to_string())
     }
 
     /// O preset que vale para o alvo atual: o do jogo, o global que ele herda, ou o global.
@@ -418,9 +419,9 @@ impl Home {
             let (label, mut problem) = match bundle {
                 Some(b) => {
                     let known = b.manifest.techniques.iter().any(|t| t.name == row.id.name);
-                    (label_of(b, &row.id.name).unwrap_or_else(|| row.id.name.clone()), (!known).then(|| "o efeito não declara esta técnica".to_string()))
+                    (label_of(b, &row.id.name).unwrap_or_else(|| row.id.name.clone()), (!known).then(|| tr("the effect does not declare this technique").to_string()))
                 }
-                None => (row.id.name.clone(), Some("efeito ainda não compilado (abra um jogo com o daemon rodando, ou adicione-o de novo)".to_string())),
+                None => (row.id.name.clone(), Some(tr("effect not compiled yet (open a game with the daemon running, or add it again)").to_string())),
             };
             let first_of_file = !shown_files.contains(&file);
             let mut controls = Vec::new();
@@ -469,13 +470,13 @@ impl Home {
             return Ok(());
         }
         if !valid_name(name) {
-            return Err(format!("{name:?} não é um nome de efeito válido"));
+            return Err(fmt("{} is not a valid effect name", &[&format!("{name:?}")]));
         }
-        let compiler = self.compiler.as_ref().map_err(|why| format!("sem compilador de efeitos: {why}"))?;
+        let compiler = self.compiler.as_ref().map_err(|why| fmt("no effect compiler: {}", &[why]))?;
         let dir = match compiler.any_bundle(name) {
             Some(dir) => dir,
             None if compile => compiler.ensure(name, DEFAULT_SIZE.0, DEFAULT_SIZE.1).map_err(|e| e.to_string())?.dir_owned(),
-            None => return Err("efeito ainda não compilado".into()),
+            None => return Err(tr("effect not compiled yet").into()),
         };
         let bundle = Bundle::load(&dir).map_err(|e| e.to_string())?;
         self.schemas.insert(name.to_string(), bundle);
@@ -518,7 +519,7 @@ impl Home {
     pub fn select_preset(&mut self, name: Option<&str>) {
         let result = match (&self.game, self.presets_dir.clone()) {
             (Some(game), Some(dir)) => presets::use_preset(&dir, game, name),
-            _ => Err("escolha um jogo primeiro".to_string()),
+            _ => Err(tr("pick a game first").to_string()),
         };
         self.loaded = None;
         self.done(result.err());
@@ -529,7 +530,7 @@ impl Home {
     pub fn new_preset(&mut self, name: &str) {
         let result = match (&self.game, self.presets_dir.clone()) {
             (Some(game), Some(dir)) => presets::new_for_game(&dir, game, name.trim()).map(drop),
-            _ => Err("escolha um jogo primeiro".to_string()),
+            _ => Err(tr("pick a game first").to_string()),
         };
         self.loaded = None;
         self.done(result.err());
@@ -584,7 +585,7 @@ impl Home {
         let id = id.clone();
         self.edit(move |p, _| {
             let rows = presets::rows(p);
-            let at = rows.iter().position(|r| r.id.matches(&id)).ok_or("o preset não conhece esta técnica")?;
+            let at = rows.iter().position(|r| r.id.matches(&id)).ok_or(tr("the preset does not know this technique"))?;
             let to = (at as i32 + delta).clamp(0, rows.len() as i32 - 1) as usize;
             p.move_technique(&id, to);
             Ok(None)
@@ -615,7 +616,7 @@ impl Home {
                     order.push(f);
                 }
             }
-            let at = order.iter().position(|f| *f == file).ok_or("o preset não conhece este efeito")?;
+            let at = order.iter().position(|f| *f == file).ok_or(tr("the preset does not know this effect"))?;
             let to = (at as i32 + delta).clamp(0, order.len() as i32 - 1) as usize;
             let item = order.remove(at);
             order.insert(to, item);
@@ -633,7 +634,7 @@ impl Home {
     pub fn set_preset_macros(&mut self, text: &str) {
         let parsed = preset::parse_macros(text);
         if let Some(bad) = parsed.iter().find(|(n, v)| !control_core::compiler::valid_define(n, v)) {
-            self.done(Some(format!("definição inválida: {}={:?} (o nome precisa ser um identificador)", bad.0, bad.1)));
+            self.done(Some(fmt("invalid definition: {}={} (the name must be an identifier)", &[&bad.0, &format!("{:?}", bad.1)])));
             return;
         }
         self.edit(move |p, _| {
@@ -646,7 +647,7 @@ impl Home {
     pub fn set_depth_pick(&mut self, pick: ipc::DepthPick) {
         let Some(id) = self.game.clone() else { return };
         let Some(layer) = self.snapshot.layers.iter().find(|l| l.status.game_id() == id) else {
-            self.done(Some("o jogo não está aberto com a layer".into()));
+            self.done(Some(tr("the game is not open with the layer").into()));
             return;
         };
         let layer_id = layer.id.clone();
@@ -656,11 +657,11 @@ impl Home {
                 if let Some(dir) = &self.presets_dir
                     && let Err(e) = game::set_depth_choice(dir, &id, pick.text().as_deref())
                 {
-                    self.done(Some(format!("a escolha vale agora, mas não consegui gravá-la no game.ini: {e}")));
+                    self.done(Some(fmt("the choice applies now, but it could not be saved to game.ini: {}", &[&e])));
                 }
                 self.update_depth_note();
             }
-            Err(e) => self.done(Some(format!("não consegui gravar a escolha da profundidade: {e}"))),
+            Err(e) => self.done(Some(fmt("could not save the depth choice: {}", &[&e]))),
         }
     }
 
@@ -668,7 +669,7 @@ impl Home {
     pub fn set_effect_macros(&mut self, file: &str, text: &str) {
         let parsed = preset::parse_macros(text);
         if let Some(bad) = parsed.iter().find(|(n, v)| !control_core::compiler::valid_define(n, v)) {
-            self.done(Some(format!("definição inválida: {}={:?} (o nome precisa ser um identificador)", bad.0, bad.1)));
+            self.done(Some(fmt("invalid definition: {}={} (the name must be an identifier)", &[&bad.0, &format!("{:?}", bad.1)])));
             return;
         }
         let file = file.to_string();
@@ -696,7 +697,7 @@ impl Home {
         let id = id.clone();
         self.edit(move |p, _| {
             if !p.move_technique(&id, to) {
-                return Err("o preset não conhece esta técnica".into());
+                return Err(tr("the preset does not know this technique").into());
             }
             Ok(None)
         });
@@ -721,7 +722,7 @@ impl Home {
     pub fn delete_preset(&mut self, name: &str) {
         let result = match (&self.game, self.presets_dir.clone()) {
             (Some(game), Some(dir)) => presets::delete_for_game(&dir, game, name),
-            _ => Err("escolha um jogo primeiro".to_string()),
+            _ => Err(tr("pick a game first").to_string()),
         };
         self.loaded = None;
         self.done(result.err());
@@ -737,7 +738,7 @@ impl Home {
         let file = format!("{name}.fx");
         let ids: Vec<TechId> = bundle.manifest.techniques.iter().map(|t| TechId { name: t.name.clone(), file: Some(file.clone()) }).collect();
         if ids.is_empty() {
-            self.done(Some(format!("{name}: o efeito não tem técnicas")));
+            self.done(Some(fmt("{}: the effect has no techniques", &[&name])));
             return;
         }
         self.edit(move |p, _| {
@@ -757,7 +758,7 @@ impl Home {
             match shortcuts::trigger::normalize(trigger).ok().and_then(|t| shortcuts::trigger::to_vk(&t)) {
                 Some((code, ctrl, shift, alt)) => Some(preset::KeyCombo { code, ctrl, shift, alt }),
                 None => {
-                    self.done(Some(format!("{trigger}: o preset (formato do ReShade) não guarda essa tecla; evite Super e teclas especiais")));
+                    self.done(Some(fmt("{}: the preset (ReShade format) does not store this key; avoid Super and special keys", &[&trigger])));
                     return;
                 }
             }
@@ -777,7 +778,7 @@ impl Home {
         }
         let (file, name, values) = (file.to_string(), name.to_string(), values.to_vec());
         self.edit(move |p, compiler| {
-            let compiler = compiler.ok_or("sem compilador de efeitos")?;
+            let compiler = compiler.ok_or(tr("no effect compiler"))?;
             let warnings = presets::set_uniform(p, compiler, &file, &name, &values)?;
             Ok(warnings.into_iter().next())
         });
@@ -904,7 +905,7 @@ mod tests {
         assert!(fs::read_to_string(presets.join("vkcube/Padrão.ini")).unwrap().contains("[Sepia.fx]\nStrength=0.25"));
 
         h.set_control("Sepia.fx", "Strength", &[9.0]);
-        assert!(h.snapshot().notice.as_deref().is_some_and(|n| n.contains("fora da faixa")));
+        assert!(h.snapshot().notice.as_deref().is_some_and(|n| n.contains("outside the range")));
 
         h.reset_effect("Sepia.fx");
         assert_eq!(h.snapshot().techniques[0].controls[0].value, vec![1.0]);
@@ -1043,7 +1044,7 @@ mod tests {
         assert!(text.contains("PreprocessorDefinitions=QUALITY=2,FLAG=1") && text.contains("PreprocessorDefinitions=FAST=3"), "{text}");
 
         h.set_preset_macros("1ruim=2");
-        assert!(h.snapshot().notice.as_deref().is_some_and(|n| n.contains("definição inválida")), "{:?}", h.snapshot().notice);
+        assert!(h.snapshot().notice.as_deref().is_some_and(|n| n.contains("invalid definition")), "{:?}", h.snapshot().notice);
         assert_eq!(h.snapshot().preset_macros, "QUALITY=2,FLAG=1", "a inválida não foi gravada");
         h.set_preset_macros("");
         assert_eq!(h.snapshot().preset_macros, "");
@@ -1067,7 +1068,7 @@ mod tests {
         let (mut h, _) = home(env("whynot"), open_game("vkcube"));
         h.add_effect("Inexistente");
         let notice = h.snapshot().notice.clone().unwrap();
-        assert!(notice.starts_with("Inexistente:") && notice.contains("não achei"), "{notice}");
+        assert!(notice.starts_with("Inexistente:") && notice.contains("could not find"), "{notice}");
     }
 
     #[test]
@@ -1077,7 +1078,7 @@ mod tests {
         let (h, _) = home(e, vec![]);
         let t = &h.snapshot().techniques[0];
         assert_eq!(t.label, "Fantasma");
-        assert!(t.problem.as_deref().is_some_and(|p| p.contains("não compilado")), "{:?}", t.problem);
+        assert!(t.problem.as_deref().is_some_and(|p| p.contains("not compiled")), "{:?}", t.problem);
         assert!(t.controls.is_empty());
     }
 

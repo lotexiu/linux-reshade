@@ -2,6 +2,7 @@
 
 use crate::compiler::{CompileError, Compiler, Ensured};
 use ipc::{LiveLayer, SelectionStore};
+use crate::i18n::fmt;
 
 /// O que escolher um efeito por nome fez.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -34,7 +35,7 @@ pub fn prepare(compiler: &Compiler, store: &dyn SelectionStore, name: &str, reso
         let fresh = matches!(compiler.ensure(name, w, h)?, Ensured::Compiled(_));
         outcome.prepared.push((w, h, fresh));
     }
-    store.publish_selection(&compiler.template(name)).map_err(|e| CompileError::Io(format!("não consegui publicar a escolha: {e}")))?;
+    store.publish_selection(&compiler.template(name)).map_err(|e| CompileError::Io(fmt("could not publish the choice: {}", &[&e])))?;
     Ok(outcome)
 }
 

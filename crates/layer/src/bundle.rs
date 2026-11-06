@@ -205,14 +205,14 @@ fn resolve_plan(state: &mut State, plan: &Plan, width: u32, height: u32) -> Reso
                 missing.push(dir);
                 continue;
             }
-            Loaded::Invalid(why) => return Resolved::Invalid(format!("etapa {n}: {why}")),
+            Loaded::Invalid(why) => return Resolved::Invalid(format!("step {n}: {why}")),
         };
         let technique = if step.technique.is_empty() {
             0
         } else {
             match postfx::chain::technique_index(&bundle, &step.technique) {
                 Some(i) => i,
-                None => return Resolved::Invalid(format!("etapa {n}: o efeito não tem a técnica {:?}", step.technique)),
+                None => return Resolved::Invalid(format!("step {n}: the effect has no technique {:?}", step.technique)),
             }
         };
         // Os uniforms do plano só valem para o efeito que o controlador tinha em mente.

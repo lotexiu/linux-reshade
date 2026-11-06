@@ -15,6 +15,7 @@ use gtk4 as gtk;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use control_core::i18n::{fmt, tr};
 
 /// O que a lista mostra: a busca, as características marcadas e o que se sabe de cada efeito.
 #[derive(Default)]
@@ -49,7 +50,7 @@ impl Filter {
     /// O texto do botão de filtros: quantos estão ligados.
     fn label(&self) -> String {
         let n = self.features.len() + usize::from(self.only_compatible) + usize::from(!self.folder.is_empty());
-        if n == 0 { "Filtros".to_string() } else { format!("Filtros ({n})") }
+        if n == 0 { tr("Filters").to_string() } else { format!("{} ({n})", tr("Filters")) }
     }
 }
 
@@ -88,14 +89,14 @@ impl AddEffectView {
 
         // Linha de cima: voltar, busca e o botão dos filtros.
         let back = gtk::Button::from_icon_name("go-previous-symbolic");
-        back.set_tooltip_text(Some("Voltar à lista de efeitos do preset"));
+        back.set_tooltip_text(Some(tr("Back to the preset's effect list")));
         back.connect_clicked(move |_| on_back());
         let search = gtk::SearchEntry::new();
-        search.set_placeholder_text(Some("Procurar efeito ou pasta"));
+        search.set_placeholder_text(Some(tr("Search effect or folder")));
         search.set_hexpand(true);
 
         // Os filtros: seção que abre no lugar (nada de menu dentro de menu).
-        let only_ok = gtk::CheckButton::with_label("Só compatíveis");
+        let only_ok = gtk::CheckButton::with_label(tr("Compatible only"));
         let chips: Vec<(Feature, gtk::CheckButton)> = [Feature::Depth, Feature::Color, Feature::Textures, Feature::Mipmaps, Feature::Srgb, Feature::Compute]
             .into_iter()
             .map(|f| (f, gtk::CheckButton::with_label(f.label())))
@@ -108,13 +109,13 @@ impl AddEffectView {
             features_box.insert(b, -1);
         }
         let folder_search = gtk::SearchEntry::new();
-        folder_search.set_placeholder_text(Some("Procurar pasta"));
+        folder_search.set_placeholder_text(Some(tr("Search folder")));
         let folder_list = gtk::ListBox::new();
         folder_list.set_selection_mode(gtk::SelectionMode::Single);
         let folder_query = Rc::new(RefCell::new(String::new()));
         {
             let query = folder_query.clone();
-            // A linha "Todas as pastas" (nome vazio) sempre aparece.
+            // A linha tr("All folders") (nome vazio) sempre aparece.
             folder_list.set_filter_func(move |row| {
                 let q = query.borrow();
                 q.is_empty() || row.widget_name().is_empty() || row.widget_name().to_lowercase().contains(q.as_str())
@@ -129,14 +130,14 @@ impl AddEffectView {
         folder_scroller.set_child(Some(&folder_list));
         folder_scroller.set_min_content_height(160);
         folder_scroller.set_hscrollbar_policy(gtk::PolicyType::Never);
-        let clear = gtk::Button::with_label("Limpar filtros");
+        let clear = gtk::Button::with_label(tr("Clear filters"));
         clear.set_halign(gtk::Align::Start);
         let filters_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
         filters_box.append(&features_box);
         filters_box.append(&folder_search);
         filters_box.append(&folder_scroller);
         filters_box.append(&clear);
-        let filters = Disclosure::new("Filtros", &filters_box);
+        let filters = Disclosure::new(tr("Filters"), &filters_box);
 
         let top = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         top.append(&back);
@@ -242,7 +243,7 @@ impl AddEffectView {
         }
         let (done, total) = progress;
         self.progress.set_visible(done < total);
-        self.progress.set_text(&format!("Analisando os efeitos para saber quais servem… {done}/{total}"));
+        self.progress.set_text(&fmt("Analyzing the effects to see which ones work… {}/{}", &[&done, &total]));
         if !visible {
             return;
         }
@@ -274,7 +275,7 @@ impl AddEffectView {
         for (i, name) in std::iter::once("").chain(names.iter().map(|n| n.as_str())).enumerate() {
             let row = gtk::ListBoxRow::new();
             row.set_widget_name(name);
-            let label = gtk::Label::new(Some(if name.is_empty() { "Todas as pastas" } else { name }));
+            let label = gtk::Label::new(Some(if name.is_empty() { tr("All folders") } else { name }));
             label.set_halign(gtk::Align::Start);
             margins(&label, 4);
             row.set_child(Some(&label));
@@ -328,9 +329,9 @@ impl AddEffectView {
         for row in self.rows.borrow().iter() {
             match infos.get(&row.name) {
                 Some(info) => {
-                    let tags: Vec<&str> = info.features.iter().map(|f| f.label().trim_start_matches("Usa ")).collect();
+                    let tags: Vec<&str> = info.features.iter().map(|f| f.label()).collect();
                     row.detail.set_text(&match info.reason() {
-                        Some(why) => format!("Incompatível: {why}"),
+                        Some(why) => fmt("Incompatible: {}", &[&why]),
                         None => tags.join(" · "),
                     });
                     if info.compatible() {

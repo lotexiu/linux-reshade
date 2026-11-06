@@ -1,0 +1,300 @@
+# pt_BR: inglês<TAB>português. Gerado/mantido junto do código; texto sem linha aqui aparece em inglês.
+  {} frames/s ({} per frame)\n  CPU, per frame: layer {} (effects {}, depth {}); draw hooks on the game threads ~{}\n  GPU of the effects: {}\n	  {} quadros/s ({} por quadro)\n  processador, por quadro: layer {} (efeitos {}, profundidade {}); ganchos de desenho nas threads do jogo ~{}\n  GPU dos efeitos: {}\n
+ (the game needs to be reopened)	 (precisa reabrir o jogo)
+ · the automatic one	 · a automática
+ · unusable: {}	 · não serve: {}
+(could not open {})	(não consegui abrir {})
+(not configured)	(não configurado)
+(use the global preset)	(usar o preset global)
+, reversed	, invertida
+: turn the measurement on above	: ligue a medição acima
+: waiting for the next second	: aguardando o próximo segundo
+About	Sobre
+Add effect	Adicionar efeito
+Add folder…	Adicionar pasta…
+Add the definition	Adicionar a definição
+Adjusting…	Ajustando…
+After the pass	Depois do passe
+All folders	Todas as pastas
+Also save the frame without effects (to compare), ending in "_no-effects"	Guardar também o quadro sem efeitos (para comparar), com o final "_sem-efeitos"
+Analyzing the effects to see which ones work… {}/{}	Analisando os efeitos para saber quais servem… {}/{}
+Applied in the game	Aplicada no jogo
+Apply to all Flatpak apps	Aplicar a todos os apps Flatpak
+As a fraction of the height.	Em fração da altura.
+As a fraction of the width.	Em fração da largura.
+Ask before deleting a preset	Perguntar antes de apagar um preset
+Automatic	Automático
+Automatic (the layer chooses)	Automática (a layer escolhe)
+Back	Voltar
+Back to the preset's effect list	Voltar à lista de efeitos do preset
+Before the clear	Antes da limpeza
+Cancel	Cancelar
+Capture the game screen (with and without effects)	Capturar a tela do jogo (com e sem efeitos)
+Captures folder	Pasta das capturas
+Chooses which depth image the effects use in this game (until it is closed)	Escolhe qual imagem de profundidade os efeitos usam neste jogo (vale até fechá-lo)
+Choose…	Escolher…
+Clear	Limpar
+Clear analyses	Limpar análises
+Clear compiled	Limpar compilados
+Clear everything	Limpar tudo
+Clear filters	Limpar filtros
+Compatible only	Só compatíveis
+Compiled effects (cache)	Efeitos compilados (cache)
+Compiled effects and compatibility analyses are kept. Forced clearing is for testing compilation from scratch; whatever an open game uses is recompiled right after.	Os efeitos compilados e as análises de compatibilidade ficam guardados. Limpar à força serve para testar a compilação do zero; o que um jogo aberto usa é recompilado em seguida.
+Compiling {} effects…	Compilando {} efeitos…
+Compiling… {}/{}	Compilando… {}/{}
+Could not install: {}	Não consegui instalar: {}
+Create	Criar
+Daemon: running	Daemon: rodando
+Daemon: stopped	Daemon: parado
+Default	Padrão
+Definitions…	Definições…
+Delete	Apagar
+Delete preset	Apagar preset
+Delete the preset "{}"?\nThe file is removed and its settings are lost.	Apagar o preset "{}"?\nO arquivo é removido e as configurações dele se perdem.
+Delete this preset	Apagar este preset
+Deletes the compatibility analyses; the panel redoes them in the background	Apaga as análises de compatibilidade; o painel as refaz em segundo plano
+Deletes the compiled effects (the analyses stay)	Apaga os efeitos compilados (as análises ficam)
+Deletes the compiled effects and the analyses	Apaga os compilados e as análises
+Depth in use: {}x{} {}, {}.	Profundidade em uso: {}x{} {}, {}.
+Depth multiplier	Multiplicador da profundidade
+Depth of the game not found yet: open a 3D scene and wait a moment.	Ainda não achei a profundidade do jogo: abra uma cena 3D e espere um instante.
+Depth…	Profundidade…
+Distance (in game units) treated as the background when linearizing.	Distância (em unidades do jogo) tratada como o fundo ao linearizar.
+Don't ask again (you can turn this back on in the settings)	Não perguntar novamente (dá para voltar a perguntar nas configurações)
+Done.	Pronto.
+Each game gets a subfolder; files carry the date and time.	Cada jogo ganha uma subpasta; os arquivos levam a data e a hora.
+Effect definitions…	Definições do efeito…
+Effect textures	Texturas dos efeitos
+Effects (.fx)	Efeitos (.fx)
+Effects on	Efeitos ligados
+Enable	Ativar
+Far plane	Plano distante
+Filters	Filtros
+Flatpak apps run in a sandbox that cannot see the system's layer. Enabling installs the layer extension for the app's runtime and grants what it needs (as in Flatseal). It takes effect the next time the app opens.	Apps Flatpak rodam numa caixa que não enxerga a layer do sistema. Ativar instala a extensão da layer para o runtime do app e libera o que ela precisa (como no Flatseal). Vale na próxima vez que o app abrir.
+Flatpak games	Jogos Flatpak
+Folders	Pastas
+Folders of the images the effects load (LUTs, noise...).	Pastas das imagens que os efeitos carregam (LUTs, ruído...).
+Folders where effects are searched for (the first with the name wins).	Pastas onde os efeitos são procurados (a primeira com o nome vence).
+Follow the global setting	Seguir a configuração global
+For games that are not Flatpak, linux-reshade needs two things: the Vulkan layer installed for your user and the daemon running (it compiles the effects of open games and registers the shortcuts). After installing the layer, turn it on in a game with LINUX_RESHADE=1 in its launch options.	Para jogos que não são Flatpak o linux-reshade precisa de dois itens: a camada do Vulkan instalada para o seu usuário e o daemon rodando (ele compila os efeitos dos jogos abertos e registra os atalhos). Depois de instalar a camada, ligue-a em um jogo com LINUX_RESHADE=1 nas opções de lançamento.
+For games whose depth has a different aspect ratio than the screen.	Para jogos cuja profundidade tem outra proporção que a tela.
+Game	Jogo
+General	Geral
+Global key that turns this effect on and off (the daemon registers it; works with the game in focus)	Tecla global que liga e desliga este efeito (o daemon a registra; vale com o jogo em foco)
+Global preset	Preset global
+Global shortcuts: they work with the game in focus. Click the key and type the new combination (Esc cancels). The daemon (`lrctl daemon`) applies the shortcut, and restarts by itself when it sees the change.	Atalhos globais: valem com o jogo em foco. Clique na tecla e digite a nova combinação (Esc cancela). Quem aplica o atalho é o daemon (`lrctl daemon`), que se reinicia sozinho ao ver a mudança.
+Has a warning	Tem um aviso
+Horizontal offset	Deslocamento horizontal
+Horizontal offset (pixels)	Deslocamento horizontal (pixels)
+Horizontal scale	Escala horizontal
+In pixels.	Em pixels.
+Incompatible: {}	Incompatível: {}
+Install or update the layer	Instalar ou atualizar a camada
+Installing the extension and adjusting the permissions…	Instalando a extensão e ajustando as permissões…
+Installing the extensions and adjusting the permissions…	Instalando as extensões e ajustando as permissões…
+Language	Idioma
+Layer (native games, vkcube)	Layer (jogos nativos, vkcube)
+Log	Registro
+Logarithmic depth	Profundidade logarítmica
+MSAA without SAMPLED usage (reopen the game with the observation armed)	MSAA sem uso SAMPLED (reabra o jogo com a observação armada)
+Measure performance	Medir o desempenho
+Measures how much the layer costs per frame on the CPU and how much the GPU spends on each effect. Measuring costs a little; turn it on only to look.	Mede quanto a layer custa por quadro no processador e quanto a GPU gasta em cada efeito. Medir custa um pouco; ligue só para ver.
+Measuring compilation deletes the compiled versions of the global preset's effects and compiles them again, one at a time (1920x1080, no macros), timing each one.	Medir a compilação apaga os compilados dos efeitos do preset global e os compila de novo, um por vez (1920x1080, sem macros), contando o tempo de cada um.
+Mirrored depth	Profundidade espelhada
+Mirrors the depth horizontally.	Espelha a profundidade na horizontal.
+Multiplies the depth read.	Multiplica a profundidade lida.
+NAME	NOME
+Near is 1 and far is 0. Automatic: the layer detects it in the open game.	Perto é 1 e longe é 0. Automático: a layer detecta no jogo aberto.
+New	Novo
+New preset for this game (copy of the current one)	Novo preset para este jogo (cópia do atual)
+Next preset of the game	Próximo preset do jogo
+No	Não
+No compiler: {}	Sem compilador: {}
+No effects in the preset.\nUse "Add effect" to start.	Nenhum efeito no preset.\nUse "Adicionar efeito" para começar.
+No effects to measure.	Nenhum efeito para medir.
+No game with the layer active.\nOpen a game with LINUX_RESHADE=1 in its launch options.	Nenhum jogo com a layer ativa.\nAbra um jogo com LINUX_RESHADE=1 nas opções de lançamento.
+No game with the layer open.	Nenhum jogo com a layer aberto.
+No log found: the daemon writes to ~/.local/state/linux-reshade/daemon.log, and the layer to LINUX_RESHADE_LOG.	Nenhum log encontrado: o daemon grava em ~/.local/state/linux-reshade/daemon.log, e a layer em LINUX_RESHADE_LOG.
+No modifier: this key stops working in every program while the daemon is running.	Sem modificador: essa tecla deixa de funcionar em todos os programas enquanto o daemon estiver rodando.
+No shortcut	Sem atalho
+Not applied right now	Não aplicada agora
+Off	Desligado
+Off for this app only	Desligado só neste app
+On	Ligado
+On (global setting)	Ligado (configuração global)
+On for all Flatpak apps (takes effect the next time each one opens).	Ligado para todos os apps Flatpak (vale na próxima vez que cada um abrir).
+Open games	Jogos abertos
+Other definitions	Outras definições
+Parameters	Parâmetros
+Performance	Desempenho
+Pick a game to create a preset for it	Escolha um jogo para criar um preset dele
+Preprocessor definitions for this effect only; they take precedence over the preset's. Changing them recompiles the effect.	Definições de pré-processador só deste efeito; valem mais que as do preset. Mudar recompila o efeito.
+Preprocessor definitions of the preset, for all effects (as in ReShade). Changing them recompiles the affected effects.	Definições de pré-processador do preset, para todos os efeitos (como no ReShade). Mudar recompila os efeitos afetados.
+Preset name	Nome do preset
+Press the desired key (or combination).\nEsc cancels.	Pressione a tecla (ou combinação) desejada.\nEsc cancela.
+Press the key…	Pressione a tecla…
+Previous preset of the game	Preset anterior do jogo
+Reading the Flatpak apps…	Lendo os apps Flatpak…
+Reading the apps failed.	A leitura dos apps falhou.
+Recompile the global preset and measure	Recompilar o preset global e medir
+Refresh	Atualizar
+Reload the effects (recompile)	Recarregar os efeitos (recompilar)
+Remove changes	Remover alterações
+Remove changes…	Remover alterações…
+Remove the changes in {}?	Remover as alterações em {}?
+Remove the effect from the preset (deletes its settings)	Tirar o efeito do preset (apaga as configurações dele)
+Remove the shortcut	Tirar o atalho
+Remove this definition	Remover esta definição
+Removing the changes…	Removendo as alterações…
+Restart the panel now	Reiniciar o painel agora
+Restore the default value	Restaurar o valor padrão
+Restore the effect's defaults	Restaurar os padrões do efeito
+Reversed depth	Profundidade invertida
+Run earlier	Rodar antes
+Run later	Rodar depois
+Saved.	Salvo.
+Saved. Restart the panel to see it in the new language.	Salvo. Reinicie o painel para ver no novo idioma.
+Saved. The daemon applies it within 2 s.	Salvo. O daemon aplica em até 2 s.
+Saved. The daemon restarts by itself; close and reopen the panel so it also uses the new value.	Salvo. O daemon reinicia sozinho; feche e abra o painel para ele também usar o novo valor.
+Screenshots	Capturas de tela
+Search app	Procurar app
+Search effect or folder	Procurar efeito ou pasta
+Search folder	Procurar pasta
+Search the preset's effects	Procurar nos efeitos do preset
+Settings	Configurações
+Settings: shortcuts, screenshots, folders, performance and cache	Configurações: atalhos, capturas de tela, pastas, desempenho e cache
+Shortcut for {}	Atalho de {}
+Shortcut to turn on/off	Atalho para ligar/desligar
+Shortcuts	Atalhos
+Show the warning	Ver o aviso
+Skipped in the game	Pulada no jogo
+Skipped in the game: {}	Pulada no jogo: {}
+Start the daemon now	Iniciar o daemon agora
+Start the daemon with the session	Iniciar o daemon junto com a sessão
+Techniques	Técnicas
+Techniques and parameters	Técnicas e parâmetros
+That key does not work: {}	Essa tecla não serve: {}
+The 'flatpak' command is not installed on this machine.	O comando 'flatpak' não está instalado nesta máquina.
+The capture key is in the Shortcuts tab. Each game with the layer open saves its own frame.	A tecla de captura fica na aba Atalhos. Cada jogo com a layer aberta grava o quadro dele.
+The choice lasts while the game is open. If the result gets worse, go back to Automatic.	A escolha vale enquanto o jogo estiver aberto. Se o resultado piorar, volte para Automática.
+The folders are kept in config.ini. An entry ending in /** includes the subfolders. Relative paths (./) count from the config.ini folder.	As pastas ficam no config.ini. Uma entrada com /** inclui as subpastas. O que é relativo (./) conta a partir da pasta do config.ini.
+The game has depth available ({}x{} {}); no effect in the preset uses it.	O jogo tem profundidade disponível ({}x{} {}); nenhum efeito do preset a usa.
+The game needs to be reopened for the effects to use depth (open it with the daemon running, or use LINUX_RESHADE_DEPTH=1).	O jogo precisa ser reaberto para os efeitos usarem a profundidade (abra-o com o daemon rodando, ou use LINUX_RESHADE_DEPTH=1).
+The game stores depth on a logarithmic scale.	O jogo guarda a profundidade em escala logarítmica.
+The global preset has no effects.	O preset global não tem efeitos.
+The language applies the next time the panel opens.	O idioma vale na próxima vez que o painel abrir.
+The layer does not use this image: {}	A layer não usa esta imagem: {}
+There is no global preset yet. Add an effect to create it (it applies to games without their own preset).	Ainda não há preset global. Adicione um efeito para criá-lo (vale para os jogos sem preset próprio).
+This game has no preset. Add an effect to create one.	Este jogo não tem preset. Adicione um efeito para criar o dele.
+This game runs as a Flatpak app: opens the page where its setup is shown and undone	Este jogo roda como app Flatpak: abre a página onde se vê e se desfaz a configuração dele
+This game uses the global preset ({}). The first change creates its own preset.	Este jogo usa o preset global ({}). A primeira alteração cria o preset dele.
+This key was not understood ({}); it is ignored.	Não entendi esta tecla ({}); ela é ignorada.
+This preset has depth effects: they apply from the next time the game opens.	Este preset tem efeitos de profundidade: valem a partir da próxima abertura do jogo.
+This undoes what linux-reshade set up for this Flatpak app: access to shared memory and to the compiled effects folder, and the LINUX_RESHADE variables. The game opens without effects again. The layer extension stays installed for other apps.	Isto desfaz o que o linux-reshade colocou neste app Flatpak: o acesso à memória compartilhada e à pasta dos efeitos compilados, e as variáveis LINUX_RESHADE. O jogo volta a abrir sem efeitos. A extensão da layer continua instalada para outros apps.
+Turn off for this app	Desligar neste app
+Turn on if the sky appears at the bottom and the ground on top in DisplayDepth (common in Unity games).	Ligue se o céu aparece embaixo e o chão em cima no DisplayDepth (comum em jogos Unity).
+Turn only this technique on or off	Ligar ou desligar só esta técnica
+Turn the effect on or off	Ligar ou desligar o efeito
+Turn the effects on/off	Ligar/desligar os efeitos
+Turns linux-reshade on for all Flatpak apps at once, like Flatseal's global setting: it installs the layer extension for every runtime version in use and grants the permissions in the global configuration. To leave out a single app, use "Turn off for this app" on the Flatpak games page, or set the environment variable LINUX_RESHADE=0 on it in Flatseal.	Liga o linux-reshade em todos os apps Flatpak de uma vez, como a configuração global do Flatseal: instala a extensão da layer para cada versão de runtime em uso e libera as permissões na configuração global. Para tirar um app só, use "Desligar neste app" na página Jogos Flatpak, ou, no Flatseal, a variável de ambiente LINUX_RESHADE=0 nele.
+Undoing…	Desfazendo…
+Undone: no Flatpak app loads linux-reshade through the global setting any more.	Desfeito: nenhum app Flatpak carrega mais o linux-reshade pela configuração global.
+Upside-down depth	Profundidade de cabeça para baixo
+Use	Usar
+Vertical offset	Deslocamento vertical
+Vertical offset (pixels)	Deslocamento vertical (pixels)
+Vertical scale	Escala vertical
+Vulkan layer: installed and up to date\n{}	Camada do Vulkan: instalada e atual\n{}
+Vulkan layer: not installed (or out of date)	Camada do Vulkan: não instalada (ou desatualizada)
+Where the compiled effects are kept; it can be deleted freely.	Onde os efeitos compilados ficam guardados; pode ser apagada à vontade.
+Where the global preset and each game's folder live.	Onde ficam o preset global e a pasta de cada jogo.
+Yes	Sim
+Your own definition, not in the known list	Definição sua, fora da lista conhecida
+available: {}	existem: {}
+compilation failed	falha ao compilar
+compute	Usa compute
+copying the layer: {}	copiando a camada: {}
+could not find the daemon command	não achei o comando do daemon
+could not find the effect {} (searched in: {})	não achei o efeito {} (procurei em: {})
+could not find {} (set LINUX_RESHADE_LAYER_LIB)	não achei {} (defina LINUX_RESHADE_LAYER_LIB)
+could not get the swapchain images	não consegui obter as imagens do swapchain
+could not open {}: {}	não consegui abrir {}: {}
+could not publish the choice: {}	não consegui publicar a escolha: {}
+could not publish the parameters: {}	não consegui publicar os parâmetros: {}
+could not publish the plan: {}	não consegui publicar o plano: {}
+could not run flatpak: {}	não consegui rodar o flatpak: {}
+could not save the depth choice: {}	não consegui gravar a escolha da profundidade: {}
+depth	Usa profundidade
+destroyed	destruído
+different aspect ratio than the screen	proporção diferente da tela
+do not know where your data lives (HOME is empty)	não sei onde ficam seus dados (HOME vazio)
+effect not compiled yet	efeito ainda não compilado
+effect not compiled yet (open a game with the daemon running, or add it again)	efeito ainda não compilado (abra um jogo com o daemon rodando, ou adicione-o de novo)
+error: {}	erro: {}
+failed	falhou
+format {}	formato {}
+fx2spv failed ({}):\n{}	o fx2spv falhou ({}):\n{}
+game image	Usa a imagem do jogo
+image files	Usa imagens de arquivo
+invalid definition: {}={} (the name must be an identifier)	definição inválida: {}={} (o nome precisa ser um identificador)
+invalid effect name: {}	nome de efeito inválido: {}
+invalid game id: {}	id de jogo inválido: {}
+invalid preset name: {}	nome de preset inválido: {}
+invalid value: {}	valor inválido: {}
+linux-reshade {}\nReShade-compatible Vulkan layer for Linux.\n\nData folder: {}\nconfig.ini: {}\nPresets: {}\nCompiled effects cache: {}\nScreenshots: {}\nShared state (memory): {}\n\nReShade options and what is missing: docs/reshade-opcoes.md	linux-reshade {}\nCamada Vulkan compatível com o ReShade, para Linux.\n\nPasta de dados: {}\nconfig.ini: {}\nPresets: {}\nCache dos efeitos compilados: {}\nCapturas de tela: {}\nEstado compartilhado (memória): {}\n\nOpções do ReShade e o que falta: docs/reshade-opcoes.md
+mipmaps	Usa mipmaps
+no data folder chosen: run 'lrctl config init'	nenhuma pasta de dados escolhida: rode 'lrctl config init'
+no data folder: run `lrctl config init`	sem pasta de dados: rode `lrctl config init`
+no draws	sem desenhos
+no effect chosen	nenhum efeito escolhido
+no effect compiler	sem compilador de efeitos
+no effect compiler: {}	sem compilador de efeitos: {}
+no executable folder	sem pasta do executável
+no folder	sem pasta
+no measurement	sem medição
+pick a game first	escolha um jogo primeiro
+reversed	invertida
+sRGB	Usa sRGB
+skipped in the game: {}	pulada no jogo: {}
+technique {} has no file (expected Name@File.fx)	técnica {} sem arquivo (esperava Nome@Arquivo.fx)
+the choice applies now, but it could not be saved to game.ini: {}	a escolha vale agora, mas não consegui gravá-la no game.ini: {}
+the compiled bundle has no readable manifest	o bundle compilado não tem um manifesto legível
+the effect does not declare this technique	o efeito não declara esta técnica
+the game has no preset	o jogo não tem preset
+the game is not open with the layer	o jogo não está aberto com a layer
+the operation failed	a operação falhou
+the preset does not know this effect	o preset não conhece este efeito
+the preset does not know this technique	o preset não conhece esta técnica
+the runtime {} has no VulkanLayer extension point	o runtime {} não tem o ponto de extensão VulkanLayer
+the swapchain does not accept the extra usage the effect needs (COLOR_ATTACHMENT | TRANSFER_SRC | TRANSFER_DST)	o swapchain não aceita o uso extra que o efeito precisa (COLOR_ATTACHMENT | TRANSFER_SRC | TRANSFER_DST)
+the uniform does not fit in the buffer	o uniform não cabe no buffer
+there is no parameter {}	não existe o parâmetro {}
+this effect has no parameters	este efeito não tem parâmetros
+unknown orientation	orientação desconhecida
+uses storage images (compute), not supported yet	usa imagens de armazenamento (compute), ainda não suportadas
+value	valor
+{} already exists	{} já existe
+{} compiled effects, {} analyses, {} MB	{} efeitos compilados, {} análises, {} MB
+{} does not exist	{} não existe
+{} effects compiled in {} s (average {} ms)\n\n	{} efeitos compilados em {} s (média {} ms)\n\n
+{} has no parameter {} (available: {})	{} não tem o parâmetro {} (existem: {})
+{} is filled in by the runtime (source = {}); it is not a control	{} é preenchido pelo runtime (source = {}); não é um controle
+{} is neither a scalar nor a vector	{} não é um escalar nem um vetor
+{} is not a number	{} não é um número
+{} is not a valid effect name	{} não é um nome de efeito válido
+{} is not a valid effect name (letters, digits, _ - .)	{} não é um nome de efeito válido (letras, números, _ - .)
+{} is outside the range suggested by the effect [{} .. {}]	{} está fora da faixa sugerida pelo efeito [{} .. {}]
+{} items deleted.	{} itens apagados.
+{}: invalid definition {}={}; ignored	{}: definição {}={} inválida; ignorada
+{}: invalid effect name	{}: nome de efeito inválido
+{}: the effect does not declare this technique	{}: o efeito não declara esta técnica
+{}: the effect has no techniques	{}: o efeito não tem técnicas
+{}: the game has no presets of its own	{}: o jogo não tem presets próprios
+{}: the preset (ReShade format) does not store this key; avoid Super and special keys	{}: o preset (formato do ReShade) não guarda essa tecla; evite Super e teclas especiais
+{}: there is no preset (neither its own nor {}/{}); create one with 'lrctl preset new <name> --game {}'	{}: não há preset (nem o dele, nem {}/{}); crie um com 'lrctl preset new <nome> --game {}'
+{}: {} does not fit in the buffer	{}: {} não cabe no buffer
+{}: {}={} is not a number	{}: {}={} não é número
+{}x{} {} · {} draws, {} passes	{}x{} {} · {} desenhos, {} passes
+● applied in the game	● aplicada no jogo
+＋ Add Flatpak game…	＋ Adicionar jogo Flatpak…

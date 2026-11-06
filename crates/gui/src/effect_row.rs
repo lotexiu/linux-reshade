@@ -11,6 +11,7 @@ use preset::TechId;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
+use control_core::i18n::{fmt, tr};
 
 /// O que uma linha pode pedir à janela e o que precisa saber dela.
 pub struct RowCtx {
@@ -67,8 +68,8 @@ impl EffectRow {
     /// O texto e a cor do que a layer fez com uma técnica no jogo aberto.
     fn runtime_label(state: &ipc::TechniqueState) -> gtk::Label {
         let (text, class) = match state {
-            ipc::TechniqueState::Applied => ("● aplicada no jogo".to_string(), "success"),
-            ipc::TechniqueState::Skipped(why) => (format!("pulada no jogo: {why}"), "error"),
+            ipc::TechniqueState::Applied => (tr("● applied in the game").to_string(), "success"),
+            ipc::TechniqueState::Skipped(why) => (fmt("skipped in the game: {}", &[&control_core::i18n::tr_dyn(why)]), "error"),
         };
         let l = gtk::Label::new(Some(&text));
         l.set_halign(gtk::Align::Start);
@@ -129,17 +130,17 @@ impl EffectRow {
         let applied = g.techniques.iter().filter(|t| matches!(t.runtime, Some(ipc::TechniqueState::Applied))).count();
         let problem = g.techniques.iter().find_map(|t| t.problem.clone());
         let (class, tip) = match (&skipped, &problem, applied > 0) {
-            (Some(_), _, _) => ("error", "Pulada no jogo"),
-            (None, Some(_), _) => ("warning", "Tem um aviso"),
-            (None, None, true) => ("success", "Aplicada no jogo"),
-            _ => ("dim-label", "Não aplicada agora"),
+            (Some(_), _, _) => ("error", tr("Skipped in the game")),
+            (None, Some(_), _) => ("warning", tr("Has a warning")),
+            (None, None, true) => ("success", tr("Applied in the game")),
+            _ => ("dim-label", tr("Not applied right now")),
         };
         for c in ["error", "warning", "success", "dim-label"] {
             dot.remove_css_class(c);
         }
         dot.add_css_class(class);
         dot.set_tooltip_text(Some(tip));
-        let text = skipped.as_ref().map(|w| format!("Pulada no jogo: {w}")).or(problem);
+        let text = skipped.as_ref().map(|w| fmt("Skipped in the game: {}", &[&control_core::i18n::tr_dyn(w)])).or(problem);
         // O texto atual do aviso fica no nome do espaço (`widget_name`): só refaz o ícone quando ele muda.
         let shown = text.clone().unwrap_or_default();
         if slot.widget_name() == shown {
@@ -155,7 +156,7 @@ impl EffectRow {
             button.add_css_class("flat");
             button.add_css_class(if skipped.is_some() { "error" } else { "warning" });
             button.set_valign(gtk::Align::Center);
-            button.set_tooltip_text(Some("Ver o aviso"));
+            button.set_tooltip_text(Some(tr("Show the warning")));
             let label = gtk::Label::new(Some(&text));
             label.set_wrap(true);
             label.set_max_width_chars(48);
@@ -189,7 +190,7 @@ impl EffectRow {
         check.set_active(g.any_enabled());
         check.set_inconsistent(g.any_enabled() && !g.all_enabled());
         check.set_valign(gtk::Align::Center);
-        check.set_tooltip_text(Some("Ligar ou desligar o efeito"));
+        check.set_tooltip_text(Some(tr("Turn the effect on or off")));
         check.connect_toggled({
             let (ctx, file) = (ctx.clone(), file.clone());
             move |c| {
@@ -228,7 +229,7 @@ impl EffectRow {
             b.set_valign(gtk::Align::Center);
             b
         };
-        let up = icon_button("go-up-symbolic", "Rodar antes");
+        let up = icon_button("go-up-symbolic", tr("Run earlier"));
         up.set_sensitive(index > 0);
         up.connect_clicked({
             let (ctx, file) = (ctx.clone(), file.clone());
@@ -237,7 +238,7 @@ impl EffectRow {
                 (ctx.act)(Box::new(move |h| h.move_effect(&file, -1)));
             }
         });
-        let down = icon_button("go-down-symbolic", "Rodar depois");
+        let down = icon_button("go-down-symbolic", tr("Run later"));
         down.set_sensitive(index < last);
         down.connect_clicked({
             let (ctx, file) = (ctx.clone(), file.clone());
@@ -246,7 +247,7 @@ impl EffectRow {
                 (ctx.act)(Box::new(move |h| h.move_effect(&file, 1)));
             }
         });
-        let remove = icon_button("user-trash-symbolic", "Tirar o efeito do preset (apaga as configurações dele)");
+        let remove = icon_button("user-trash-symbolic", tr("Remove the effect from the preset (deletes its settings)"));
         remove.connect_clicked({
             let (ctx, file) = (ctx.clone(), file.clone());
             move |_| {
@@ -288,7 +289,7 @@ impl EffectRow {
             panel.set_margin_top(6);
             if multi {
                 let list = gtk::Box::new(gtk::Orientation::Vertical, 4);
-                let heading = gtk::Label::new(Some("Técnicas"));
+                let heading = gtk::Label::new(Some(tr("Techniques")));
                 heading.set_halign(gtk::Align::Start);
                 heading.add_css_class("dim-label");
                 heading.add_css_class("caption");
@@ -298,7 +299,7 @@ impl EffectRow {
                     let sub = gtk::CheckButton::with_label(&t.label);
                     sub_checks.push((t.id.clone(), sub.clone()));
                     sub.set_active(t.enabled);
-                    sub.set_tooltip_text(Some("Ligar ou desligar só esta técnica"));
+                    sub.set_tooltip_text(Some(tr("Turn only this technique on or off")));
                     sub.connect_toggled({
                         let (ctx, id) = (ctx.clone(), t.id.clone());
                         move |c| {
@@ -319,18 +320,18 @@ impl EffectRow {
             // O atalho que liga e desliga cada técnica (vai no `Key<técnica>` do preset, como no ReShade).
             for t in &g.techniques {
                 let line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-                let caption = gtk::Label::new(Some(&if multi { format!("Atalho de {}", t.label) } else { "Atalho para ligar/desligar".to_string() }));
+                let caption = gtk::Label::new(Some(&if multi { fmt("Shortcut for {}", &[&t.label]) } else { tr("Shortcut to turn on/off").to_string() }));
                 caption.set_xalign(0.0);
                 caption.set_hexpand(true);
-                let button = gtk::Button::with_label(&if t.key.is_empty() { "Sem atalho".to_string() } else { shortcuts::trigger::display(&t.key) });
-                button.set_tooltip_text(Some("Tecla global que liga e desliga este efeito (o daemon a registra; vale com o jogo em foco)"));
+                let button = gtk::Button::with_label(&if t.key.is_empty() { tr("No shortcut").to_string() } else { shortcuts::trigger::display(&t.key) });
+                button.set_tooltip_text(Some(tr("Global key that turns this effect on and off (the daemon registers it; works with the game in focus)")));
                 button.connect_clicked({
                     let (ctx, id, title) = (ctx.clone(), t.id.clone(), t.label.clone());
                     move |button| {
                         let window = button.root().and_downcast::<gtk::Window>();
                         let Some(window) = window else { return };
                         let (ctx, id) = (ctx.clone(), id.clone());
-                        crate::shortcuts_dialog::capture_key(&window, &format!("Atalho de {title}"), move |text| {
+                        crate::shortcuts_dialog::capture_key(&window, &fmt("Shortcut for {}", &[&title]), move |text| {
                             let id = id.clone();
                             (ctx.act)(Box::new(move |h| h.set_technique_key(&id, &text)));
                         });
@@ -341,7 +342,7 @@ impl EffectRow {
                 panel.append(&line);
             }
             // Definições de pré-processador só deste efeito (mudar recompila o efeito).
-            let macros = MacroEditor::new("Definições do efeito…", "Definições de pré-processador só deste efeito; valem mais que as do preset. Mudar recompila o efeito.");
+            let macros = MacroEditor::new(tr("Effect definitions…"), tr("Preprocessor definitions for this effect only; they take precedence over the preset's. Changing them recompiles the effect."));
             macros.set_text(&g.macros);
             macros.button.set_halign(gtk::Align::Start);
             macros.connect_changed({
@@ -361,7 +362,7 @@ impl EffectRow {
             panel.append(&macros.button);
             if let Some(view) = &controls {
                 panel.append(&view.borrow().root);
-                let reset = gtk::Button::with_label("Restaurar os padrões do efeito");
+                let reset = gtk::Button::with_label(tr("Restore the effect's defaults"));
                 reset.set_halign(gtk::Align::Start);
                 reset.connect_clicked({
                     let (ctx, file) = (ctx.clone(), file.clone());
@@ -377,7 +378,7 @@ impl EffectRow {
             revealer.set_reveal_child(open);
             let toggle = gtk::ToggleButton::new();
             toggle.set_icon_name("view-more-symbolic");
-            toggle.set_tooltip_text(Some(if multi { "Técnicas e parâmetros" } else { "Parâmetros" }));
+            toggle.set_tooltip_text(Some(if multi { tr("Techniques and parameters") } else { tr("Parameters") }));
             toggle.add_css_class("flat");
             toggle.set_valign(gtk::Align::Center);
             toggle.set_active(open);

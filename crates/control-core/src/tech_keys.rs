@@ -3,6 +3,7 @@
 
 use preset::{KeyCombo, Preset, TechId};
 use std::path::{Path, PathBuf};
+use crate::i18n::tr;
 
 /// Um atalho de técnica achado num preset.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -70,7 +71,7 @@ fn path_of(presets_dir: &Path, key: &TechKey) -> Option<PathBuf> {
 
 /// Liga a técnica se estava desligada e desliga se estava ligada, e grava o preset (o vigia aplica). Devolve o novo estado.
 pub fn toggle(presets_dir: &Path, key: &TechKey) -> Result<bool, String> {
-    let path = path_of(presets_dir, key).ok_or("o jogo não tem preset")?;
+    let path = path_of(presets_dir, key).ok_or(tr("the game has no preset"))?;
     let mut preset = Preset::load(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     let on = !preset.is_enabled(&key.technique);
     preset.set_enabled(&key.technique, on);

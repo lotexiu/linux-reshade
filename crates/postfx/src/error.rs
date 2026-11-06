@@ -20,9 +20,9 @@ impl From<vk::Result> for Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::Vulkan(r) => write!(f, "falha do Vulkan (código {})", r.as_raw()),
-            Error::Unsupported(what) => write!(f, "não suportado: {what}"),
-            Error::Invalid(why) => write!(f, "inválido: {why}"),
+            Error::Vulkan(r) => write!(f, "Vulkan failure (code {})", r.as_raw()),
+            Error::Unsupported(what) => write!(f, "not supported: {what}"),
+            Error::Invalid(why) => write!(f, "invalid: {why}"),
         }
     }
 }

@@ -118,8 +118,8 @@ impl Chain {
                 Err(e) => {
                     unsafe { chain.destroy(device) };
                     return Err(match e {
-                        Error::Unsupported(why) => Error::Unsupported(format!("etapa {n}: {why}")),
-                        Error::Invalid(why) => Error::Invalid(format!("etapa {n}: {why}")),
+                        Error::Unsupported(why) => Error::Unsupported(format!("step {n}: {why}")),
+                        Error::Invalid(why) => Error::Invalid(format!("step {n}: {why}")),
                         other => other,
                     });
                 }
