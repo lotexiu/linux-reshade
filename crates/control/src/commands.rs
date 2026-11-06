@@ -147,6 +147,7 @@ pub fn run(command: Command, state: &ipc::Writer) -> ExitCode {
             println!("as capturas vão para {}", config.screenshot_dir.display());
             ExitCode::SUCCESS
         }
+        Command::Flatpak(action) => flatpak(action),
         Command::Stats(on) => match ipc::set_stats_on(on) {
             Ok(()) => {
                 println!("medição de desempenho {}", if on { "ligada: veja com 'lrctl layers' (ou na aba Desempenho do painel)" } else { "desligada" });
@@ -408,4 +409,37 @@ fn depth_pick(pick: DepthPick, layer: Option<String>) -> ExitCode {
         }
     }
     ExitCode::SUCCESS
+}
+
+/// `lrctl flatpak ...`: o mesmo que a página "Jogos Flatpak" do painel faz.
+fn flatpak(action: cli::FlatpakAction) -> ExitCode {
+    use control_core::flatpak::{self, State};
+    if !flatpak::available() {
+        return fail("o comando 'flatpak' não está instalado");
+    }
+    let result = match action {
+        cli::FlatpakAction::List => flatpak::installed_apps().map(|apps| {
+            println!("configuração global: {}", if flatpak::global_enabled() { "ligada (todos os apps)" } else { "desligada" });
+            for app in apps {
+                let state = match flatpak::state(&app.id) {
+                    State::Off => "desligado",
+                    State::On => "ligado",
+                    State::Global => "ligado (global)",
+                    State::DisabledHere => "desligado só aqui (LINUX_RESHADE=0)",
+                };
+                println!("{:<44} {:<28} {state}", app.id, app.name);
+            }
+        }),
+        cli::FlatpakAction::Set { app, on: true } => match flatpak::installed_apps().and_then(|apps| apps.into_iter().find(|a| a.id == app).ok_or(format!("{app}: não é um app Flatpak instalado"))) {
+            Ok(found) => flatpak::enable(&found).map(|()| println!("ligado em {app}")),
+            Err(e) => Err(e),
+        },
+        cli::FlatpakAction::Set { app, on: false } => flatpak::disable(&app).map(|()| println!("desfeito em {app}")),
+        cli::FlatpakAction::Global(true) => flatpak::enable_global().map(|()| println!("ligado para todos os apps Flatpak")),
+        cli::FlatpakAction::Global(false) => flatpak::disable_global().map(|()| println!("desfeito para todos os apps Flatpak")),
+    };
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => fail(e),
+    }
 }

@@ -16,6 +16,7 @@
 pub mod action;
 pub mod analysis;
 pub mod compiler;
+pub mod flatpak;
 pub mod game_plan;
 pub mod games;
 pub mod layers;

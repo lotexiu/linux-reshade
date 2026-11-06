@@ -17,6 +17,10 @@ uso: lrctl <comando> [opções]
   effects                         lista os efeitos que podem ser escolhidos por nome
   layers                          mostra os jogos com a layer ativa: resolução, formato, estado
   watch                           só compila, sem atalho global (o daemon já faz isso)
+  flatpak [list]                  lista os apps Flatpak e se o linux-reshade está ligado em cada um
+  flatpak enable|disable <app-id> liga/desfaz a configuração de um app Flatpak (extensão da layer e permissões)
+  flatpak global on|off           liga/desfaz para TODOS os apps Flatpak (um app se exclui com LINUX_RESHADE=0)
+
   stats on|off                    liga/desliga a medição de desempenho da layer (aparece em 'layers' e na aba Desempenho do painel)
   screenshot                      captura a tela de cada jogo com a layer (com e sem efeitos); o daemon/watch grava os PNG
 
@@ -73,6 +77,8 @@ pub enum Command {
     /// Liga ou desliga a medição de desempenho da layer (aparece em `layers`).
     Stats(bool),
     Layers,
+    /// Liga o linux-reshade a jogos Flatpak (ver `control_core::flatpak`).
+    Flatpak(FlatpakAction),
     Watch,
     Effects,
     /// Mostra a configuração de pastas (`init: false`) ou prepara uma pasta de dados (`dir`, ou a padrão).
@@ -92,6 +98,16 @@ pub enum Command {
     DepthPick { pick: DepthPick, layer: Option<String> },
     /// Edita um preset: o que vale para `game`, ou o arquivo `file`.
     Preset { action: PresetAction, game: Option<String>, file: Option<PathBuf> },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum FlatpakAction {
+    /// Lista os apps Flatpak e o estado de cada um.
+    List,
+    /// Liga (`true`) ou desfaz (`false`) a configuração de um app.
+    Set { app: String, on: bool },
+    /// Liga (`true`) ou desfaz (`false`) a configuração global (todos os apps).
+    Global(bool),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -218,6 +234,14 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "daemon" => no_args(Command::Daemon),
         "keys" => no_args(Command::Keys),
         "screenshot" => no_args(Command::Screenshot),
+        "flatpak" => match tail {
+            [] => Ok(Command::Flatpak(FlatpakAction::List)),
+            [x] if x == "list" => Ok(Command::Flatpak(FlatpakAction::List)),
+            [x, app] if x == "enable" => Ok(Command::Flatpak(FlatpakAction::Set { app: app.clone(), on: true })),
+            [x, app] if x == "disable" => Ok(Command::Flatpak(FlatpakAction::Set { app: app.clone(), on: false })),
+            [x, y] if x == "global" && (y == "on" || y == "off") => Ok(Command::Flatpak(FlatpakAction::Global(y == "on"))),
+            _ => Err("uso: lrctl flatpak [list] | enable <app-id> | disable <app-id> | global on|off".to_string()),
+        },
         "stats" => match tail {
             [x] if x == "on" => Ok(Command::Stats(true)),
             [x] if x == "off" => Ok(Command::Stats(false)),
