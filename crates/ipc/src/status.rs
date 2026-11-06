@@ -76,7 +76,10 @@ pub struct DepthStatus {
     pub reversed: Option<bool>,
     /// Posição do último passe dentro do quadro.
     pub last_pass: u32,
+    /// A candidata em uso pelos efeitos (a da pessoa, a que a histerese mantém ou a automática).
     pub chosen: bool,
+    /// A que a regra automática escolheria sozinha (pode não ser a em uso: um pedido da pessoa manda).
+    pub automatic: bool,
     /// Por que não serve (MSAA, proporção...); `None` se serve.
     pub unusable: Option<String>,
     /// A imagem original pode ser amostrada (uso `SAMPLED`).
@@ -163,7 +166,7 @@ impl LayerStatus {
                     None => "?",
                 };
                 text.push_str(&format!(
-                    "depth={}\t{}x{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+                    "depth={}\t{}x{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
                     if d.chosen { "*" } else { "-" },
                     d.width,
                     d.height,
@@ -179,6 +182,7 @@ impl LayerStatus {
                     one_line(d.unusable.as_deref().unwrap_or(""), 60),
                     if d.sampled { "sampled" } else { "-" },
                     d.layout,
+                    if d.automatic { "auto" } else { "-" },
                 ));
             }
             if let Some(p) = &self.perf {
@@ -287,6 +291,7 @@ fn parse_depth(value: &str) -> Option<DepthStatus> {
         unusable: Some(f[11].to_string()).filter(|u| !u.is_empty()),
         sampled: f.get(12).is_some_and(|v| *v == "sampled"),
         layout: f.get(13).and_then(|v| v.parse().ok()).unwrap_or(0),
+        automatic: f.get(14).is_some_and(|v| *v == "auto"),
     })
 }
 
@@ -484,8 +489,8 @@ mod tests {
     fn depth_candidates_roundtrip() {
         let status = LayerStatus { perf: None,
             depth: vec![
-                DepthStatus { width: 1920, height: 1080, format: 126, samples: 1, draws: 300, vertices: 500_000, passes: 2, load: "clear".into(), store: "store".into(), reversed: Some(true), last_pass: 3, chosen: true, unusable: None, sampled: true, layout: 1000 },
-                DepthStatus { width: 2048, height: 2048, format: 126, samples: 4, draws: 10, vertices: 900, passes: 1, load: "load".into(), store: "dont_care".into(), reversed: None, last_pass: 0, chosen: false, unusable: Some("MSAA (precisa de resolve)".into()), sampled: false, layout: 0 },
+                DepthStatus { width: 1920, height: 1080, format: 126, samples: 1, draws: 300, vertices: 500_000, passes: 2, load: "clear".into(), store: "store".into(), reversed: Some(true), last_pass: 3, chosen: true, automatic: true, unusable: None, sampled: true, layout: 1000 },
+                DepthStatus { width: 2048, height: 2048, format: 126, samples: 4, draws: 10, vertices: 900, passes: 1, load: "load".into(), store: "dont_care".into(), reversed: None, last_pass: 0, chosen: false, automatic: false, unusable: Some("MSAA (precisa de resolve)".into()), sampled: false, layout: 0 },
             ],
             ..LayerStatus::default()
         };

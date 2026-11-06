@@ -64,7 +64,7 @@ pub fn choices(layer: &LiveLayer) -> Vec<DepthChoice> {
             DepthChoice {
                 number: i as u32 + 1,
                 label: format!("{}{orientation}{sample}", fmt("{}x{} {} · {} draws, {} passes", &[&d.width, &d.height, &depth_format_name(d.format), &d.draws, &d.passes])),
-                automatic: d.chosen,
+                automatic: d.automatic,
                 unusable: d.unusable.as_deref().map(control_core::i18n::tr_dyn),
             }
         })
@@ -81,7 +81,7 @@ mod tests {
     }
 
     fn candidate(sampled: bool, layout: i32) -> DepthStatus {
-        DepthStatus { width: 1920, height: 1080, format: 130, samples: 1, draws: 10, vertices: 0, passes: 3, load: "clear".into(), store: "store".into(), reversed: Some(true), last_pass: 3, chosen: true, unusable: None, sampled, layout }
+        DepthStatus { width: 1920, height: 1080, format: 130, samples: 1, draws: 10, vertices: 0, passes: 3, load: "clear".into(), store: "store".into(), reversed: Some(true), last_pass: 3, chosen: true, automatic: true, unusable: None, sampled, layout }
     }
 
     #[test]
@@ -95,6 +95,17 @@ mod tests {
         assert_eq!((list[1].number, list[1].automatic), (2, false));
         assert!(list[0].label.contains("1920x1080") && list[1].label.contains("reopened"), "{list:?}");
         assert_eq!(list[1].unusable.as_deref(), Some("different aspect ratio than the screen"));
+    }
+
+    #[test]
+    fn the_automatic_mark_stays_on_what_the_heuristic_picked_when_the_person_chose_another() {
+        // A pessoa escolheu a 2ª (em uso: `chosen`); a regra automática continua sendo a 1ª.
+        let mut first = candidate(true, 3);
+        first.chosen = false;
+        let mut second = candidate(true, 3);
+        second.automatic = false;
+        let list = choices(&layer(vec![first, second]));
+        assert_eq!((list[0].automatic, list[1].automatic), (true, false));
     }
 
     #[test]

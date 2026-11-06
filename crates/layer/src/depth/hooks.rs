@@ -1080,7 +1080,23 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
                 *state = (c.image, 0, 0, 0);
             }
             let best = super::observe::scene_clear(&clear_events.iter().map(|e| (e.draws_before, e.splittable)).collect::<Vec<_>>()).unwrap_or(0);
-            if best == 0 {
+            if state.1 == 0 {
+                // Ainda sem escolha: só adota uma limpeza que aparece (a mesma) em vários quadros seguidos. Uma que aparece só de vez em
+                // quando (a câmera, uma tela) faria a profundidade piscar entre a foto e a imagem ao vivo.
+                if best != 0 && state.2 == best {
+                    state.3 += 1;
+                } else if best != 0 {
+                    state.2 = best;
+                    state.3 = 1;
+                } else {
+                    state.2 = 0;
+                    state.3 = 0;
+                }
+                if state.3 >= AUTO_CLEAR_SWITCH_FRAMES {
+                    crate::log::log!("profundidade: limpeza automática = {best} (de {clear_count}; desenhos antes de cada: {:?})", clear_events.iter().map(|e| e.draws_before).collect::<Vec<_>>());
+                    *state = (c.image, best, best, 0);
+                }
+            } else if best == 0 {
                 // Sem limpezas neste quadro: só esquece a escolha depois de muito tempo.
                 state.3 += 1;
                 // A limpeza escolhida nem existe mais neste jogo (o quadro tem menos limpezas que o número guardado): a foto não é
@@ -1089,9 +1105,6 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
                 if state.3 >= if missing { AUTO_CLEAR_MISSING_FRAMES } else { AUTO_SCENE_FORGET_FRAMES } {
                     *state = (c.image, 0, 0, 0);
                 }
-            } else if state.1 == 0 {
-                crate::log::log!("profundidade: limpeza automática = {best} (de {clear_count}; desenhos antes de cada: {:?})", clear_events.iter().map(|e| e.draws_before).collect::<Vec<_>>());
-                *state = (c.image, best, best, 0);
             } else if best == state.1 {
                 state.2 = best;
                 state.3 = 0;
@@ -1266,6 +1279,7 @@ fn to_status(c: &super::observe::Candidate) -> ipc::DepthStatus {
         reversed: c.reversed,
         last_pass: c.last_pass,
         chosen: c.chosen,
+        automatic: c.automatic,
         unusable: c.unusable.map(String::from),
         sampled: c.sampled,
         layout: c.layout,

@@ -93,7 +93,10 @@ pub struct Candidate {
     pub reversed: Option<bool>,
     /// Posição do último passe dentro do quadro (onde uma cópia deveria acontecer).
     pub last_pass: u32,
+    /// Em uso pelos efeitos (um pedido da pessoa e a histerese podem trocar a que a heurística escolheu).
     pub chosen: bool,
+    /// A que a heurística escolheu, antes de pedido e histerese.
+    pub automatic: bool,
     /// Por que não serve, se não serve (MSAA, proporção...). Vazio: serve.
     pub unusable: Option<&'static str>,
     /// Dá para amostrar a imagem original (uso `SAMPLED`)? Sem isso só uma cópia serviria.
@@ -189,6 +192,7 @@ impl FrameStats {
                         reversed,
                         last_pass: a.last_pass,
                         chosen: false,
+                        automatic: false,
                         unusable,
                         sampled: info.sampled,
                         layout: layouts.get(image).copied().unwrap_or(0),
@@ -213,6 +217,7 @@ impl FrameStats {
         }
         if let Some(b) = best {
             out[b].1.chosen = true;
+            out[b].1.automatic = true;
         }
         out.into_iter().map(|(_, c)| c).collect()
     }
