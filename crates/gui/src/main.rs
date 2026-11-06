@@ -149,6 +149,14 @@ fn main() -> glib::ExitCode {
             apply_dark_theme();
             // Analisa os efeitos em segundo plano (compila cada um uma vez): a lista de adicionar mostra os incompatíveis.
             let _ = panel::start_analysis();
+            // Quem abre o painel não precisa abrir um terminal: no AppImage a camada do Vulkan é instalada para o usuário (a biblioteca vai
+            // para uma pasta fixa, pois o AppImage monta noutra a cada execução) e o daemon é iniciado se não há um rodando.
+            if !options.is_test_run() {
+                if std::env::var_os("APPIMAGE").is_some() && !control_core::install::layer_installed() {
+                    let _ = control_core::install::install_layer();
+                }
+                control_core::install::start_daemon_if_needed();
+            }
             let home = panel::Home::new(Compiler::from_env(), config::Config::load().presets_dir, state);
             let ui = window::Ui::new(app, home);
             ui.window.present();

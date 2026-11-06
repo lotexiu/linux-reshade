@@ -647,6 +647,93 @@ fn flatpak_page() -> gtk::Box {
     page
 }
 
+/// A aba Sistema: a camada do Vulkan (jogos que não são Flatpak), o daemon e o início dele com a sessão. É o que, antes, se fazia por
+/// comandos no terminal.
+fn system_page() -> gtk::Box {
+    use control_core::install;
+    let page = page_box();
+    page.append(&hint("Para jogos que não são Flatpak o linux-reshade precisa de dois itens: a camada do Vulkan instalada para o seu usuário e o daemon rodando (ele compila os efeitos dos jogos abertos e registra os atalhos). Depois de instalar a camada, ligue-a em um jogo com LINUX_RESHADE=1 nas opções de lançamento."));
+
+    let layer_status = gtk::Label::new(None);
+    layer_status.set_xalign(0.0);
+    layer_status.set_wrap(true);
+    layer_status.set_selectable(true);
+    let layer_button = gtk::Button::with_label("Instalar ou atualizar a camada");
+    layer_button.set_halign(gtk::Align::Start);
+    let show_layer = {
+        let layer_status = layer_status.clone();
+        Rc::new(move || {
+            layer_status.set_text(&if install::layer_installed() {
+                format!("Camada do Vulkan: instalada e atual\n{}", install::manifest_path().display())
+            } else {
+                "Camada do Vulkan: não instalada (ou desatualizada)".to_string()
+            });
+        })
+    };
+    show_layer();
+    layer_button.connect_clicked({
+        let (layer_status, show_layer) = (layer_status.clone(), show_layer.clone());
+        move |_| match install::install_layer() {
+            Ok(_) => show_layer(),
+            Err(why) => layer_status.set_text(&format!("Não consegui instalar: {why}")),
+        }
+    });
+
+    let daemon_status = gtk::Label::new(None);
+    daemon_status.set_xalign(0.0);
+    let daemon_button = gtk::Button::with_label("Iniciar o daemon agora");
+    daemon_button.set_halign(gtk::Align::Start);
+    let show_daemon = {
+        let (daemon_status, daemon_button) = (daemon_status.clone(), daemon_button.clone());
+        Rc::new(move || {
+            let running = ipc::daemon_lock::is_running();
+            daemon_status.set_text(if running { "Daemon: rodando" } else { "Daemon: parado" });
+            daemon_button.set_sensitive(!running);
+        })
+    };
+    show_daemon();
+    daemon_button.connect_clicked({
+        let show_daemon = show_daemon.clone();
+        move |_| {
+            install::start_daemon_if_needed();
+            // Ele leva um instante para pegar a trava.
+            let show_daemon = show_daemon.clone();
+            gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(1200), move || show_daemon());
+        }
+    });
+
+    let autostart_line = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let autostart_label = gtk::Label::new(Some("Iniciar o daemon junto com a sessão"));
+    autostart_label.set_hexpand(true);
+    autostart_label.set_xalign(0.0);
+    let autostart = gtk::Switch::new();
+    autostart.set_valign(gtk::Align::Center);
+    autostart.set_active(install::autostart_enabled());
+    let autostart_note = gtk::Label::new(None);
+    autostart_note.set_xalign(0.0);
+    autostart_note.set_wrap(true);
+    autostart.connect_active_notify({
+        let autostart_note = autostart_note.clone();
+        move |sw| match install::set_autostart(sw.is_active()) {
+            Ok(()) => autostart_note.set_text(""),
+            Err(why) => {
+                autostart_note.add_css_class("error");
+                autostart_note.set_text(&why);
+            }
+        }
+    });
+    autostart_line.append(&autostart_label);
+    autostart_line.append(&autostart);
+
+    page.append(&layer_status);
+    page.append(&layer_button);
+    page.append(&daemon_status);
+    page.append(&daemon_button);
+    page.append(&autostart_line);
+    page.append(&autostart_note);
+    page
+}
+
 fn about_page() -> gtk::Box {
     let page = page_box();
     let config = config::Config::load();
@@ -678,6 +765,7 @@ pub fn open(parent: &gtk::ApplicationWindow) -> gtk::Window {
     notebook.append_page(&folders_page(&window), Some(&gtk::Label::new(Some("Pastas"))));
     notebook.append_page(&performance_page(&window), Some(&gtk::Label::new(Some("Desempenho"))));
     notebook.append_page(&cache_page(), Some(&gtk::Label::new(Some("Cache"))));
+    notebook.append_page(&system_page(), Some(&gtk::Label::new(Some("Sistema"))));
     notebook.append_page(&flatpak_page(), Some(&gtk::Label::new(Some("Flatpak"))));
     notebook.append_page(&log_page(), Some(&gtk::Label::new(Some("Registro"))));
     notebook.append_page(&about_page(), Some(&gtk::Label::new(Some("Sobre"))));
