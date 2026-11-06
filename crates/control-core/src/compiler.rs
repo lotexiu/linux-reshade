@@ -516,6 +516,12 @@ impl Compiler {
             return Ok(Ensured::Cached(dir));
         }
         std::fs::create_dir_all(&self.cache).map_err(|e| CompileError::Io(format!("{}: {e}", self.cache.display())))?;
+        // O bundle é montado numa pasta de trabalho e só entra no lugar pronto (já otimizado, com as imagens): o compilador grava
+        // primeiro o SPIR-V que o Vulkan não perdoa, e uma layer que carregasse o bundle nessa hora (um jogo abrindo enquanto o
+        // daemon recompila) mandaria à GPU o código inválido: Xid 69 da NVIDIA, com o jogo congelado.
+        let work = self.cache.join("building").join(format!("{}.{}", dir.file_name().unwrap_or_default().to_string_lossy(), std::process::id()));
+        let _ = std::fs::remove_dir_all(&work);
+        std::fs::create_dir_all(work.parent().unwrap_or(&self.cache)).map_err(|e| CompileError::Io(format!("{}: {e}", self.cache.display())))?;
         let mut command = Command::new(&self.fx2spv);
         command.arg("--width").arg(width.to_string()).arg("--height").arg(height.to_string());
         for include in config::expand(&self.includes) {
@@ -551,23 +557,37 @@ impl Compiler {
             std::fs::write(&copy, patched).map_err(|e| CompileError::Io(format!("{}: {e}", copy.display())))?;
             copy
         };
-        command.arg("-o").arg(&dir).arg(&source);
+        command.arg("-o").arg(&work).arg(&source);
         let output = run_retrying_busy(&mut command).map_err(|e| CompileError::Io(format!("{}: {e}", self.fx2spv.display())))?;
         if !output.status.success() {
+            let _ = std::fs::remove_dir_all(&work);
             return Err(CompileError::Tool {
                 status: output.status.to_string(),
                 output: String::from_utf8_lossy(&output.stderr).into_owned(),
             });
         }
-        let _ = std::fs::write(dir.join(PATCHES_MARKER), applied.join("\n"));
+        let _ = std::fs::write(work.join(PATCHES_MARKER), applied.join("\n"));
         if let Some(tool) = optimizer() {
-            optimize_bundle(&dir, tool);
-            let _ = std::fs::write(dir.join(OPTIMIZED_MARKER), OPTIMIZE_VERSION);
+            optimize_bundle(&work, tool);
+            let _ = std::fs::write(work.join(OPTIMIZED_MARKER), OPTIMIZE_VERSION);
         }
-        if let Err(e) = self.write_images(&dir) {
+        if let Err(e) = self.write_images(&work) {
             // Um bundle sem as imagens não serve e não pode passar por "atual" na próxima olhada.
-            let _ = std::fs::remove_dir_all(&dir);
+            let _ = std::fs::remove_dir_all(&work);
             return Err(e);
+        }
+        // Publica: troca a pasta de uma vez (a antiga sai do caminho com um rename, nunca é editada no lugar).
+        let old = work.with_extension(format!("old{}", std::process::id()));
+        let had_old = dir.exists() && std::fs::rename(&dir, &old).is_ok();
+        if let Err(e) = std::fs::rename(&work, &dir) {
+            if had_old {
+                let _ = std::fs::rename(&old, &dir);
+            }
+            let _ = std::fs::remove_dir_all(&work);
+            return Err(CompileError::Io(format!("{}: {e}", dir.display())));
+        }
+        if had_old {
+            let _ = std::fs::remove_dir_all(&old);
         }
         Ok(Ensured::Compiled(dir))
     }
@@ -798,7 +818,19 @@ mod tests {
         assert!(call.starts_with("--width 800 --height 600 -I "), "{call}");
         assert!(call.contains("/inc -o "), "{call}");
         assert!(call.ends_with("/effects/Sepia.fx"), "{call}");
-        assert!(call.contains("/cache/Sepia-800x600"), "{call}");
+        assert!(call.contains("/cache/building/Sepia-800x600."), "o bundle é montado numa pasta de trabalho: {call}");
+    }
+
+    #[test]
+    fn the_bundle_only_appears_in_place_once_it_is_complete() {
+        // Quem olha o cache enquanto se compila (a layer de um jogo que abre) não pode ver o bundle pela metade.
+        let f = fake("atomic", OK_TOOL);
+        f.compiler.ensure("Sepia", 800, 600).unwrap();
+        let call = &calls(&f)[0];
+        let out = call.split(" -o ").nth(1).unwrap().split(' ').next().unwrap();
+        assert!(!out.ends_with("/cache/Sepia-800x600"), "o compilador escreveu direto no lugar final: {out}");
+        assert!(f.compiler.bundle_dir("Sepia", 800, 600).join("manifest.json").is_file());
+        assert!(!std::path::Path::new(out).exists(), "a pasta de trabalho some depois de publicar");
     }
 
     #[test]
