@@ -10,6 +10,7 @@ mod depth_picker;
 mod disclosure;
 mod games;
 mod macros;
+mod rx;
 mod settings;
 mod shortcuts_dialog;
 mod window;

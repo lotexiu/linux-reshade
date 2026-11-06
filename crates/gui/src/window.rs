@@ -51,6 +51,8 @@ pub struct Ui {
     /// A página "Adicionar efeito" e a pilha que a alterna com a lista do preset.
     add_view: Rc<AddEffectView>,
     stack: gtk::Stack,
+    /// A versão do modelo que a tela já mostra: se a leitura periódica não a mudou, não há o que redesenhar.
+    applied_version: Cell<u64>,
     games_view: RefCell<GamesView>,
     notice: gtk::Label,
     /// Verdadeiro enquanto a janela atualiza os widgets a partir do modelo.
@@ -294,6 +296,7 @@ impl Ui {
             expanded: RefCell::new(HashSet::new()),
             add_view: add_view.clone(),
             stack: stack.clone(),
+            applied_version: Cell::new(u64::MAX),
             games_view: RefCell::new(games_view),
             notice,
             updating: Cell::new(false),
@@ -436,8 +439,16 @@ impl Ui {
         // Lê o estado de tempos em tempos: jogos que abrem e fecham, o atalho global, o `lrctl`, o arquivo editado à mão.
         glib::timeout_add_local(REFRESH, move || match weak.upgrade() {
             Some(ui) => {
+                let t0 = std::time::Instant::now();
                 ui.home.borrow_mut().refresh();
-                ui.apply();
+                let t1 = std::time::Instant::now();
+                let changed = ui.home.borrow().version() != ui.applied_version.get();
+                if changed {
+                    ui.apply();
+                }
+                if std::env::var_os("LRDBG").is_some() {
+                    eprintln!("DBG tick: refresh {:?}  {} {:?}", t1 - t0, if changed { "apply" } else { "(nada mudou)" }, t1.elapsed());
+                }
                 glib::ControlFlow::Continue
             }
             None => glib::ControlFlow::Break,
@@ -506,6 +517,7 @@ impl Ui {
 
     /// Empurra o estado do modelo para os widgets.
     pub fn apply(self: &Rc<Self>) {
+        self.applied_version.set(self.home.borrow().version());
         self.updating.set(true);
         {
             let home = self.home.borrow();

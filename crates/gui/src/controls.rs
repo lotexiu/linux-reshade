@@ -240,9 +240,14 @@ fn notify_change<W>(
     collect: Box<dyn Fn() -> Vec<f64>>,
 ) -> impl Fn(&W) + 'static {
     let (name, updating, on_change) = (name.to_string(), updating.clone(), on_change.clone());
+    // Arrastar um slider emite dezenas de mudanças por segundo, e cada uma grava o preset e avisa a layer: no máximo uma a cada 80 ms,
+    // a última sempre vale (os valores são lidos na hora de rodar, não na de pedir).
+    let throttle = crate::rx::Throttle::new(80);
+    let collect: Rc<dyn Fn() -> Vec<f64>> = Rc::from(collect);
     move |_| {
         if !updating.get() {
-            on_change(&name, &collect());
+            let (name, on_change, collect) = (name.clone(), on_change.clone(), collect.clone());
+            throttle.call(move || on_change(&name, &collect()));
         }
     }
 }

@@ -223,8 +223,24 @@ pub fn pending(compiler: &Compiler) -> Vec<String> {
 }
 
 /// Quantas análises existem em `dir` (para mostrar o andamento sem ler todas).
+///
+/// Guardada pela data da pasta (um arquivo novo a muda): o painel pergunta isto de meio em meio segundo.
 pub fn count_saved(compiler: &Compiler) -> usize {
-    std::fs::read_dir(dir(compiler)).map(|e| e.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "ini")).count()).unwrap_or(0)
+    use std::sync::Mutex;
+    static CACHE: Mutex<Option<(PathBuf, Option<std::time::SystemTime>, usize)>> = Mutex::new(None);
+    let dir = dir(compiler);
+    let stamp = std::fs::metadata(&dir).and_then(|m| m.modified()).ok();
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((path, at, n)) = cache.as_ref()
+        && *path == dir
+        && *at == stamp
+        && stamp.is_some()
+    {
+        return *n;
+    }
+    let n = std::fs::read_dir(&dir).map(|e| e.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "ini")).count()).unwrap_or(0);
+    *cache = Some((dir, stamp, n));
+    n
 }
 
 

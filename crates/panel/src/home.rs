@@ -141,7 +141,25 @@ pub struct Home {
     analysis_seen: Option<usize>,
     /// Quando se procurou por última vez análises que faltavam (uma refeita no lugar da antiga não muda a contagem).
     analysis_checked: Option<std::time::Instant>,
+    /// Sobe a cada mudança do que a tela mostra: quem desenha compara com a que já desenhou e pula o trabalho se é a mesma.
+    version: u64,
+    /// Sobem quando o preset é (re)lido do disco e quando a lista de jogos abertos (as camadas) muda: com o que mais entra na tela
+    /// montada (`build_view`), formam a chave que decide se ela precisa ser refeita.
+    loaded_rev: u64,
+    layers_rev: u64,
+    infos_rev: u64,
+    view_key: Option<(u64, u64, u64, Option<String>, usize, Option<SystemTime>)>,
     snapshot: HomeSnapshot,
+}
+
+/// Troca o valor se mudou e diz se mudou (para só avisar a tela quando há o que mostrar).
+fn replace_if_changed<T: PartialEq>(slot: &mut T, new: T) -> bool {
+    if *slot == new {
+        false
+    } else {
+        *slot = new;
+        true
+    }
 }
 
 fn stamp(path: &Path) -> Option<SystemTime> {
@@ -175,7 +193,7 @@ impl Home {
     }
 
     pub fn with_layers(compiler: Result<Compiler, String>, presets_dir: Option<PathBuf>, state: ipc::Writer, layers: LayersSource) -> Self {
-        let mut home = Self { compiler, presets_dir, state, layers, game: None, loaded: None, schemas: HashMap::new(), analysis_seen: None, analysis_checked: None, snapshot: HomeSnapshot::default() };
+        let mut home = Self { compiler, presets_dir, state, layers, game: None, loaded: None, schemas: HashMap::new(), analysis_seen: None, analysis_checked: None, version: 0, loaded_rev: 0, layers_rev: 0, infos_rev: 0, view_key: None, snapshot: HomeSnapshot::default() };
         if let Err(why) = &home.compiler {
             home.snapshot.notice = Some(format!("sem compilador de efeitos: {why}"));
         } else if home.presets_dir.is_none() {
@@ -210,19 +228,26 @@ impl Home {
 
     /// Relê tudo: jogos, flag, e o preset em disco se mudou. Barato; a interface pode chamar a cada meio segundo.
     pub fn refresh(&mut self) {
-        self.snapshot.enabled = self.state.effects_enabled();
-        self.snapshot.layers = (self.layers)();
+        let mut changed = replace_if_changed(&mut self.snapshot.enabled, self.state.effects_enabled());
+        if replace_if_changed(&mut self.snapshot.layers, (self.layers)()) {
+            self.layers_rev += 1;
+            changed = true;
+        }
         let available = self.compiler.as_ref().map(|c| c.available()).unwrap_or_default();
-        self.snapshot.folders = match &self.compiler {
+        let folders: HashMap<String, String> = match &self.compiler {
             Ok(c) => {
                 let roots: Vec<PathBuf> = c.effects.iter().map(|r| r.dir.clone()).collect();
                 available.iter().map(|(n, dir)| (n.clone(), folder_of(&roots, dir))).collect()
             }
             Err(_) => HashMap::new(),
         };
-        self.snapshot.effects = available.into_iter().map(|(n, _)| n).collect();
+        changed |= replace_if_changed(&mut self.snapshot.folders, folders);
+        changed |= replace_if_changed(&mut self.snapshot.effects, available.into_iter().map(|(n, _)| n).collect());
 
-        self.refresh_analysis();
+        if self.refresh_analysis() {
+            self.infos_rev += 1;
+            changed = true;
+        }
 
         // Jogos: as pastas de presets e os abertos.
         let mut games: Vec<GameEntry> = Vec::new();
@@ -252,12 +277,32 @@ impl Home {
             games.push(GameEntry { id: chosen.clone(), open: false });
         }
         games.sort_by(|a, b| b.open.cmp(&a.open).then_with(|| a.id.to_lowercase().cmp(&b.id.to_lowercase())));
-        self.snapshot.games = games;
-        self.snapshot.game = self.game.clone();
+        changed |= replace_if_changed(&mut self.snapshot.games, games);
+        changed |= replace_if_changed(&mut self.snapshot.game, self.game.clone());
 
-        self.load_preset();
-        self.build_view();
-        self.update_depth_note();
+        changed |= self.load_preset();
+        // A tela montada (presets do jogo, técnicas, grupos, controles) só é refeita quando algo de que ela depende mudou: o preset
+        // lido de novo, os jogos abertos, as análises, o jogo escolhido ou a pasta de presets dele. Antes era refeita a cada
+        // atualização (de 0,5 em 0,5 s), inclusive o cálculo dos controles de cada efeito.
+        let game_dir_stamp = match (&self.presets_dir, &self.game) {
+            (Some(dir), Some(id)) => game::game_dir(dir, id).and_then(|d| stamp(&d)),
+            _ => None,
+        };
+        let key = (self.loaded_rev, self.layers_rev, self.infos_rev, self.game.clone(), self.schemas.len(), game_dir_stamp);
+        if self.view_key.as_ref() != Some(&key) {
+            self.build_view();
+            self.update_depth_note();
+            self.view_key = Some(key);
+            changed = true;
+        }
+        if changed {
+            self.version += 1;
+        }
+    }
+
+    /// Sobe a cada mudança do que a tela mostra (ver `refresh`): a interface pula o desenho se a versão é a que ela já desenhou.
+    pub fn version(&self) -> u64 {
+        self.version
     }
 
     fn update_depth_note(&mut self) {
@@ -277,8 +322,9 @@ impl Home {
     }
 
     /// Relê as análises dos efeitos quando o worker salvou mais alguma.
-    fn refresh_analysis(&mut self) {
-        let Ok(compiler) = &self.compiler else { return };
+    fn refresh_analysis(&mut self) -> bool {
+        let Ok(compiler) = &self.compiler else { return false };
+        let before = (self.snapshot.infos.len(), self.snapshot.effects.len());
         let saved = analysis::count_saved(compiler);
         // Só lê as análises que faltam (cada leitura é um arquivo e uma checagem do `.fx`; são mais de mil).
         let incomplete = self.snapshot.infos.len() < self.snapshot.effects.len() && self.analysis_checked.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1));
@@ -296,17 +342,22 @@ impl Home {
             self.analysis_seen = Some(saved);
         }
         self.snapshot.analysis = (self.snapshot.infos.len(), self.snapshot.effects.len());
+        before != self.snapshot.analysis
     }
 
     /// Carrega o arquivo do preset que vale agora, se mudou (ou se é outro).
-    fn load_preset(&mut self) {
+    /// Carrega o arquivo do preset que vale agora, se mudou (ou se é outro). Devolve se o que a tela mostra mudou.
+    fn load_preset(&mut self) -> bool {
         let Some((path, inherited)) = self.resolve() else {
-            self.loaded = None;
-            self.snapshot.preset = None;
-            return;
+            let had = self.loaded.take().is_some();
+            if had {
+                self.loaded_rev += 1;
+            }
+            return replace_if_changed(&mut self.snapshot.preset, None) || had;
         };
         let current = stamp(&path);
         let fresh = self.loaded.as_ref().is_some_and(|l| l.path == path && l.stamp == current);
+        let mut changed = false;
         if !fresh {
             match presets::load(&path) {
                 Ok(preset) => self.loaded = Some(Loaded { path: path.clone(), stamp: current, preset }),
@@ -315,8 +366,11 @@ impl Home {
                     self.snapshot.notice = Some(why);
                 }
             }
+            self.loaded_rev += 1;
+            changed = true;
         }
-        self.snapshot.preset = self.loaded.as_ref().map(|l| PresetInfo { name: display_name(&l.path), path: l.path.clone(), inherited });
+        let info = self.loaded.as_ref().map(|l| PresetInfo { name: display_name(&l.path), path: l.path.clone(), inherited });
+        changed | replace_if_changed(&mut self.snapshot.preset, info)
     }
 
     /// Os presets do jogo escolhido e as técnicas do que está em uso.
@@ -431,6 +485,7 @@ impl Home {
     fn done(&mut self, notice: Option<String>) {
         self.refresh();
         self.snapshot.notice = notice;
+        self.version += 1;
     }
 
     // ---- ações ----

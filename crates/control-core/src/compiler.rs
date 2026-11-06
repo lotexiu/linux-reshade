@@ -359,9 +359,30 @@ impl Compiler {
 
     /// Os nomes de efeito disponíveis (arquivos `.fx` nos diretórios configurados), sem repetição e em ordem.
     /// Cada nome vem com o diretório de onde sai, para o usuário saber qual versão será usada.
+    ///
+    /// Quem pergunta isso de meio em meio segundo (o painel) não paga a leitura de mais de mil arquivos: o resultado fica guardado
+    /// e só é refeito quando a data de alguma das pastas muda (um arquivo novo muda a da pasta onde entra).
     pub fn available(&self) -> Vec<(String, PathBuf)> {
+        use std::sync::Mutex;
+        type Cached = (Vec<config::SearchPath>, Vec<(PathBuf, Option<SystemTime>)>, Vec<(String, PathBuf)>);
+        static CACHE: Mutex<Option<Cached>> = Mutex::new(None);
+        let dirs = self.effect_dirs();
+        let stamps: Vec<(PathBuf, Option<SystemTime>)> = dirs.iter().map(|d| (d.clone(), modified(d))).collect();
+        let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((key, old, found)) = cache.as_ref()
+            && *key == self.effects
+            && *old == stamps
+        {
+            return found.clone();
+        }
+        let found = self.scan_available(&dirs);
+        *cache = Some((self.effects.clone(), stamps, found.clone()));
+        found
+    }
+
+    fn scan_available(&self, dirs: &[PathBuf]) -> Vec<(String, PathBuf)> {
         let mut found: std::collections::BTreeMap<String, PathBuf> = std::collections::BTreeMap::new();
-        for dir in &self.effect_dirs() {
+        for dir in dirs {
             let Ok(entries) = std::fs::read_dir(dir) else { continue };
             for entry in entries.flatten() {
                 let path = entry.path();
