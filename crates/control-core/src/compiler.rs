@@ -226,7 +226,11 @@ fn optimize_bundle(dir: &Path, tool: &Path) {
                     let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let Some(file) = files.get(i) else { break };
                     let out = file.with_extension("spv.opt");
-                    let optimized = Command::new(tool).arg("-O").arg("--target-env=vulkan1.0").arg(file).arg("-o").arg(&out).output().is_ok_and(|o| o.status.success());
+                    // `--loop-unroll`: os laços marcados `[unroll]` viram sequências, e o deslocamento de `tex2D(s, uv, int2(x, y))` deixa de ser
+                    // calculado em tempo de execução: o `spirv-opt` o troca por `ConstOffset`, o único que o Vulkan 1.0 aceita em amostragem
+                    // (o gerador do ReShade emite `Offset`, que o driver pode executar de qualquer jeito: um Xid 69 da NVIDIA no
+                    // ExposureFusion do iMMERSE). `--skip-validation`: a entrada ainda é a inválida; a saída é validada abaixo.
+                    let optimized = Command::new(tool).arg("--skip-validation").arg("--loop-unroll").arg("-O").arg("--target-env=vulkan1.0").arg(file).arg("-o").arg(&out).output().is_ok_and(|o| o.status.success());
                     let valid = optimized && (!validator || Command::new("spirv-val").arg("--target-env").arg("vulkan1.0").arg(&out).output().is_ok_and(|o| o.status.success()));
                     if valid {
                         let _ = std::fs::rename(&out, file);
@@ -243,6 +247,8 @@ fn optimize_bundle(dir: &Path, tool: &Path) {
 const PATCHES_MARKER: &str = "patches";
 /// Marca o bundle cujo SPIR-V já passou pelo otimizador.
 const OPTIMIZED_MARKER: &str = "optimized";
+/// O que o marcador guarda: muda quando a otimização muda (ex.: `--loop-unroll`), e os bundles feitos pela anterior são refeitos.
+const OPTIMIZE_VERSION: &str = "2-loop-unroll";
 
 fn patches_up_to_date(dir: &Path, name: &str, source: &Path) -> bool {
     let wanted = crate::patches::applicable(base_name(name), source);
@@ -453,7 +459,7 @@ impl Compiler {
         let tool = modified(&self.fx2spv);
         match (modified(&dir.join("manifest.json")), modified(&source)) {
             (Some(compiled), Some(edited)) => {
-                compiled >= edited && tool.is_none_or(|t| compiled >= t) && images_up_to_date(&dir, compiled) && patches_up_to_date(&dir, name, &source) && (optimizer().is_none() || dir.join(OPTIMIZED_MARKER).exists())
+                compiled >= edited && tool.is_none_or(|t| compiled >= t) && images_up_to_date(&dir, compiled) && patches_up_to_date(&dir, name, &source) && (optimizer().is_none() || std::fs::read_to_string(dir.join(OPTIMIZED_MARKER)).is_ok_and(|v| v == OPTIMIZE_VERSION))
             }
             _ => false,
         }
@@ -555,7 +561,7 @@ impl Compiler {
         let _ = std::fs::write(dir.join(PATCHES_MARKER), applied.join("\n"));
         if let Some(tool) = optimizer() {
             optimize_bundle(&dir, tool);
-            let _ = std::fs::write(dir.join(OPTIMIZED_MARKER), "");
+            let _ = std::fs::write(dir.join(OPTIMIZED_MARKER), OPTIMIZE_VERSION);
         }
         if let Err(e) = self.write_images(&dir) {
             // Um bundle sem as imagens não serve e não pode passar por "atual" na próxima olhada.
