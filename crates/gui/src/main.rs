@@ -152,8 +152,11 @@ fn main() -> glib::ExitCode {
             // Quem abre o painel não precisa abrir um terminal: no AppImage a camada do Vulkan é instalada para o usuário (a biblioteca vai
             // para uma pasta fixa, pois o AppImage monta noutra a cada execução) e o daemon é iniciado se não há um rodando.
             if !options.is_test_run() {
-                if std::env::var_os("APPIMAGE").is_some() && !control_core::install::layer_installed() {
-                    let _ = control_core::install::install_layer();
+                if std::env::var_os("APPIMAGE").is_some() {
+                    let _ = control_core::install::first_run();
+                    if !control_core::install::layer_installed() {
+                        let _ = control_core::install::install_layer();
+                    }
                 }
                 control_core::install::start_daemon_if_needed();
             }

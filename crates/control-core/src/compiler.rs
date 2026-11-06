@@ -286,7 +286,7 @@ impl Compiler {
     /// lista de efeitos, usa os padrões de um clone do repositório (`target/release/lrctl` dentro dele).
     /// Variáveis próprias daqui: `LINUX_RESHADE_FX2SPV` e `LINUX_RESHADE_INCLUDES` (lista separada por `:`).
     pub fn from_config(config: &Config) -> Result<Self, String> {
-        let repo = std::env::current_exe().ok().and_then(|exe| exe.ancestors().nth(3).map(Path::to_path_buf));
+        let repo = crate::install::resource_root();
         let in_repo = |rel: &str| repo.as_ref().map(|r| r.join(rel)).filter(|p| p.exists());
 
         let fx2spv = std::env::var_os("LINUX_RESHADE_FX2SPV")

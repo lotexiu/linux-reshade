@@ -18,6 +18,58 @@ fn data_dir() -> PathBuf {
     xdg("XDG_DATA_HOME", ".local/share")
 }
 
+/// A pasta dos recursos que vêm com o programa (o `fx2spv`, os efeitos e os cabeçalhos do ReShade), com a mesma disposição do
+/// repositório: `LINUX_RESHADE_RESOURCES`; a `../share/linux-reshade` do executável (AppImage e instalações); ou o próprio repositório
+/// (`target/release/lrctl` dentro dele).
+pub fn resource_root() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("LINUX_RESHADE_RESOURCES").map(PathBuf::from).filter(|d| d.is_dir()) {
+        return Some(dir);
+    }
+    let exe = std::env::current_exe().ok()?;
+    let installed = exe.parent()?.join("../share/linux-reshade");
+    if installed.is_dir() {
+        return installed.canonicalize().ok().or(Some(installed));
+    }
+    exe.ancestors().nth(3).map(Path::to_path_buf)
+}
+
+/// Primeira execução fora do repositório: cria a pasta de dados (Shaders, Textures, Presets, config.ini) e, se os Shaders estão vazios,
+/// copia para eles os efeitos que vêm com o programa. Não faz nada se o usuário já tem uma pasta de dados configurada.
+pub fn first_run() -> Result<(), String> {
+    let env = |name: &str| std::env::var_os(name);
+    if config::Config::load().data_dir.is_some() {
+        return Ok(());
+    }
+    let dir = config::default_data_dir(&env).ok_or("não sei onde ficam seus dados (HOME vazio)")?;
+    config::init(&dir, &env).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let Some(resources) = resource_root() else { return Ok(()) };
+    let (shaders, textures) = (dir.join("Shaders"), dir.join("Textures"));
+    let empty = std::fs::read_dir(&shaders).map(|mut d| d.next().is_none()).unwrap_or(true);
+    if empty {
+        for from in ["effects", "third_party/reshade-shaders-slim/Shaders", "third_party/reshade-shaders-legacy/Shaders"] {
+            copy_tree(&resources.join(from), &shaders);
+        }
+        for from in ["third_party/reshade-shaders-slim/Textures", "third_party/reshade-shaders-legacy/Textures"] {
+            copy_tree(&resources.join(from), &textures);
+        }
+    }
+    Ok(())
+}
+
+/// Copia `from` para dentro de `to` sem sobrescrever o que já existe.
+fn copy_tree(from: &Path, to: &Path) {
+    let Ok(entries) = std::fs::read_dir(from) else { return };
+    let _ = std::fs::create_dir_all(to);
+    for entry in entries.flatten() {
+        let (path, target) = (entry.path(), to.join(entry.file_name()));
+        if path.is_dir() {
+            copy_tree(&path, &target);
+        } else if !target.exists() {
+            let _ = std::fs::copy(&path, &target);
+        }
+    }
+}
+
 /// Onde o carregador do Vulkan procura as camadas implícitas do usuário.
 pub fn manifest_path() -> PathBuf {
     data_dir().join("vulkan/implicit_layer.d").join(MANIFEST_NAME)
