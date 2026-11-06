@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# AppRun do linux-reshade: sem argumentos abre o painel; `--daemon` roda o daemon; `--lrctl <comando>` (ou qualquer comando do lrctl,
+# como `setup` e `flatpak`) roda a linha de comando.
+HERE="$(dirname "$(readlink -f "${0}")")"
+export APPDIR="${APPDIR:-$HERE}"
+export PATH="$HERE/usr/bin:$PATH"
+export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export LINUX_RESHADE_RESOURCES="$HERE/usr/share/linux-reshade"
+export LINUX_RESHADE_FX2SPV="$HERE/usr/bin/fx2spv"
+export LINUX_RESHADE_LAYER_LIB="$HERE/usr/lib/liblinux_reshade_layer.so"
+[ -x "$HERE/usr/bin/spirv-opt" ] && export LINUX_RESHADE_SPIRV_OPT="$HERE/usr/bin/spirv-opt"
+# Os ganchos do plugin do GTK (caminhos dos módulos, esquemas, ícones).
+for hook in "$HERE"/apprun-hooks/*.sh; do [ -f "$hook" ] && . "$hook"; done
+case "${1:-}" in
+  --daemon) shift; exec "$HERE/usr/bin/lrctl" daemon "$@" ;;
+  --lrctl) shift; exec "$HERE/usr/bin/lrctl" "$@" ;;
+  setup|flatpak|layers|status|on|off|toggle|effects|config|preset|use|stats|screenshot|depth|keys|watch|current|uniforms|get|set|reset|inherit) exec "$HERE/usr/bin/lrctl" "$@" ;;
+  *) exec "$HERE/usr/bin/lrpanel" "$@" ;;
+esac

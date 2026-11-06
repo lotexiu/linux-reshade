@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=linux-reshade
+GenericName=Efeitos de pós-processamento para jogos
+Comment=Camada Vulkan compatível com o ReShade, para Linux
+Exec=lrpanel
+Icon=linux-reshade
+Categories=Game;Utility;
+Terminal=false
+StartupWMClass=dev.lotexiu.LinuxReshade

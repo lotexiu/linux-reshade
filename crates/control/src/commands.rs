@@ -149,6 +149,10 @@ pub fn run(command: Command, state: &ipc::Writer) -> ExitCode {
         }
         Command::Setup(true) => match control_core::install::install_layer() {
             Ok(lib) => {
+                // A pasta de dados (com os efeitos que vêm junto) também, se ainda não há.
+                if let Err(e) = control_core::install::first_run() {
+                    eprintln!("lrctl: aviso: {e}");
+                }
                 println!("camada instalada: {}\nmanifesto: {}", lib.display(), control_core::install::manifest_path().display());
                 ExitCode::SUCCESS
             }

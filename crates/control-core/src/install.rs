@@ -37,10 +37,11 @@ pub fn resource_root() -> Option<PathBuf> {
 /// copia para eles os efeitos que vêm com o programa. Não faz nada se o usuário já tem uma pasta de dados configurada.
 pub fn first_run() -> Result<(), String> {
     let env = |name: &str| std::env::var_os(name);
-    if config::Config::load().data_dir.is_some() {
+    // A pasta de dados do usuário (a configurada, ou a padrão) já tem Shaders: nada a fazer.
+    let dir = config::Config::load().data_dir.or_else(|| config::default_data_dir(&env)).ok_or("não sei onde ficam seus dados (HOME vazio)")?;
+    if dir.join("Shaders").is_dir() {
         return Ok(());
     }
-    let dir = config::default_data_dir(&env).ok_or("não sei onde ficam seus dados (HOME vazio)")?;
     config::init(&dir, &env).map_err(|e| format!("{}: {e}", dir.display()))?;
     let Some(resources) = resource_root() else { return Ok(()) };
     let (shaders, textures) = (dir.join("Shaders"), dir.join("Textures"));
