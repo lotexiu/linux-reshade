@@ -846,6 +846,9 @@ impl Ui {
     }
 
     fn rebuild(self: &Rc<Self>, groups: &[EffectGroup]) {
+        // Refazer a lista leva a rolagem ao topo: guarda a posição e a devolve depois que o tamanho novo foi calculado.
+        let adjustment = self.scroller.vadjustment();
+        let scroll = adjustment.value();
         while let Some(child) = self.list.first_child() {
             self.list.remove(&child);
         }
@@ -858,6 +861,12 @@ impl Ui {
             self.list.append(&r.row);
         }
         *self.rows.borrow_mut() = rows;
+        if scroll > 0.0 {
+            for delay in [0u64, 40, 150] {
+                let adjustment = adjustment.clone();
+                glib::timeout_add_local_once(std::time::Duration::from_millis(delay), move || adjustment.set_value(scroll.min((adjustment.upper() - adjustment.page_size()).max(0.0))));
+            }
+        }
     }
 
     /// O texto e a cor do que a layer fez com uma técnica no jogo aberto.
@@ -911,27 +920,44 @@ impl Ui {
         names.append(&title);
         names.append(&subtitle);
 
-        // Embaixo do nome fica só um resumo do que a layer fez no jogo aberto e de problemas; as técnicas de um efeito
-        // com várias ficam dentro do painel que abre (⋮), como os parâmetros.
+        // A bolinha à esquerda do nome mostra o estado: apagada (desligado ou sem jogo), verde (aplicada no jogo), amarela (aviso) ou
+        // vermelha (pulada no jogo). O texto só aparece quando há algo a dizer, no ícone de alerta à direita (abre ao clicar).
         let skipped = g.techniques.iter().find_map(|t| match &t.runtime {
             Some(ipc::TechniqueState::Skipped(why)) => Some(why.clone()),
             _ => None,
         });
         let applied = g.techniques.iter().filter(|t| matches!(t.runtime, Some(ipc::TechniqueState::Applied))).count();
-        if let Some(why) = &skipped {
-            names.append(&Self::runtime_label(&ipc::TechniqueState::Skipped(why.clone())));
-        } else if applied > 0 {
-            names.append(&Self::runtime_label(&ipc::TechniqueState::Applied));
-        }
-        if let Some(problem) = g.techniques.iter().find_map(|t| t.problem.as_ref()) {
-            let p = gtk::Label::new(Some(problem));
-            p.set_halign(gtk::Align::Start);
-            p.set_xalign(0.0);
-            p.set_wrap(true);
-            p.add_css_class("warning");
-            p.add_css_class("caption");
-            names.append(&p);
-        }
+        let problem = g.techniques.iter().find_map(|t| t.problem.clone());
+        let (dot_class, dot_tip) = match (&skipped, &problem, applied > 0) {
+            (Some(_), _, _) => ("error", "Pulada no jogo"),
+            (None, Some(_), _) => ("warning", "Tem um aviso"),
+            (None, None, true) => ("success", "Aplicada no jogo"),
+            _ => ("dim-label", "Não aplicada agora"),
+        };
+        let dot = gtk::Label::new(Some("●"));
+        dot.add_css_class(dot_class);
+        dot.set_tooltip_text(Some(dot_tip));
+        dot.set_valign(gtk::Align::Center);
+        let alert = match skipped.as_ref().map(|w| format!("Pulada no jogo: {w}")).or(problem.clone()) {
+            Some(text) => {
+                let button = gtk::MenuButton::new();
+                button.set_icon_name("dialog-warning-symbolic");
+                button.add_css_class("flat");
+                button.add_css_class(if skipped.is_some() { "error" } else { "warning" });
+                button.set_valign(gtk::Align::Center);
+                button.set_tooltip_text(Some("Ver o aviso"));
+                let label = gtk::Label::new(Some(&text));
+                label.set_wrap(true);
+                label.set_max_width_chars(48);
+                label.set_xalign(0.0);
+                margins(&label, 8);
+                let popover = gtk::Popover::new();
+                popover.set_child(Some(&label));
+                button.set_popover(Some(&popover));
+                Some(button)
+            }
+            None => None,
+        };
 
         let icon_button = |icon: &str, tip: &str| {
             let b = gtk::Button::from_icon_name(icon);
@@ -972,7 +998,11 @@ impl Ui {
 
         let head = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         head.append(&check);
+        head.append(&dot);
         head.append(&names);
+        if let Some(alert) = &alert {
+            head.append(alert);
+        }
 
         // O painel que abre e fecha (⋮): as técnicas do efeito (se são várias) e os parâmetros dele.
         let controls = (!g.controls.is_empty()).then(|| {

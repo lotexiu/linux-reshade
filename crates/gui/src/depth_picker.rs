@@ -62,7 +62,13 @@ impl DepthPicker {
             if let Some(why) = &c.unusable {
                 text.push_str(&format!(" · não serve: {why}"));
             }
-            self.list.append(&option(&text, pick == DepthPick::Candidate(c.number), Some(&first), DepthPick::Candidate(c.number), &weak));
+            let row = option(&text, pick == DepthPick::Candidate(c.number), Some(&first), DepthPick::Candidate(c.number), &weak);
+            // Uma candidata que não serve (proporção diferente da tela, sem desenhos...) a layer ignora: não dá para escolhê-la.
+            if let Some(why) = &c.unusable {
+                row.set_sensitive(false);
+                row.set_tooltip_text(Some(&format!("A layer não usa esta imagem: {why}")));
+            }
+            self.list.append(&row);
         }
 
         // A profundidade antes de uma limpeza específica (como o ReShade): o número é estável entre quadros.
