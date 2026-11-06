@@ -88,6 +88,7 @@ mod tests {
     fn choices_follow_the_layers_list_and_mark_the_automatic_one() {
         let mut second = candidate(false, 0);
         second.chosen = false;
+        second.automatic = false;
         second.unusable = Some("different aspect ratio than the screen".into());
         let list = choices(&layer(vec![candidate(true, 3), second]));
         assert_eq!(list.len(), 2);
