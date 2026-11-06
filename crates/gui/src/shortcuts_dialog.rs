@@ -577,6 +577,76 @@ fn cache_page() -> gtk::Box {
     page
 }
 
+/// A aba Flatpak: ligar o linux-reshade em TODOS os apps Flatpak de uma vez (como a configuração global do Flatseal).
+fn flatpak_page() -> gtk::Box {
+    use control_core::flatpak;
+    let page = page_box();
+    page.append(&hint("Liga o linux-reshade em todos os apps Flatpak de uma vez, como a configuração global do Flatseal: instala a extensão da layer para cada versão de runtime em uso e libera as permissões na configuração global. Para tirar um app só, use \"Desligar neste app\" na página Jogos Flatpak, ou, no Flatseal, a variável de ambiente LINUX_RESHADE=0 nele."));
+    let line = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let label = gtk::Label::new(Some("Aplicar a todos os apps Flatpak"));
+    label.set_hexpand(true);
+    label.set_xalign(0.0);
+    let toggle = gtk::Switch::new();
+    toggle.set_valign(gtk::Align::Center);
+    line.append(&label);
+    line.append(&toggle);
+    page.append(&line);
+    let status = gtk::Label::new(None);
+    status.set_xalign(0.0);
+    status.set_wrap(true);
+    page.append(&status);
+    if !flatpak::available() {
+        toggle.set_sensitive(false);
+        status.set_text("O comando 'flatpak' não está instalado nesta máquina.");
+        return page;
+    }
+    // O estado atual, lido fora da thread da tela.
+    let guard = Rc::new(std::cell::Cell::new(true)); // enquanto o interruptor é posto pelo programa, o aviso dele não conta
+    {
+        let (toggle, guard) = (toggle.clone(), guard.clone());
+        gtk::glib::spawn_future_local(async move {
+            if let Ok(on) = gtk::gio::spawn_blocking(flatpak::global_enabled).await {
+                toggle.set_active(on);
+            }
+            guard.set(false);
+        });
+    }
+    toggle.connect_active_notify({
+        let (status, guard) = (status.clone(), guard.clone());
+        move |t| {
+            if guard.get() {
+                return;
+            }
+            let guard = guard.clone();
+            let on = t.is_active();
+            t.set_sensitive(false);
+            status.remove_css_class("error");
+            status.set_text(if on { "Instalando as extensões e ajustando as permissões…" } else { "Desfazendo…" });
+            let (t, status) = (t.clone(), status.clone());
+            gtk::glib::spawn_future_local(async move {
+                let result = gtk::gio::spawn_blocking(move || if on { flatpak::enable_global() } else { flatpak::disable_global() }).await.unwrap_or_else(|_| Err("a operação falhou".to_string()));
+                match result {
+                    Ok(()) => status.set_text(if on { "Ligado para todos os apps Flatpak (vale na próxima vez que cada um abrir)." } else { "Desfeito: nenhum app Flatpak carrega mais o linux-reshade pela configuração global." }),
+                    Err(why) => {
+                        status.add_css_class("error");
+                        status.set_text(&why);
+                    }
+                }
+                let actual = gtk::gio::spawn_blocking(flatpak::global_enabled).await.unwrap_or(false);
+                // O interruptor mostra o que ficou valendo (se falhou, volta).
+                if t.is_active() != actual {
+                    // O guarda evita que a própria correção dispare a ação de novo.
+                    guard.set(true);
+                    t.set_active(actual);
+                    guard.set(false);
+                }
+                t.set_sensitive(true);
+            });
+        }
+    });
+    page
+}
+
 fn about_page() -> gtk::Box {
     let page = page_box();
     let config = config::Config::load();
@@ -608,6 +678,7 @@ pub fn open(parent: &gtk::ApplicationWindow) -> gtk::Window {
     notebook.append_page(&folders_page(&window), Some(&gtk::Label::new(Some("Pastas"))));
     notebook.append_page(&performance_page(&window), Some(&gtk::Label::new(Some("Desempenho"))));
     notebook.append_page(&cache_page(), Some(&gtk::Label::new(Some("Cache"))));
+    notebook.append_page(&flatpak_page(), Some(&gtk::Label::new(Some("Flatpak"))));
     notebook.append_page(&log_page(), Some(&gtk::Label::new(Some("Registro"))));
     notebook.append_page(&about_page(), Some(&gtk::Label::new(Some("Sobre"))));
     window.set_child(Some(&notebook));
