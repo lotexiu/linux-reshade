@@ -3,7 +3,7 @@
 
 use preset::{KeyCombo, Preset, TechId};
 use std::path::{Path, PathBuf};
-use crate::i18n::tr;
+use i18n::tr;
 
 /// Um atalho de técnica achado num preset.
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -246,6 +246,7 @@ version = "0.0.1"
 dependencies = [
  "config",
  "fx-bundle",
+ "i18n",
  "image-file",
  "ini",
  "ipc",
@@ -446,6 +447,7 @@ dependencies = [
 name = "fx-bundle"
 version = "0.0.1"
 dependencies = [
+ "i18n",
  "serde",
  "serde_json",
 ]
@@ -731,9 +733,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
+name = "i18n"
+version = "0.0.1"
+dependencies = [
+ "config",
+ "ini",
+]
+
+[[package]]
 name = "image-file"
 version = "0.0.1"
 dependencies = [
+ "i18n",
  "jpeg-decoder",
  "png",
 ]
@@ -756,6 +767,7 @@ version = "0.0.1"
 name = "ipc"
 version = "0.0.1"
 dependencies = [
+ "i18n",
  "rustix",
 ]
 
@@ -999,6 +1011,7 @@ dependencies = [
 name = "preset"
 version = "0.0.1"
 dependencies = [
+ "i18n",
  "ini",
 ]
 
@@ -1135,11 +1148,15 @@ dependencies = [
 [[package]]
 name = "shortcuts"
 version = "0.0.1"
+dependencies = [
+ "i18n",
+]
 
 [[package]]
 name = "shortcuts-portal"
 version = "0.0.1"
 dependencies = [
+ "i18n",
  "shortcuts",
  "zbus",
 ]

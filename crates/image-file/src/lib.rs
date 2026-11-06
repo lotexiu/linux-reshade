@@ -6,6 +6,7 @@
 
 use std::fmt;
 use std::io::Cursor;
+use i18n::{fmt, tr};
 
 /// Pixels RGBA, 4 bytes por pixel, linha a linha de cima para baixo.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,8 +26,8 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::Unsupported(why) => write!(f, "formato de imagem não suportado: {why}"),
-            Error::Decode(why) => write!(f, "imagem inválida: {why}"),
+            Error::Unsupported(why) => write!(f, "{}", fmt("unsupported image format: {}", &[&why])),
+            Error::Decode(why) => write!(f, "{}", fmt("invalid image: {}", &[&why])),
         }
     }
 }
@@ -43,7 +44,7 @@ const JPEG_MAGIC: &[u8; 3] = b"\xff\xd8\xff";
 /// sobra na imagem do swapchain não significa transparência.
 pub fn encode_png(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>, Error> {
     if width == 0 || height == 0 || width > MAX_SIDE || height > MAX_SIDE || rgba.len() as u64 != u64::from(width) * u64::from(height) * 4 {
-        return Err(Error::Decode(format!("{width}x{height} com {} bytes não é uma imagem RGBA", rgba.len())));
+        return Err(Error::Decode(fmt("{}x{} with {} bytes is not an RGBA image", &[&width, &height, &rgba.len()])));
     }
     let rgb: Vec<u8> = rgba.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]).collect();
     let mut out = Vec::new();
@@ -64,8 +65,8 @@ pub fn decode(file_name: &str, bytes: &[u8]) -> Result<Rgba8, Error> {
         return decode_jpeg(file_name, bytes);
     }
     if !bytes.starts_with(PNG_MAGIC) {
-        let ext = file_name.rsplit_once('.').map_or("sem extensão", |(_, e)| e);
-        return Err(Error::Unsupported(format!("{file_name} ({ext}); só PNG e JPEG por enquanto")));
+        let ext = file_name.rsplit_once('.').map_or(tr("no extension"), |(_, e)| e);
+        return Err(Error::Unsupported(fmt("{} ({}); only PNG and JPEG for now", &[&file_name, &ext])));
     }
     let mut decoder = png::Decoder::new(Cursor::new(bytes));
     // Paleta e tons de cinza viram RGB(A), 16 bits viram 8.
@@ -84,10 +85,10 @@ pub fn decode(file_name: &str, bytes: &[u8]) -> Result<Rgba8, Error> {
         png::ColorType::Rgb => buffer.chunks_exact(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect(),
         png::ColorType::GrayscaleAlpha => buffer.chunks_exact(2).flat_map(|p| [p[0], p[0], p[0], p[1]]).collect(),
         png::ColorType::Grayscale => buffer.iter().flat_map(|&g| [g, g, g, 255]).collect(),
-        png::ColorType::Indexed => return Err(Error::Decode(format!("{file_name}: paleta não expandida"))),
+        png::ColorType::Indexed => return Err(Error::Decode(fmt("{}: palette not expanded", &[&file_name]))),
     };
     if pixels.len() != frame.width as usize * frame.height as usize * 4 {
-        return Err(Error::Decode(format!("{file_name}: tamanho dos dados não confere")));
+        return Err(Error::Decode(fmt("{}: data size does not match", &[&file_name])));
     }
     Ok(Rgba8 { width: frame.width, height: frame.height, pixels })
 }
@@ -95,7 +96,7 @@ pub fn decode(file_name: &str, bytes: &[u8]) -> Result<Rgba8, Error> {
 fn decode_jpeg(file_name: &str, bytes: &[u8]) -> Result<Rgba8, Error> {
     let mut decoder = jpeg_decoder::Decoder::new(Cursor::new(bytes));
     let pixels = decoder.decode().map_err(|e| Error::Decode(format!("{file_name}: {e}")))?;
-    let info = decoder.info().ok_or_else(|| Error::Decode(format!("{file_name}: sem cabeçalho")))?;
+    let info = decoder.info().ok_or_else(|| Error::Decode(fmt("{}: no header", &[&file_name])))?;
     let (width, height) = (u32::from(info.width), u32::from(info.height));
     if width == 0 || height == 0 || width > MAX_SIDE || height > MAX_SIDE {
         return Err(Error::Decode(format!("{file_name}: tamanho {width}x{height} fora do limite")));
@@ -103,10 +104,10 @@ fn decode_jpeg(file_name: &str, bytes: &[u8]) -> Result<Rgba8, Error> {
     let rgba: Vec<u8> = match info.pixel_format {
         jpeg_decoder::PixelFormat::RGB24 => pixels.chunks_exact(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect(),
         jpeg_decoder::PixelFormat::L8 => pixels.iter().flat_map(|&g| [g, g, g, 255]).collect(),
-        other => return Err(Error::Unsupported(format!("{file_name} (JPEG {other:?}); só RGB e tons de cinza"))),
+        other => return Err(Error::Unsupported(fmt("{} (JPEG {}); only RGB and grayscale", &[&file_name, &format!("{:?}", other)]))),
     };
     if rgba.len() != width as usize * height as usize * 4 {
-        return Err(Error::Decode(format!("{file_name}: tamanho dos dados não confere")));
+        return Err(Error::Decode(fmt("{}: data size does not match", &[&file_name])));
     }
     Ok(Rgba8 { width, height, pixels: rgba })
 }

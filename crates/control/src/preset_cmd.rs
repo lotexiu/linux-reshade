@@ -7,6 +7,7 @@ use control_core::params;
 use preset::Preset;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use control_core::i18n::{fmt, tr};
 
 fn fail(message: impl std::fmt::Display) -> ExitCode {
     eprintln!("lrctl: {message}");
@@ -17,19 +18,19 @@ fn target(game: Option<String>, file: Option<PathBuf>) -> Result<Target, String>
     match (game, file) {
         (Some(id), None) => Ok(Target::Game(id)),
         (None, Some(path)) => Ok(Target::File(path)),
-        _ => Err("diga qual preset: --game <id> (o que vale para o jogo) ou --file <arquivo.ini>".into()),
+        _ => Err(tr("say which preset: --game <id> (the one that applies to the game) or --file <file.ini>").into()),
     }
 }
 
 fn presets_dir() -> Result<PathBuf, String> {
-    config::Config::load().presets_dir.ok_or_else(|| "nenhuma pasta de dados escolhida: rode 'lrctl config init'".to_string())
+    config::Config::load().presets_dir.ok_or_else(|| tr("no data folder chosen: run 'lrctl config init'").to_string())
 }
 
 fn show(preset: &Preset, path: &Path) {
     println!("{}", path.display());
     let rows = presets::rows(preset);
     if rows.is_empty() {
-        println!("  (sem técnicas)");
+        println!("{}", tr("  (no techniques)"));
     }
     for (n, row) in rows.iter().enumerate() {
         println!("  {:>2}. [{}] {}", n + 1, if row.enabled { "x" } else { " " }, row.id);
@@ -51,18 +52,18 @@ fn run_inner(action: PresetAction, game: Option<String>, file: Option<PathBuf>) 
     // Escolher/criar o preset de um jogo não edita um arquivo existente: trata antes.
     match &action {
         PresetAction::New(name) => {
-            let id = game.ok_or("'preset new' precisa de --game <id>")?;
+            let id = game.ok_or(tr("'preset new' needs --game <id>"))?;
             let path = presets::new_for_game(&presets_dir()?, &id, name)?;
-            println!("criado e escolhido para {id}: {}", path.display());
+            println!("{}", fmt("created and chosen for {}: {}", &[&id, &path.display()]));
             return Ok(());
         }
         PresetAction::Use(name) => {
-            let id = game.ok_or("'preset use' precisa de --game <id>")?;
+            let id = game.ok_or(tr("'preset use' needs --game <id>"))?;
             let dir = presets_dir()?;
             presets::use_preset(&dir, &id, name.as_deref())?;
             match presets::describe_source(&dir, &id) {
                 Some((path, _)) => println!("{id} usa {}", path.display()),
-                None => println!("{id} não tem preset"),
+                None => println!("{}", fmt("{} has no preset", &[&id])),
             }
             return Ok(());
         }
@@ -87,14 +88,14 @@ fn run_inner(action: PresetAction, game: Option<String>, file: Option<PathBuf>) 
         PresetAction::Disable(t) => {
             let id = presets::parse_technique(&preset, &t);
             if !presets::rows(&preset).iter().any(|r| r.id.matches(&id)) {
-                return Err(format!("o preset não conhece a técnica {id}"));
+                return Err(fmt("the preset does not know the technique {}", &[&id]));
             }
             preset.set_enabled(&id, false);
         }
         PresetAction::Move(t, position) => {
             let id = presets::parse_technique(&preset, &t);
             if !preset.move_technique(&id, position - 1) {
-                return Err(format!("o preset não conhece a técnica {id}"));
+                return Err(fmt("the preset does not know the technique {}", &[&id]));
             }
         }
         PresetAction::Set { file, parameter, values } => {
@@ -112,13 +113,13 @@ fn run_inner(action: PresetAction, game: Option<String>, file: Option<PathBuf>) 
             match text {
                 None => {
                     let list = panel::macros_text(&current(&preset));
-                    println!("{}", if list.is_empty() { "(sem definições)".to_string() } else { list });
+                    println!("{}", if list.is_empty() { tr("(no definitions)").to_string() } else { list });
                     return Ok(());
                 }
                 Some(text) => {
                     let parsed = preset::parse_macros(&text);
                     if let Some(bad) = parsed.iter().find(|(n, v)| !control_core::compiler::valid_define(n, v)) {
-                        return Err(format!("definição inválida: {}={:?} (o nome precisa ser um identificador)", bad.0, bad.1));
+                        return Err(fmt("invalid definition: {}={} (the name must be an identifier)", &[&bad.0, &format!("{:?}", bad.1)]));
                     }
                     match &file {
                         Some(f) => preset.set_effect_macros(f, &parsed),

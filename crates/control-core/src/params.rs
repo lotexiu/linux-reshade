@@ -5,7 +5,7 @@ use fx_bundle::manifest::{Scalar, Uniform, Value};
 use fx_bundle::{Bundle, uniforms};
 use ipc::{ChannelWriter, ParamSource, ParamStore, PublishError, Writer};
 use std::fmt;
-use crate::i18n::{fmt, tr};
+use i18n::{fmt, tr};
 
 /// Os parâmetros de **um jogo** sobre os globais: lê o bloco do jogo e, se ele não tem, o global (o jogo
 /// começa herdando os valores de todos); grava sempre no canal do jogo.

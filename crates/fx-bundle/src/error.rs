@@ -1,5 +1,6 @@
 use std::fmt;
 use std::path::PathBuf;
+use i18n::fmt;
 
 #[derive(Debug)]
 pub enum Error {
@@ -17,9 +18,9 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Io { path, source } => write!(f, "{}: {source}", path.display()),
-            Error::Parse(why) => write!(f, "manifest.json inválido: {why}"),
-            Error::Unsupported(what) => write!(f, "não suportado: {what}"),
-            Error::Invalid(why) => write!(f, "bundle inválido: {why}"),
+            Error::Parse(why) => write!(f, "{}", fmt("invalid manifest.json: {}", &[&why])),
+            Error::Unsupported(what) => write!(f, "{}", fmt("not supported: {}", &[&what])),
+            Error::Invalid(why) => write!(f, "{}", fmt("invalid bundle: {}", &[&why])),
         }
     }
 }

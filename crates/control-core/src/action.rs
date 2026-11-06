@@ -2,6 +2,7 @@
 //! comportamento ficar num lugar só.
 
 use std::fmt;
+use i18n::{fmt, tr};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -40,12 +41,12 @@ impl Action {
     /// layer aberta. Devolve o texto para o log.
     pub fn run(self, state: &ipc::Writer, presets_dir: Option<&std::path::Path>, screenshot_before: bool) -> String {
         if matches!(self, Action::Technique(_) | Action::ReloadEffects) {
-            return "ação tratada pelo daemon".into();
+            return tr("action handled by the daemon").into();
         }
         if self == Action::Screenshot {
             return match ipc::shot::request_screenshot(screenshot_before) {
-                Ok(n) => format!("captura de tela pedida (#{n})"),
-                Err(e) => format!("não consegui pedir a captura: {e}"),
+                Ok(n) => fmt("screenshot requested (#{})", &[&n]),
+                Err(e) => fmt("could not request the screenshot: {}", &[&e]),
             };
         }
         let delta = match self {
@@ -53,17 +54,17 @@ impl Action {
             Action::PreviousPreset => -1,
             other => return other.apply(state).to_string(),
         };
-        let Some(dir) = presets_dir else { return "sem pasta de presets".into() };
+        let Some(dir) = presets_dir else { return tr("no presets folder").into() };
         let mut games: Vec<String> = ipc::live_layers().unwrap_or_default().iter().map(|l| l.status.game_id().to_string()).filter(|g| !g.is_empty()).collect();
         games.sort();
         games.dedup();
         if games.is_empty() {
-            return "nenhum jogo com a layer aberto".into();
+            return tr("no game with the layer open").into();
         }
         games
             .iter()
             .map(|game| match crate::presets::cycle_preset(dir, game, delta) {
-                Ok(name) => format!("{game}: preset {name}"),
+                Ok(name) => fmt("{}: preset {}", &[&game, &name]),
                 Err(why) => why,
             })
             .collect::<Vec<_>>()
@@ -78,7 +79,7 @@ pub struct Applied {
 
 impl fmt::Display for Applied {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "efeitos: {}", if self.effects_enabled { "ligados" } else { "desligados" })
+        write!(f, "{}", fmt("effects: {}", &[&if self.effects_enabled { tr("enabled") } else { tr("disabled") }]))
     }
 }
 

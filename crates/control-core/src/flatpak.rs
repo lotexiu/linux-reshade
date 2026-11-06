@@ -7,7 +7,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use crate::i18n::{fmt, tr};
+use i18n::{fmt, tr};
 
 pub const EXTENSION_ID: &str = "org.freedesktop.Platform.VulkanLayer.linux_reshade";
 const EXTENSION_NAME: &str = "linux_reshade";

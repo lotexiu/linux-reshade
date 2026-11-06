@@ -63,5 +63,8 @@ install -m755 packaging/AppRun "$APPDIR/AppRun"
 
 say "empacotando"
 OUT="$DIST/linux-reshade-$VERSION-x86_64.AppImage"
+# Um AppImage anterior no mesmo caminho é trocado: sem isto o empacotador pode deixar o arquivo velho (e o painel, ao abrir, só
+# troca o daemon e a camada de quem roda a build nova se o arquivo for mesmo o novo).
+rm -f "$OUT"
 ARCH=x86_64 "$TOOLS/appimagetool-x86_64.AppImage" --no-appstream "$APPDIR" "$OUT"
 say "pronto: $OUT ($(du -h "$OUT" | cut -f1))"

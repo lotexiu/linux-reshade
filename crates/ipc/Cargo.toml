@@ -6,4 +6,5 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+i18n = { path = "../i18n" }
 rustix = { version = "1", default-features = false, features = ["std", "mm", "process", "fs"] }

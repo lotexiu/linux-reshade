@@ -10,6 +10,7 @@ use crate::compiler::{CompileError, Compiler, Ensured};
 use ipc::{ChannelSelection, EffectState, LiveLayer, SelectionRead};
 use std::collections::{BTreeSet, HashMap};
 use std::time::{Duration, SystemTime};
+use i18n::{fmt, tr};
 
 /// Intervalo entre duas olhadas nas layers. Olhar é barato (listar um diretório e ler alguns bytes), e
 /// quanto menor, mais cedo o efeito aparece depois de uma mudança de tamanho de janela.
@@ -170,15 +171,15 @@ pub fn run(compiler: &Compiler, state: &ipc::Writer, presets_dir: Option<std::pa
             // Quem abre e fecha: o log vira uma linha do tempo (e mostra se o vigia viu o jogo).
             let now: Vec<String> = layers.iter().map(|l| format!("{} ({})", l.status.game_id(), l.id)).collect();
             if now != known {
-                crate::logln!("jogos com a layer: {}", if now.is_empty() { "nenhum".to_string() } else { now.join(", ") });
+                crate::logln!("{}", fmt("games with the layer: {}", &[&if now.is_empty() { "nenhum".to_string() } else { now.join(", ") }]));
                 known = now;
             }
             if last_beat.elapsed() >= std::time::Duration::from_secs(600) {
                 last_beat = std::time::Instant::now();
-                crate::logln!("vigia vivo ({} jogo(s) com a layer)", layers.len());
+                crate::logln!("{}", fmt("watcher alive ({} game(s) with the layer)", &[&layers.len()]));
             }
             for path in saver.save_pending(&ipc::state_dir(), screenshots) {
-                crate::logln!("captura de tela salva: {}", path.display());
+                crate::logln!("{}", fmt("screenshot saved: {}", &[&path.display()]));
             }
             let report = tick(compiler, state, &layers, &mut failures);
             let games_report = games.as_mut().map(|g| g.tick(compiler, state, &layers, &mut failures));
@@ -203,17 +204,17 @@ pub fn run(compiler: &Compiler, state: &ipc::Writer, presets_dir: Option<std::pa
                 }
             }
             for job in &report.compiled {
-                crate::logln!("compilado {} para {}x{}", job.name, job.width, job.height);
+                crate::logln!("{}", fmt("compiled {} for {}x{}", &[&job.name, &job.width, &job.height]));
             }
             for (job, why) in &report.failed {
-                crate::elogln!("falhou ao compilar {} para {}x{}: {why}", job.name, job.width, job.height);
+                crate::elogln!("{}", fmt("failed to compile {} for {}x{}: {}", &[&job.name, &job.width, &job.height, &why]));
             }
             if let Some(r) = games_report {
                 for (game, steps) in &r.published {
-                    crate::logln!("plano de {game} publicado: {steps} etapa(s)");
+                    crate::logln!("{}", fmt("plan of {} published: {} step(s)", &[&game, &steps]));
                 }
                 for job in &r.compiled {
-                    crate::logln!("compilado {} para {}x{}", job.name, job.width, job.height);
+                    crate::logln!("{}", fmt("compiled {} for {}x{}", &[&job.name, &job.width, &job.height]));
                 }
                 for (who, why) in &r.warnings {
                     crate::elogln!("aviso ({who}): {why}");
@@ -221,7 +222,7 @@ pub fn run(compiler: &Compiler, state: &ipc::Writer, presets_dir: Option<std::pa
             }
         }));
         if round.is_err() {
-            crate::elogln!("vigia: uma volta falhou (pânico); seguindo na próxima");
+            crate::elogln!("{}", tr("watcher: one round failed (panic); continuing with the next"));
         }
         std::thread::sleep(INTERVAL);
     }

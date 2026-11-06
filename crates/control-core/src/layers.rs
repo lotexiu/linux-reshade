@@ -1,7 +1,7 @@
 //! A lista de jogos com a layer ativa, como `lrctl layers` a mostra.
 
 use ipc::{EffectState, LiveLayer, TechniqueState};
-use crate::i18n::fmt;
+use i18n::{fmt, tr};
 
 /// O nome do `VkFormat` mais comum em swapchains; o número, se for outro.
 pub fn format_name(format: i32) -> String {
@@ -19,11 +19,11 @@ pub fn format_name(format: i32) -> String {
 
 pub fn effect_text(state: &EffectState) -> String {
     match state {
-        EffectState::Idle => "nenhum efeito escolhido".into(),
-        EffectState::Waiting => "aguardando o bundle desta resolução".into(),
-        EffectState::Ready => "pronto".into(),
-        EffectState::Unavailable(why) => format!("indisponível: {why}"),
-        EffectState::Failed(why) => format!("falhou: {why}"),
+        EffectState::Idle => tr("no effect chosen").into(),
+        EffectState::Waiting => tr("waiting for this resolution's bundle").into(),
+        EffectState::Ready => tr("ready").into(),
+        EffectState::Unavailable(why) => fmt("unavailable: {}", &[&i18n::tr_dyn(why)]),
+        EffectState::Failed(why) => fmt("failed: {}", &[&i18n::tr_dyn(why)]),
     }
 }
 
@@ -44,9 +44,9 @@ pub fn find<'a>(layers: &'a [LiveLayer], query: &str) -> Result<&'a LiveLayer, S
     let matches = if by_pid.is_empty() { layers.iter().filter(|l| l.status.app.eq_ignore_ascii_case(query) || l.status.exe.eq_ignore_ascii_case(query)).collect() } else { by_pid };
     match matches.as_slice() {
         [one] => Ok(one),
-        [] if layers.is_empty() => Err(format!("nenhum jogo com a layer ativa (procurei {query:?})")),
-        [] => Err(format!("nenhum jogo com a layer chamado {query:?}; abertos: {}", layers.iter().map(describe).collect::<Vec<_>>().join(", "))),
-        many => Err(format!("{query:?} serve a mais de um jogo ({}); use o número do processo", many.iter().map(|l| describe(l)).collect::<Vec<_>>().join(", "))),
+        [] if layers.is_empty() => Err(fmt("no game with the layer active (searched for {})", &[&format!("{:?}", query)])),
+        [] => Err(fmt("no game with the layer named {}; open: {}", &[&format!("{:?}", query), &layers.iter().map(describe).collect::<Vec<_>>().join(", ")])),
+        many => Err(fmt("{} matches more than one game ({}); use the process number", &[&format!("{:?}", query), &many.iter().map(|l| describe(l)).collect::<Vec<_>>().join(", ")])),
     }
 }
 
@@ -63,61 +63,68 @@ pub fn render(layers: &[LiveLayer]) -> String {
         })
         .collect();
     if rows.is_empty() {
-        let mut text = String::from("nenhum jogo com a layer ativa\n");
-        text.push_str("(abra um jogo com LINUX_RESHADE=1 nas opções de lançamento; a layer só informa depois de criar o swapchain)\n");
+        let mut text = String::from(tr("no game with the layer active\n"));
+        text.push_str(tr("(open a game with LINUX_RESHADE=1 in its launch options; the layer only reports after creating the swapchain)\n"));
         return text;
     }
     let width = |f: fn(&Row) -> usize| rows.iter().map(f).max().unwrap_or(0);
-    let (w1, w2, w3, w4) = (width(|r| r.0.chars().count()).max(4), width(|r| r.1.len()).max(3), width(|r| r.2.len()).max(9), width(|r| r.3.chars().count()).max(7));
-    let mut text = format!("{:<w1$}  {:<w2$}  {:<w3$}  {:<w4$}  EFEITO\n", "JOGO", "PID", "RESOLUÇÃO", "FORMATO");
+    let heads = (tr("GAME"), "PID", tr("RESOLUTION"), tr("FORMAT"), tr("EFFECT"));
+    let chars = |s: &str| s.chars().count();
+    let (w1, w2, w3, w4) = (width(|r| r.0.chars().count()).max(chars(heads.0)), width(|r| r.1.len()).max(chars(heads.1)), width(|r| r.2.len()).max(chars(heads.2)), width(|r| r.3.chars().count()).max(chars(heads.3)));
+    let mut text = format!("{:<w1$}  {:<w2$}  {:<w3$}  {:<w4$}  {}\n", heads.0, heads.1, heads.2, heads.3, heads.4);
     for (app, pid, size, format, effect) in &rows {
         text.push_str(&format!("{app:<w1$}  {pid:<w2$}  {size:<w3$}  {format:<w4$}  {effect}\n"));
     }
     // O que a layer fez com cada técnica da cadeia (só dos jogos que construíram uma).
     for l in layers.iter().filter(|l| !l.status.techniques.is_empty()) {
         let app = if l.status.app.is_empty() { l.id.clone() } else { l.status.app.clone() };
-        text.push_str(&format!("\ncadeia de {app} (pid {}):\n", pid_of(&l.id).unwrap_or("?")));
+        text.push_str(&fmt("\nchain of {} (pid {}):\n", &[&app, &pid_of(&l.id).unwrap_or("?")]));
         for (n, t) in l.status.techniques.iter().enumerate() {
             match &t.state {
-                TechniqueState::Applied => text.push_str(&format!("  {}. {}  aplicada\n", n + 1, t.name)),
-                TechniqueState::Skipped(why) => text.push_str(&format!("  {}. {}  pulada: {why}\n", n + 1, t.name)),
+                TechniqueState::Applied => text.push_str(&fmt("  {}. {}  applied\n", &[&(n + 1), &t.name])),
+                TechniqueState::Skipped(why) => text.push_str(&fmt("  {}. {}  skipped: {}\n", &[&(n + 1), &t.name, &i18n::tr_dyn(why)])),
             }
         }
     }
     // O desempenho medido (só com a medição ligada: `lrctl stats on`).
     for l in layers.iter().filter(|l| l.status.perf.is_some()) {
         let app = if l.status.app.is_empty() { l.id.clone() } else { l.status.app.clone() };
-        text.push_str(&format!("\ndesempenho de {app} (pid {}):\n", pid_of(&l.id).unwrap_or("?")));
+        text.push_str(&fmt("\nperformance of {} (pid {}):\n", &[&app, &pid_of(&l.id).unwrap_or("?")]));
         text.push_str(&perf_text(l.status.perf.as_ref().expect("filtrado acima")));
     }
     // As candidatas a profundidade da cena (só com a observação ligada na layer).
     for l in layers.iter().filter(|l| !l.status.depth.is_empty()) {
         let app = if l.status.app.is_empty() { l.id.clone() } else { l.status.app.clone() };
-        text.push_str(&format!("\nprofundidade de {app} (pid {}):\n", pid_of(&l.id).unwrap_or("?")));
+        text.push_str(&fmt("\ndepth of {} (pid {}):\n", &[&app, &pid_of(&l.id).unwrap_or("?")]));
         if !l.status.depth_passes.is_empty() {
-            text.push_str(&format!("  passes da escolhida (posição:desenhos/indiretos tamanho começa->termina): {}\n", l.status.depth_passes));
+            text.push_str(&fmt("  passes of the chosen one (position:draws/indirect size starts->ends): {}\n", &[&l.status.depth_passes]));
         }
         for (n, d) in l.status.depth.iter().enumerate() {
             let reversed = match d.reversed {
-                Some(true) => "invertida",
-                Some(false) => "normal",
+                Some(true) => tr("reversed"),
+                Some(false) => tr("normal"),
                 None => "?",
             };
-            let why = d.unusable.as_deref().map(|u| format!("  [não serve: {u}]")).unwrap_or_default();
-            let sampling = if d.sampled { "amostrável" } else { "sem SAMPLED" };
-            text.push_str(&format!(
-                "  {} [{}] {}x{} {}  {} desenhos, {} vértices, {} passe(s)  {} -> {}  {reversed}  {sampling}, layout {}{why}\n",
-                if d.chosen { "*" } else { " " },
-                n + 1,
-                d.width,
-                d.height,
-                depth_format_name(d.format),
-                d.draws,
-                d.vertices,
-                d.passes,
-                d.load,
-                d.store,
-                layout_name(d.layout),
+            let why = d.unusable.as_deref().map(|u| fmt("  [unusable: {}]", &[&u])).unwrap_or_default();
+            let sampling = if d.sampled { tr("sampleable") } else { tr("without SAMPLED") };
+            text.push_str(&fmt(
+                "  {} [{}] {}x{} {}  {} draws, {} vertices, {} pass(es)  {} -> {}  {}  {}, layout {}{}\n",
+                &[
+                    &if d.chosen { "*" } else { " " },
+                    &(n + 1),
+                    &d.width,
+                    &d.height,
+                    &depth_format_name(d.format),
+                    &d.draws,
+                    &d.vertices,
+                    &d.passes,
+                    &d.load,
+                    &d.store,
+                    &reversed,
+                    &sampling,
+                    &layout_name(d.layout),
+                    &why,
+                ],
             ));
         }
     }
@@ -174,12 +181,12 @@ mod tests {
         let mut game = live("Haste", vec![sc(1920, 1080, 44, EffectState::Ready)]);
         game.status.techniques = vec![
             ipc::TechniqueStatus { name: "Sepia".into(), state: TechniqueState::Applied },
-            ipc::TechniqueStatus { name: "CAS".into(), state: TechniqueState::Skipped("escrita sRGB numa textura".into()) },
+            ipc::TechniqueStatus { name: "CAS".into(), state: TechniqueState::Skipped("sRGB write to a texture".into()) },
         ];
         let text = render(&[game]);
-        assert!(text.contains("cadeia de Haste (pid 1):"), "{text}");
-        assert!(text.contains("1. Sepia  aplicada") && text.contains("2. CAS  pulada: escrita sRGB numa textura"), "{text}");
-        assert!(!render(&[live("Outro", vec![sc(10, 10, 44, EffectState::Idle)])]).contains("cadeia de"));
+        assert!(text.contains("chain of Haste (pid 1):"), "{text}");
+        assert!(text.contains("1. Sepia  applied") && text.contains("2. CAS  skipped: sRGB write to a texture"), "{text}");
+        assert!(!render(&[live("Outro", vec![sc(10, 10, 44, EffectState::Idle)])]).contains("chain of"));
     }
 
     fn live(app: &str, swapchains: Vec<SwapchainStatus>) -> LiveLayer {
@@ -209,13 +216,13 @@ mod tests {
         ]);
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines.len(), 4, "{text}");
-        assert!(lines[0].starts_with("JOGO") && lines[0].ends_with("EFEITO"));
-        assert!(lines[1].contains("Idols of Ash") && lines[1].contains("1920x1080") && lines[1].ends_with("pronto"));
-        assert!(lines[2].contains("1920x1011") && lines[2].ends_with("aguardando o bundle desta resolução"));
-        assert!(lines[3].contains("B8G8R8A8_SRGB") && lines[3].ends_with("indisponível: swapchain em formato sRGB"));
+        assert!(lines[0].starts_with("GAME") && lines[0].ends_with("EFFECT"));
+        assert!(lines[1].contains("Idols of Ash") && lines[1].contains("1920x1080") && lines[1].ends_with(tr("ready")));
+        assert!(lines[2].contains("1920x1011") && lines[2].ends_with(tr("waiting for this resolution's bundle")));
+        assert!(lines[3].contains("B8G8R8A8_SRGB") && lines[3].ends_with("unavailable: swapchain em formato sRGB"));
         // As colunas começam no mesmo ponto (em caracteres, não bytes: o cabeçalho tem acentos) em todas as linhas.
         let col = |l: &str| {
-            ["EFEITO", "pronto", "aguardando", "indisponível"].iter().find_map(|w| l.find(w)).map(|byte| l[..byte].chars().count())
+            ["EFFECT", tr("ready"), "waiting", "unavailable"].iter().find_map(|w| l.find(w)).map(|byte| l[..byte].chars().count())
         };
         assert!(lines[1].contains("  1  "), "mostra o pid: {text}");
         assert_eq!(col(lines[0]), col(lines[1]));
@@ -225,7 +232,7 @@ mod tests {
     #[test]
     fn an_empty_list_explains_how_to_turn_the_layer_on() {
         let text = render(&[]);
-        assert!(text.contains("nenhum jogo") && text.contains("LINUX_RESHADE=1"), "{text}");
+        assert!(text.contains("no game") && text.contains("LINUX_RESHADE=1"), "{text}");
     }
 
     #[test]
@@ -256,6 +263,6 @@ mod tests {
         assert!(ambiguous.contains("pid 300") && ambiguous.contains("pid 400"), "{ambiguous}");
         let missing = find(&layers, "nada").unwrap_err();
         assert!(missing.contains("Idols of Ash") && missing.contains("RocketLeague"), "{missing}");
-        assert!(find(&[], "1").unwrap_err().contains("nenhum jogo"));
+        assert!(find(&[], "1").unwrap_err().contains("no game"));
     }
 }

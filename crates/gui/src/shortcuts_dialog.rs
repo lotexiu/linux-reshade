@@ -1,5 +1,5 @@
 //! A janela de atalhos: uma linha por tecla do `config.ini` (seção `[INPUT]`), com a tecla atual, um botão que captura a próxima
-//! combinação digitada, tr("Clear") e tr("Default"). O daemon reinicia sozinho ao ver a mudança e passa a usar a tecla nova.
+//! combinação digitada, "Limpar" e "Padrão". O daemon reinicia sozinho ao ver a mudança e passa a usar a tecla nova.
 
 use gtk::prelude::*;
 use gtk4 as gtk;
@@ -196,47 +196,33 @@ fn page_box() -> gtk::Box {
     page
 }
 
-/// A aba "Geral": o idioma da interface e a pergunta antes de apagar um preset.
+/// A aba "Geral": o idioma da interface (vale na hora: a janela é refeita) e a pergunta antes de apagar um preset.
 fn general_page(window: &gtk::Window) -> gtk::Box {
     let page = page_box();
-    let languages = control_core::i18n::LANGUAGES;
+    let languages = control_core::i18n::languages();
     let current = languages.iter().position(|l| l.code == control_core::i18n::code()).unwrap_or(0) as u32;
 
     let line = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     let label = gtk::Label::new(Some(tr("Language")));
     label.set_hexpand(true);
     label.set_xalign(0.0);
-    let names: Vec<&str> = languages.iter().map(|l| l.name).collect();
+    let names: Vec<&str> = languages.iter().map(|l| l.name.as_str()).collect();
     let dropdown = gtk::DropDown::from_strings(&names);
     dropdown.set_selected(current);
     line.append(&label);
     line.append(&dropdown);
-
-    let note = hint(tr("The language applies the next time the panel opens."));
-    let restart = gtk::Button::with_label(tr("Restart the panel now"));
-    restart.set_halign(gtk::Align::Start);
-    restart.set_visible(false);
     dropdown.connect_selected_notify({
-        let (note, restart) = (note.clone(), restart.clone());
+        let window = window.clone();
         move |dd| {
             let Some(language) = languages.get(dd.selected() as usize) else { return };
-            control_core::i18n::save(language.code);
-            let changed = language.code != control_core::i18n::code();
-            restart.set_visible(changed);
-            note.set_text(if changed { tr("Saved. Restart the panel to see it in the new language.") } else { tr("The language applies the next time the panel opens.") });
-        }
-    });
-    restart.connect_clicked({
-        let window = window.clone();
-        move |_| {
-            // No AppImage o executável fica numa montagem que some ao sair; quem relança é o próprio arquivo.
-            let exe = std::env::var_os("APPIMAGE").map(std::path::PathBuf::from).or_else(|| std::env::current_exe().ok());
-            if let Some(exe) = exe {
-                if std::process::Command::new(exe).spawn().is_ok() {
-                    if let Some(app) = window.application() {
-                        app.quit();
-                    }
-                }
+            if language.code == control_core::i18n::code() {
+                return;
+            }
+            control_core::i18n::set(&language.code);
+            control_core::i18n::save(&language.code);
+            // Refazer a janela destrói esta (e o seletor que acabou de avisar): fica para depois do aviso.
+            if let Some(app) = window.application() {
+                gtk::glib::idle_add_local_once(move || app.activate_action("relocalize", None));
             }
         }
     });
@@ -246,8 +232,7 @@ fn general_page(window: &gtk::Window) -> gtk::Box {
     ask.connect_toggled(|b| crate::settings::set_confirm_delete_preset(b.is_active()));
 
     page.append(&line);
-    page.append(&note);
-    page.append(&restart);
+    page.append(&hint(tr("The whole interface changes language right away.")));
     page.append(&ask);
     page
 }
@@ -273,7 +258,7 @@ fn ini_list(section: &str, key: &str, default: &str) -> String {
     config_file().and_then(|f| ini::Ini::load(&f).ok()).map(|i| i.get_list(section, key)).filter(|l| !l.is_empty()).map_or_else(|| default.to_string(), |l| l.join(", "))
 }
 
-/// Uma linha de pasta: o texto editável, tr("Choose…") (ou tr("Add folder…") numa lista) e o salvamento.
+/// Uma linha de pasta: o texto editável, "Escolher…" (ou "Adicionar pasta…" numa lista) e o salvamento.
 fn folder_row(page: &gtk::Box, window: &gtk::Window, label: &str, tip: &str, current: String, list: bool, save: impl Fn(&str) -> Result<(), String> + 'static, status: &gtk::Label) {
     let title = gtk::Label::new(Some(label));
     title.set_xalign(0.0);
@@ -744,14 +729,31 @@ fn system_page() -> gtk::Box {
         let (daemon_status, daemon_button) = (daemon_status.clone(), daemon_button.clone());
         Rc::new(move || {
             let running = ipc::daemon_lock::is_running();
-            daemon_status.set_text(if running { tr("Daemon: running") } else { tr("Daemon: stopped") });
-            daemon_button.set_sensitive(!running);
+            let outdated = install::daemon_outdated();
+            daemon_status.set_text(if outdated {
+                tr("Daemon: running, but from an older build")
+            } else if running {
+                tr("Daemon: running")
+            } else {
+                tr("Daemon: stopped")
+            });
+            daemon_button.set_label(if outdated {
+                tr("Replace the daemon with this build")
+            } else if running {
+                tr("Restart the daemon")
+            } else {
+                tr("Start the daemon now")
+            });
         })
     };
     show_daemon();
     daemon_button.connect_clicked({
         let show_daemon = show_daemon.clone();
         move |_| {
+            // Parado: inicia. Rodando: reinicia (um de outra build é trocado pelo desta).
+            if ipc::daemon_lock::is_running() {
+                install::stop_daemon();
+            }
             install::start_daemon_if_needed();
             // Ele leva um instante para pegar a trava.
             let show_daemon = show_daemon.clone();
@@ -817,6 +819,11 @@ fn about_page() -> gtk::Box {
 
 /// A janela de configurações: atalhos, capturas de tela e pastas.
 pub fn open(parent: &gtk::ApplicationWindow) -> gtk::Window {
+    open_at(parent, 0)
+}
+
+/// Como [`open`], já na aba `tab`.
+pub fn open_at(parent: &gtk::ApplicationWindow, tab: u32) -> gtk::Window {
     let window = gtk::Window::builder().title(tr("Settings")).transient_for(parent).modal(true).default_width(700).default_height(600).build();
     let notebook = gtk::Notebook::new();
     notebook.append_page(&general_page(&window), Some(&gtk::Label::new(Some(tr("General")))));
@@ -824,9 +831,9 @@ pub fn open(parent: &gtk::ApplicationWindow) -> gtk::Window {
     notebook.append_page(&captures_page(&window), Some(&gtk::Label::new(Some(tr("Screenshots")))));
     notebook.append_page(&folders_page(&window), Some(&gtk::Label::new(Some(tr("Folders")))));
     notebook.append_page(&performance_page(&window), Some(&gtk::Label::new(Some(tr("Performance")))));
-    notebook.append_page(&cache_page(), Some(&gtk::Label::new(Some("Cache"))));
-    notebook.append_page(&system_page(), Some(&gtk::Label::new(Some("Sistema"))));
-    notebook.append_page(&flatpak_page(), Some(&gtk::Label::new(Some("Flatpak"))));
+    notebook.append_page(&cache_page(), Some(&gtk::Label::new(Some(tr("Cache")))));
+    notebook.append_page(&system_page(), Some(&gtk::Label::new(Some(tr("System")))));
+    notebook.append_page(&flatpak_page(), Some(&gtk::Label::new(Some(tr("Flatpak")))));
     notebook.append_page(&log_page(), Some(&gtk::Label::new(Some(tr("Log")))));
     notebook.append_page(&about_page(), Some(&gtk::Label::new(Some(tr("About")))));
     window.set_child(Some(&notebook));
@@ -846,9 +853,8 @@ pub fn open(parent: &gtk::ApplicationWindow) -> gtk::Window {
     window.add_controller(escape);
     window.present();
     // Só para os testes de captura da tela: abrir direto numa aba.
-    if let Some(tab) = std::env::var("LINUX_RESHADE_SETTINGS_TAB").ok().and_then(|v| v.parse().ok()) {
-        notebook.set_current_page(Some(tab));
-    }
+    let tab = std::env::var("LINUX_RESHADE_SETTINGS_TAB").ok().and_then(|v| v.parse().ok()).unwrap_or(tab);
+    notebook.set_current_page(Some(tab));
     window
 }
 

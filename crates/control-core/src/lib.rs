@@ -13,6 +13,7 @@
 //! - [`select`]: escolher o efeito que a layer executa
 //! - [`watch`]: o vigia, que mantém compilado o que os jogos abertos precisam
 
+pub use i18n;
 pub mod action;
 pub mod analysis;
 pub mod compiler;
@@ -20,7 +21,6 @@ pub mod flatpak;
 pub mod game_plan;
 pub mod install;
 pub mod games;
-pub mod i18n;
 pub mod layers;
 pub mod location;
 pub mod maintenance;

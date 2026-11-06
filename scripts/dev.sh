@@ -583,37 +583,17 @@ cmd_smoke_dynamic() {
   [ "$ok" = 1 ] && say "smoke (renderização dinâmica): passou" || { warn "smoke (renderização dinâmica): falhou ($tmp)"; echo "$out" | head -10; exit 1; }
 }
 
-# Um daemon antigo (o binário foi recompilado depois de ele subir) continua executando o código velho: ele precisa ser
-# trocado. Devolve sucesso se havia algum desatualizado e o matou.
-kill_stale_daemons() {
-  local pid exe stale=1
-  for pid in $(pgrep -f "release/lrctl daemon" || true); do
-    exe="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
-    case "$exe" in
-      *lrctl*"(deleted)"*) kill "$pid" 2>/dev/null && stale=0 ;;
-      *lrctl) [ "$ROOT/target/release/lrctl" -nt "/proc/$pid" ] && kill "$pid" 2>/dev/null && stale=0 ;;
-    esac
-  done
-  return $stale
-}
-
-# Sobe o daemon em segundo plano se não há um atual (o painel só edita arquivos; quem aplica o preset é o daemon).
+# Garante um daemon desta build: o `lrctl daemon-ensure` compara o carimbo do executável que o daemon em execução publicou na trava
+# com o do `target/release/lrctl` e troca o que sobrou de outra build (inclusive o de um AppImage antigo, que mora noutro caminho).
 ensure_daemon() {
-  if kill_stale_daemons; then
-    say "daemon antigo (binário recompilado) encerrado; subindo o novo"
-    sleep 0.5
-  fi
-  if ! pgrep -f "release/lrctl daemon" >/dev/null; then
-    mkdir -p "$(dirname "$LOG_FILE")"
-    say "subindo o daemon em segundo plano (log: $(dirname "$LOG_FILE")/daemon.log)"
-    nohup "$ROOT/target/release/lrctl" daemon >"$(dirname "$LOG_FILE")/daemon.log" 2>&1 &
-  fi
+  mkdir -p "$(dirname "$LOG_FILE")"
+  "$ROOT/target/release/lrctl" daemon-ensure
 }
 
 # O app de controle residente: atalho global e vigia (compila os efeitos e aplica o preset dos jogos abertos).
 cmd_daemon() {
   cmd_build -p linux-reshade-control >/dev/null
-  kill_stale_daemons && sleep 0.5
+  "$ROOT/target/release/lrctl" daemon-stop >/dev/null
   exec "$ROOT/target/release/lrctl" daemon
 }
 

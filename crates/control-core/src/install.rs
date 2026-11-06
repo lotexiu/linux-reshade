@@ -5,7 +5,7 @@
 //! para a cópia (que se atualiza quando o programa muda).
 
 use std::path::{Path, PathBuf};
-use crate::i18n::{fmt, tr};
+use i18n::{fmt, tr};
 
 const LAYER_LIB: &str = "liblinux_reshade_layer.so";
 const MANIFEST_NAME: &str = "VK_LAYER_LOTEXIU_linux_reshade.json";
@@ -163,8 +163,76 @@ pub fn set_autostart(on: bool) -> Result<(), String> {
     }
     let command = daemon_command().ok_or(tr("could not find the daemon command"))?;
     std::fs::create_dir_all(path.parent().ok_or(tr("no folder"))?).map_err(|e| e.to_string())?;
-    let desktop = format!("[Desktop Entry]\nType=Application\nName=linux-reshade (daemon)\nComment=Compila os efeitos dos jogos abertos e registra os atalhos\nExec={command}\nTerminal=false\nX-GNOME-Autostart-enabled=true\nNoDisplay=true\n");
+    let desktop = format!("[Desktop Entry]\nType=Application\nName=linux-reshade (daemon)\nComment={}\nExec={command}\nTerminal=false\nX-GNOME-Autostart-enabled=true\nNoDisplay=true\n", tr("Compiles the effects of open games and registers the shortcuts"));
     std::fs::write(&path, desktop).map_err(|e| e.to_string())
+}
+
+/// O `lrctl` que acompanha este programa (o que o painel iniciaria).
+fn own_lrctl() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    Some(exe.parent()?.join("lrctl")).filter(|p| p.is_file())
+}
+
+/// Há um daemon rodando que não é da build deste programa (sobrou de uma versão anterior)?
+pub fn daemon_outdated() -> bool {
+    let Some(running) = ipc::daemon_lock::running_stamp() else { return false };
+    own_lrctl().and_then(|p| ipc::daemon_lock::exe_stamp(&p)).is_some_and(|own| own != running)
+}
+
+/// Os processos filhos diretos de `pid` (o daemon tem o `lrctl keys`).
+fn children_of(pid: u32) -> Vec<u32> {
+    let Ok(entries) = std::fs::read_dir("/proc") else { return Vec::new() };
+    entries
+        .flatten()
+        .filter_map(|e| e.file_name().to_str()?.parse::<u32>().ok())
+        .filter(|child| {
+            // "pid (comm) estado ppid ...": o nome pode ter espaços e parênteses, então se conta a partir do último ')'.
+            std::fs::read_to_string(format!("/proc/{child}/stat")).ok().and_then(|s| s.rsplit_once(')').map(|(_, rest)| rest.split_whitespace().nth(1).and_then(|p| p.parse::<u32>().ok()))).flatten() == Some(pid)
+        })
+        .collect()
+}
+
+/// Encerra o daemon em execução (e o processo dos atalhos dele) e espera a trava ser solta. Devolve se não há mais daemon.
+pub fn stop_daemon() -> bool {
+    let Some(pid) = ipc::daemon_lock::holder_pid() else { return !ipc::daemon_lock::is_running() };
+    let term = |p: u32| {
+        let _ = std::process::Command::new("kill").arg("-TERM").arg(p.to_string()).status();
+    };
+    for child in children_of(pid) {
+        term(child);
+    }
+    term(pid);
+    for _ in 0..40 {
+        if !ipc::daemon_lock::is_running() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    false
+}
+
+/// O que `ensure_daemon_current` fez.
+#[derive(Debug, PartialEq, Eq)]
+pub enum DaemonAction {
+    /// Já havia um daemon desta build.
+    Kept,
+    Started,
+    /// Havia um de outra build: foi trocado.
+    Replaced,
+    /// Não deu para iniciar (ou o antigo não quis sair).
+    Failed,
+}
+
+/// Garante um daemon desta build: inicia se não há, troca se há um de outra build.
+pub fn ensure_daemon_current() -> DaemonAction {
+    let outdated = daemon_outdated();
+    if outdated && !stop_daemon() {
+        return DaemonAction::Failed;
+    }
+    if start_daemon_if_needed() {
+        return if outdated { DaemonAction::Replaced } else { DaemonAction::Started };
+    }
+    if ipc::daemon_lock::is_running() { DaemonAction::Kept } else { DaemonAction::Failed }
 }
 
 /// Inicia o daemon em segundo plano, se não há um rodando. Devolve se iniciou.

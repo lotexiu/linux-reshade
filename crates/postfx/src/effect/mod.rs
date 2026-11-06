@@ -199,7 +199,7 @@ fn file_texture_supported(bundle: &Bundle, tex: &Texture, index: usize) -> Resul
         return Err(unsupported(format!("texture {:?}: the bundle has no image for {source:?}", tex.name)));
     }
     if convert::pack_pixels(tex.format, &[0; 4]).is_none() {
-        return Err(unsupported(format!("textura {:?}: formato {:?} a partir de um arquivo", tex.name, tex.format)));
+        return Err(unsupported(format!("texture {:?}: format {:?} from a file", tex.name, tex.format)));
     }
     Ok(())
 }
@@ -216,7 +216,7 @@ fn file_texture_srgb(m: &fx_bundle::Manifest) -> Result<HashMap<usize, bool>, Er
         if let Some(previous) = out.insert(index, s.srgb)
             && previous != s.srgb
         {
-            return Err(unsupported(format!("textura {:?}: lida com e sem sRGB", tex.name)));
+            return Err(unsupported(format!("texture {:?}: read with and without sRGB", tex.name)));
         }
     }
     Ok(out)
@@ -368,13 +368,13 @@ impl Effect {
             return Err(Error::Invalid("alvo sem imagens".into()));
         }
         if !m.y_flipped {
-            return Err(unsupported("bundle compilado sem inverter o Y (recompile com o fx2spv atual)"));
+            return Err(unsupported("bundle compiled without flipping Y (recompile with the current fx2spv)"));
         }
         // Um alvo sRGB (o swapchain de muitos jogos): os efeitos esperam os valores já codificados, como num UNORM.
         // Trabalha-se numa imagem UNORM própria e os bytes entram e saem do alvo por cópia, que não converte.
         let working_format = match convert::unorm_counterpart(target.format) {
             Some(unorm) => unorm,
-            None if convert::is_srgb(target.format) => return Err(unsupported("alvo em formato sRGB sem equivalente UNORM")),
+            None if convert::is_srgb(target.format) => return Err(unsupported("sRGB target format without a UNORM equivalent")),
             None => target.format,
         };
         let through_work = working_format != target.format;
@@ -393,7 +393,7 @@ impl Effect {
                 let sampler = &m.samplers[sb.sampler as usize];
                 let (tex, _) = sampled_texture(bundle, sb.sampler)?;
                 if sampler.srgb && tex.semantic.is_none() && !is_file(tex) {
-                    return Err(unsupported(format!("sampler {:?}: leitura sRGB de uma textura de render target", sampler.name)));
+                    return Err(unsupported(format!("sampler {:?}: sRGB read of a render target texture", sampler.name)));
                 }
                 match tex.semantic.as_deref() {
                     Some("COLOR") => samples_color[k] = true,
@@ -402,17 +402,17 @@ impl Effect {
                             return Err(unsupported(format!("pass {k}: samples the depth and this game does not offer it (or it has not been found yet)")));
                         };
                         if depth.layout == vk::ImageLayout::UNDEFINED {
-                            return Err(unsupported(format!("passe {k}: amostra a profundidade, mas o layout da imagem é desconhecido")));
+                            return Err(unsupported(format!("pass {k}: samples the depth, but the image layout is unknown")));
                         }
                         samples_depth[k] = true;
                     }
                     None if !is_file(tex) => {}
                     None => file_texture_supported(bundle, tex, tex_position(m, tex))?,
-                    Some(other) => return Err(unsupported(format!("textura {:?} com semântica {other}", tex.name))),
+                    Some(other) => return Err(unsupported(format!("texture {:?} with semantic {other}", tex.name))),
                 }
                 // Mipmaps só em texturas de render target (geradas depois de cada passe que as escreve).
                 if tex.levels > 1 && tex.semantic.is_some() {
-                    return Err(unsupported(format!("textura {:?} com mipmaps", tex.name)));
+                    return Err(unsupported(format!("texture {:?} with mipmaps", tex.name)));
                 }
             }
         }
@@ -620,7 +620,7 @@ impl Effect {
             let some: Vec<&str> = pass.render_targets.iter().flatten().map(String::as_str).collect();
             let (output, formats, extent) = if some.is_empty() {
                 if pass.render_targets.len() > 1 {
-                    return Err(unsupported(format!("passe {k}: vários anexos para o frame")));
+                    return Err(unsupported(format!("pass {k}: several attachments for the frame")));
                 }
                 let format = if res.srgb_shadow { convert::srgb_counterpart(working_format).unwrap_or(working_format) } else { working_format };
                 // Só um passe que limpa dispensa o que havia: sem blend e tela cheia ainda pode dar `discard` (o SMAA do iMMERSE).
@@ -701,8 +701,8 @@ impl Effect {
                 unsafe { device.update_descriptor_sets(&[write], &[]) };
             }
 
-            let vertex = bundle.shader(&pass.vertex_entry).ok_or_else(|| Error::Invalid(format!("sem SPIR-V de {:?}", pass.vertex_entry)))?;
-            let pixel = bundle.shader(&pass.pixel_entry).ok_or_else(|| Error::Invalid(format!("sem SPIR-V de {:?}", pass.pixel_entry)))?;
+            let vertex = bundle.shader(&pass.vertex_entry).ok_or_else(|| Error::Invalid(format!("no SPIR-V for {:?}", pass.vertex_entry)))?;
+            let pixel = bundle.shader(&pass.pixel_entry).ok_or_else(|| Error::Invalid(format!("no SPIR-V for {:?}", pass.pixel_entry)))?;
             res.pipeline = unsafe {
                 pipeline::create_pipeline(device, pass, res.render_pass, res.pipeline_layout, vertex, pixel, formats.len())?
             };
@@ -878,7 +878,7 @@ impl Effect {
                 return Err(unsupported(format!("storage image {:?}: the texture {:?} has no image", storage.name, tex.name)));
             }
             if storage.level >= image.levels {
-                return Err(Error::Invalid(format!("storage {:?}: nível {} de uma textura com {} níveis", storage.name, storage.level, image.levels)));
+                return Err(Error::Invalid(format!("storage {:?}: level {} of a texture with {} levels", storage.name, storage.level, image.levels)));
             }
             let view_type = match tex.kind {
                 fx_bundle::manifest::TextureType::D1 => vk::ImageViewType::TYPE_1D,
@@ -910,7 +910,7 @@ impl Effect {
             c.images = written;
         }
 
-        let code = bundle.shader(entry).ok_or_else(|| Error::Invalid(format!("sem SPIR-V de {entry:?}")))?;
+        let code = bundle.shader(entry).ok_or_else(|| Error::Invalid(format!("no SPIR-V for {entry:?}")))?;
         self.passes[k].pipeline = unsafe { pipeline::create_compute_pipeline(device, pipeline_layout, code, entry)? };
         Ok(())
     }
@@ -1020,8 +1020,8 @@ impl Effect {
             let mut mipped: Vec<MipChain> = Vec::new();
             for &i in upload {
                 let (t, gpu) = (&bundle.manifest.textures[i], &self.textures[i]);
-                let image = bundle.image(i).expect("só há imagem GPU para textura com imagem");
-                let pixels = convert::pack_pixels(t.format, &image.rgba).ok_or_else(|| unsupported(format!("textura {:?}", t.name)))?;
+                let image = bundle.image(i).expect("there is only a GPU image for a texture with an image");
+                let pixels = convert::pack_pixels(t.format, &image.rgba).ok_or_else(|| unsupported(format!("texture {:?}", t.name)))?;
                 staging.push(resources::UniformBuffer::staging(device, memory, &pixels)?);
                 let region = vk::BufferImageCopy::default()
                     .image_subresource(vk::ImageSubresourceLayers { aspect_mask: vk::ImageAspectFlags::COLOR, mip_level: 0, base_array_layer: 0, layer_count: 1 })

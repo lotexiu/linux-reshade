@@ -7,7 +7,7 @@ use fx_bundle::{Bundle, uniforms};
 use preset::game::{self, Source};
 use preset::{Preset, TechId};
 use std::path::{Path, PathBuf};
-use crate::i18n::fmt;
+use i18n::fmt;
 
 /// Qual preset editar.
 #[derive(Debug, Clone, PartialEq, Eq)]

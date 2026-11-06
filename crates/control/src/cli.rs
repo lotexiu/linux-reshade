@@ -1,68 +1,71 @@
 //! Interpretação da linha de comando, sem efeitos colaterais (para ser testada sem terminal).
 
 use std::path::PathBuf;
+use control_core::i18n::{fmt, tr};
 
 pub const USAGE: &str = "\
-uso: lrctl <comando> [opções]
+usage: lrctl <command> [options]
 
-  on | off | toggle | status      liga/desliga os efeitos (ou mostra o estado)
-  daemon                          fica residente e reage ao atalho global
+  on | off | toggle | status      turn the effects on/off (or show the state)
+  daemon                          stay resident and react to the global shortcut
+  daemon-ensure                   start the daemon, or replace the one left over from an older build
+  daemon-stop                     stop the running daemon
 
-  use <Nome>                      escolhe um efeito pelo nome (ex.: Sepia); é compilado para a
-                                  resolução de cada jogo aberto, e para as novas que aparecerem
-  use <diretório-do-bundle>       escolhe um bundle já compilado (fixo numa resolução)
-  use none                        desfaz a escolha (com --layer: sem efeito só naquele jogo)
-  use inherit --layer <jogo>      o jogo volta a seguir a escolha de todos
-  current                         mostra o efeito escolhido
-  effects                         lista os efeitos que podem ser escolhidos por nome
-  layers                          mostra os jogos com a layer ativa: resolução, formato, estado
-  watch                           só compila, sem atalho global (o daemon já faz isso)
-  setup [--remove]                instala (ou tira) a camada do Vulkan para o usuário: a biblioteca vai para ~/.local/share/linux-reshade/lib
-  flatpak [list]                  lista os apps Flatpak e se o linux-reshade está ligado em cada um
-  flatpak enable|disable <app-id> liga/desfaz a configuração de um app Flatpak (extensão da layer e permissões)
-  flatpak global on|off           liga/desfaz para TODOS os apps Flatpak (um app se exclui com LINUX_RESHADE=0)
+  use <Name>                      choose an effect by name (e.g. Sepia); it is compiled for the
+                                  resolution of each open game, and for new ones that show up
+  use <bundle-directory>          choose an already compiled bundle (fixed at one resolution)
+  use none                        undo the choice (with --layer: no effect only in that game)
+  use inherit --layer <game>      the game goes back to following the choice for all
+  current                         show the chosen effect
+  effects                         list the effects that can be chosen by name
+  layers                          show the games with the layer active: resolution, format, state
+  watch                           only compile, without the global shortcut (the daemon already does that)
+  setup [--remove]                install (or remove) the Vulkan layer for the user: the library goes to ~/.local/share/linux-reshade/lib
+  flatpak [list]                  list the Flatpak apps and whether linux-reshade is on for each one
+  flatpak enable|disable <app-id> turn on/undo the setup of a Flatpak app (layer extension and permissions)
+  flatpak global on|off           turn on/undo for ALL Flatpak apps (one app opts out with LINUX_RESHADE=0)
 
-  stats on|off                    liga/desliga a medição de desempenho da layer (aparece em 'layers' e na aba Desempenho do painel)
-  screenshot                      captura a tela de cada jogo com a layer (com e sem efeitos); o daemon/watch grava os PNG
+  stats on|off                    turn the layer's performance measurement on/off (shown in 'layers' and in the panel's Performance tab)
+  screenshot                      capture the screen of each game with the layer (with and without effects); the daemon/watch writes the PNGs
 
-  depth pick candidate <N>        escolhe a N-ésima candidata de profundidade da lista de 'lrctl layers' (de 1); com
-                                  --layer <jogo> vale só para ele
-  depth pick pass <N>             usa a profundidade logo depois do N-ésimo passe que a desenha (de 1), por cópia
-  depth pick clear <N>            usa a profundidade logo antes da N-ésima limpeza dela no quadro (como o ReShade), por cópia
-  depth pick auto                 volta à escolha automática
+  depth pick candidate <N>        choose the Nth depth candidate from the 'lrctl layers' list (from 1); with
+                                  --layer <game> it applies only to that game
+  depth pick pass <N>             use the depth right after the Nth pass that draws it (from 1), by copy
+  depth pick clear <N>            use the depth right before its Nth clear in the frame (like ReShade), by copy
+  depth pick auto                 go back to the automatic choice
 
-  config                          mostra onde estão os efeitos, texturas, presets e cache
-  config init [pasta]             prepara a pasta de dados (Shaders, Textures, Presets, config.ini);
-                                  sem <pasta>: ~/.local/share/linux-reshade
-                                  e a escolhe; sobrevive a reinstalar o jogo ou a máquina
+  config                          show where the effects, textures, presets and cache are
+  config init [folder]            prepare the data folder (Shaders, Textures, Presets, config.ini);
+                                  without <folder>: ~/.local/share/linux-reshade
+                                  and choose it; it survives reinstalling the game or the machine
 
-  uniforms                        lista os parâmetros do efeito, com valor atual e faixa
-  get <nome>                      mostra o valor atual de um parâmetro
-  set <nome> <valor...>           altera um parâmetro (vetores: 0.1 0.2 0.3 ou 0.1,0.2,0.3)
-  reset                           volta todos os parâmetros aos valores padrão
+  uniforms                        list the effect's parameters, with current value and range
+  get <name>                      show the current value of a parameter
+  set <name> <value...>           change a parameter (vectors: 0.1 0.2 0.3 or 0.1,0.2,0.3)
+  reset                           put all parameters back to the default values
 
-  preset show                     as técnicas do preset (ordem de execução; [x] ligada, [ ] desligada)
-  preset enable|disable <técnica> liga ou desliga (Nome@Arquivo.fx, ou só Nome)
-  preset move <técnica> <posição> muda a posição na ordem de execução (começa em 1)
-  preset set <Arquivo.fx> <parâmetro> <valor...>
-                                  grava o valor de um parâmetro no preset
-  preset macros [Arquivo.fx] [NOME=VALOR,...]
-                                  mostra ou define as definições de pré-processador do preset (ou só do efeito); vazio
-                                  apaga; mudar recompila os efeitos afetados
-  preset new <nome> --game <id>   cria um preset do jogo, copiando o que vale agora, e o escolhe
-  preset use <nome|none> --game <id>
-                                  escolhe o preset do jogo; none volta ao preset global
-                                  (o daemon aplica o preset aos jogos abertos assim que o arquivo muda)
+  preset show                     the preset's techniques (execution order; [x] on, [ ] off)
+  preset enable|disable <technique> turn on or off (Name@File.fx, or just Name)
+  preset move <technique> <position> change the position in the execution order (starts at 1)
+  preset set <File.fx> <parameter> <value...>
+                                  write a parameter's value into the preset
+  preset macros [File.fx] [NAME=VALUE,...]
+                                  show or set the preset's preprocessor definitions (or just the effect's); empty
+                                  clears; changing them recompiles the affected effects
+  preset new <name> --game <id>   create a preset for the game, copying what applies now, and choose it
+  preset use <name|none> --game <id>
+                                  choose the game's preset; none goes back to the global preset
+                                  (the daemon applies the preset to open games as soon as the file changes)
 
-opções:
-  --game <id>                     o jogo dos comandos 'preset': edita o preset que vale para ele
-  --file <arquivo.ini>            ou um arquivo de preset qualquer
-  --layer <jogo>                  vale só para um jogo aberto, dado por número do processo (coluna PID
-                                  de 'lrctl layers') ou nome; vale em use, current, uniforms, get, set
-                                  e reset. Sem isso o comando vale para todos os jogos. A escolha e os
-                                  parâmetros do jogo têm prioridade sobre os de todos.
-  --bundle <diretório>            o efeito dos comandos de parâmetros; sem isso, vale o escolhido com
-                                  'use' e, na falta dele, a variável LINUX_RESHADE_BUNDLE";
+options:
+  --game <id>                     the game for the 'preset' commands: edits the preset that applies to it
+  --file <file.ini>               or any preset file
+  --layer <game>                  applies only to one open game, given by process number (PID column
+                                  of 'lrctl layers') or name; works in use, current, uniforms, get, set
+                                  and reset. Without it the command applies to all games. The game's
+                                  choice and parameters take priority over the ones for all.
+  --bundle <directory>            the effect for the parameter commands; without it, the one chosen with
+                                  'use' applies and, failing that, the LINUX_RESHADE_BUNDLE variable";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
@@ -71,6 +74,10 @@ pub enum Command {
     Off,
     Toggle,
     Daemon,
+    /// Inicia o daemon desta build, ou troca o que sobrou de uma build anterior.
+    DaemonEnsure,
+    /// Encerra o daemon em execução (e o processo dos atalhos dele).
+    DaemonStop,
     /// Só os atalhos globais (o daemon inicia este processo quando há um jogo aberto).
     Keys,
     /// Pede uma captura de tela a cada jogo com a layer aberta (o daemon ou o `watch` grava os PNG).
@@ -151,7 +158,7 @@ pub fn resolve_bundle(explicit: Option<PathBuf>, selected: ipc::SelectionRead, e
     if let ipc::SelectionRead::Path(path) = selected {
         return Ok(PathBuf::from(path));
     }
-    env.ok_or_else(|| "nenhum efeito escolhido: use 'lrctl use <diretório>', --bundle <diretório> ou defina LINUX_RESHADE_BUNDLE".to_string())
+    env.ok_or_else(|| tr("no effect chosen: use 'lrctl use <directory>', --bundle <directory> or set LINUX_RESHADE_BUNDLE").to_string())
 }
 
 /// `args` sem o nome do programa.
@@ -165,19 +172,19 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
     let mut it = args.iter();
     while let Some(a) = it.next() {
         if a == "--bundle" {
-            bundle = Some(PathBuf::from(it.next().ok_or("--bundle precisa de um diretório")?));
+            bundle = Some(PathBuf::from(it.next().ok_or(tr("--bundle needs a directory"))?));
         } else if let Some(dir) = a.strip_prefix("--bundle=") {
             bundle = Some(PathBuf::from(dir));
         } else if a == "--layer" {
-            layer = Some(it.next().ok_or("--layer precisa do número do processo ou do nome do jogo (veja 'lrctl layers')")?.clone());
+            layer = Some(it.next().ok_or(tr("--layer needs the process number or the game name (see 'lrctl layers')"))?.clone());
         } else if let Some(name) = a.strip_prefix("--layer=") {
             layer = Some(name.to_string());
         } else if a == "--game" {
-            game = Some(it.next().ok_or("--game precisa do id do jogo")?.clone());
+            game = Some(it.next().ok_or(tr("--game needs the game id"))?.clone());
         } else if let Some(id) = a.strip_prefix("--game=") {
             game = Some(id.to_string());
         } else if a == "--file" {
-            file = Some(PathBuf::from(it.next().ok_or("--file precisa de um arquivo .ini")?));
+            file = Some(PathBuf::from(it.next().ok_or(tr("--file needs an .ini file"))?));
         } else if let Some(path) = a.strip_prefix("--file=") {
             file = Some(PathBuf::from(path));
         } else {
@@ -185,25 +192,25 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         }
     }
     let Some((command, tail)) = rest.split_first() else { return Ok(Command::Status) };
-    let no_args = |c: Command| if tail.is_empty() { Ok(c) } else { Err(format!("'{command}' não aceita argumentos")) };
+    let no_args = |c: Command| if tail.is_empty() { Ok(c) } else { Err(fmt("'{}' takes no arguments", &[&command])) };
     if layer.is_some() && !matches!(command.as_str(), "use" | "current" | "uniforms" | "get" | "set" | "reset" | "depth") {
-        return Err(format!("--layer não vale em '{command}'"));
+        return Err(fmt("--layer does not apply to '{}'", &[&command]));
     }
     if (game.is_some() || file.is_some()) && command != "preset" {
-        return Err(format!("--game e --file só valem em 'preset', não em '{command}'"));
+        return Err(fmt("--game and --file only apply to 'preset', not to '{}'", &[&command]));
     }
     if game.is_some() && file.is_some() {
-        return Err("use --game ou --file, não os dois".into());
+        return Err(tr("use --game or --file, not both").into());
     }
     match command.as_str() {
         "depth" => {
-            let number = |n: &str| n.parse::<u32>().ok().filter(|n| *n > 0).ok_or_else(|| format!("número inválido: {n:?} (começa em 1)"));
+            let number = |n: &str| n.parse::<u32>().ok().filter(|n| *n > 0).ok_or_else(|| fmt("invalid number: {} (starts at 1)", &[&format!("{:?}", n)]));
             let pick = match tail.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
                 ["pick", "candidate", n] => DepthPick::Candidate(number(n)?),
                 ["pick", "pass", n] => DepthPick::Pass(number(n)?),
                 ["pick", "clear", n] => DepthPick::Clear(number(n)?),
                 ["pick", "auto"] => DepthPick::Auto,
-                _ => return Err("uso: lrctl depth pick candidate <N> | pass <N> | auto  (--layer <jogo> opcional)".into()),
+                _ => return Err(tr("usage: lrctl depth pick candidate <N> | pass <N> | auto  (--layer <game> optional)").into()),
             };
             Ok(Command::DepthPick { pick, layer })
         }
@@ -214,7 +221,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
                 ["disable", t] => PresetAction::Disable((*t).into()),
                 ["move", t, pos] => match pos.parse::<usize>() {
                     Ok(n) if n >= 1 => PresetAction::Move((*t).into(), n),
-                    _ => return Err(format!("posição inválida: {pos:?} (começa em 1)")),
+                    _ => return Err(fmt("invalid position: {} (starts at 1)", &[&format!("{:?}", pos)])),
                 },
                 ["set", f, parameter, values @ ..] if !values.is_empty() => {
                     PresetAction::Set { file: (*f).into(), parameter: (*parameter).into(), values: values.iter().map(|v| (*v).into()).collect() }
@@ -226,7 +233,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
                 ["macros", f, text] if f.ends_with(".fx") => PresetAction::Macros { file: Some((*f).into()), text: Some((*text).into()) },
                 ["use", "none"] => PresetAction::Use(None),
                 ["use", name] if !name.starts_with('-') => PresetAction::Use(Some((*name).into())),
-                _ => return Err("uso: lrctl preset show | enable|disable <técnica> | move <técnica> <posição> | macros [Arquivo.fx] [NOME=VALOR,...] | set <Arquivo.fx> <parâmetro> <valor...> | new <nome> | use <nome|none>  (com --game <id> ou --file <arquivo>)".into()),
+                _ => return Err(tr("usage: lrctl preset show | enable|disable <technique> | move <technique> <position> | macros [File.fx] [NAME=VALUE,...] | set <File.fx> <parameter> <value...> | new <name> | use <name|none>  (with --game <id> or --file <file>)").into()),
             };
             Ok(Command::Preset { action, game, file })
         }
@@ -235,6 +242,8 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "off" => no_args(Command::Off),
         "toggle" => no_args(Command::Toggle),
         "daemon" => no_args(Command::Daemon),
+        "daemon-ensure" => no_args(Command::DaemonEnsure),
+        "daemon-stop" => no_args(Command::DaemonStop),
         "keys" => no_args(Command::Keys),
         "screenshot" => no_args(Command::Screenshot),
         "setup" => match tail {
@@ -263,30 +272,30 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
             [] => Ok(Command::Config { init: false, dir: None }),
             [init] if init == "init" => Ok(Command::Config { init: true, dir: None }),
             [init, dir] if init == "init" && !dir.starts_with('-') => Ok(Command::Config { init: true, dir: Some(PathBuf::from(dir)) }),
-            _ => Err("uso: lrctl config | lrctl config init [pasta]".into()),
+            _ => Err(tr("usage: lrctl config | lrctl config init [folder]").into()),
         },
         "use" => match tail {
             [none] if none == "none" => Ok(Command::Use { bundle: None, layer }),
             [inherit] if inherit == "inherit" => match layer {
                 Some(layer) => Ok(Command::Inherit { layer }),
-                None => Err("'use inherit' precisa de --layer <jogo>".into()),
+                None => Err(tr("'use inherit' needs --layer <game>").into()),
             },
             [dir] => Ok(Command::Use { bundle: Some(PathBuf::from(dir)), layer }),
-            _ => Err("uso: lrctl use <Nome|diretório-do-bundle> | lrctl use none | lrctl use inherit --layer <jogo>".into()),
+            _ => Err(tr("usage: lrctl use <Name|bundle-directory> | lrctl use none | lrctl use inherit --layer <game>").into()),
         },
         "uniforms" => no_args(Command::Uniforms { bundle, layer }),
         "reset" => no_args(Command::Reset { bundle, layer }),
         "get" => match tail {
             [name] => Ok(Command::Get { bundle, layer, name: name.clone() }),
-            _ => Err("uso: lrctl get <nome>".into()),
+            _ => Err(tr("usage: lrctl get <name>").into()),
         },
         "set" => match tail {
             [name, values @ ..] if !values.is_empty() => {
                 Ok(Command::Set { bundle, layer, name: name.clone(), values: values.to_vec() })
             }
-            _ => Err("uso: lrctl set <nome> <valor...>".into()),
+            _ => Err(tr("usage: lrctl set <name> <value...>").into()),
         },
-        other => Err(format!("comando desconhecido: {other:?}")),
+        other => Err(fmt("unknown command: {}", &[&format!("{:?}", other)])),
     }
 }
 

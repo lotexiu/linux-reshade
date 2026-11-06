@@ -15,6 +15,7 @@ use shortcuts::{Backend, BoundShortcut, Error, Event, Phase, Shortcut};
 use std::collections::HashMap;
 use zbus::blocking::{Connection, Proxy, proxy::SignalIterator};
 use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
+use i18n::{fmt, tr};
 
 const DESTINATION: &str = "org.freedesktop.portal.Desktop";
 const PORTAL_PATH: &str = "/org/freedesktop/portal/desktop";
@@ -40,7 +41,7 @@ impl PortalBackend {
         // Só a existência da propriedade interessa: confirma que o portal expõe a interface.
         proxy
             .get_property::<u32>("version")
-            .map_err(|e| Error::Unavailable(format!("portal sem GlobalShortcuts: {e}")))?;
+            .map_err(|e| Error::Unavailable(fmt("portal without GlobalShortcuts: {}", &[&e])))?;
         Ok(Self { requester: Requester::new(connection), proxy, session: None, signals: None })
     }
 
@@ -55,7 +56,7 @@ impl PortalBackend {
         // O portal devolve o caminho da sessão como string (`s`), não como `o`.
         let handle = results
             .get("session_handle")
-            .ok_or_else(|| Error::Backend("CreateSession sem session_handle".into()))?;
+            .ok_or_else(|| Error::Backend(tr("CreateSession without session_handle").into()))?;
         let text: String = handle.try_clone().map_err(backend_err)?.try_into().map_err(backend_err)?;
         OwnedObjectPath::try_from(text).map_err(backend_err)
     }
@@ -93,7 +94,7 @@ impl Backend for PortalBackend {
 
         let bound: Vec<(String, HashMap<String, OwnedValue>)> = results
             .get("shortcuts")
-            .ok_or_else(|| Error::Backend("BindShortcuts sem shortcuts".into()))?
+            .ok_or_else(|| Error::Backend(tr("BindShortcuts without shortcuts").into()))?
             .try_clone()
             .map_err(backend_err)?
             .try_into()
@@ -112,7 +113,7 @@ impl Backend for PortalBackend {
     }
 
     fn next_event(&mut self) -> Result<Event, Error> {
-        let session = self.session.clone().ok_or_else(|| Error::Backend("bind() ainda não foi chamado".into()))?;
+        let session = self.session.clone().ok_or_else(|| Error::Backend(tr("bind() has not been called yet").into()))?;
         let signals = self.signals.as_mut().ok_or(Error::Closed)?;
         loop {
             let message = signals.next().ok_or(Error::Closed)?;

@@ -115,7 +115,7 @@ impl AddEffectView {
         let folder_query = Rc::new(RefCell::new(String::new()));
         {
             let query = folder_query.clone();
-            // A linha tr("All folders") (nome vazio) sempre aparece.
+            // A linha "Todas as pastas" (nome vazio) sempre aparece.
             folder_list.set_filter_func(move |row| {
                 let q = query.borrow();
                 q.is_empty() || row.widget_name().is_empty() || row.widget_name().to_lowercase().contains(q.as_str())

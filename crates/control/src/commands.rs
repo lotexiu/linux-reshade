@@ -10,6 +10,7 @@ use fx_bundle::Bundle;
 use ipc::{ChannelSelection, LiveLayer, ParamStore, SelectionRead, SelectionStore};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use control_core::i18n::{fmt, tr};
 
 fn fail(message: impl std::fmt::Display) -> ExitCode {
     eprintln!("lrctl: {message}");
@@ -30,9 +31,9 @@ impl<'a> Target<'a> {
     /// `--layer <jogo>` (ou nenhum: todos). Falha se o jogo não está aberto.
     fn open(layer: Option<&str>, state: &'a ipc::Writer) -> Result<Self, String> {
         let Some(query) = layer else { return Ok(Target::All(state)) };
-        let layers = ipc::live_layers().map_err(|e| format!("não consegui listar as layers: {e}"))?;
+        let layers = ipc::live_layers().map_err(|e| fmt("could not list the layers: {}", &[&e]))?;
         let found = layers::find(&layers, query)?.clone();
-        let channel = state.channel(&found.id).map_err(|e| format!("não consegui abrir o canal de {query}: {e}"))?;
+        let channel = state.channel(&found.id).map_err(|e| fmt("could not open the channel of {}: {}", &[&query, &e]))?;
         Ok(Target::Game { layer: found, channel, global: state })
     }
 
@@ -62,7 +63,7 @@ impl<'a> Target<'a> {
     /// "todos os jogos" ou "vkcube (pid 123)".
     fn label(&self) -> String {
         match self {
-            Target::All(_) => "todos os jogos".into(),
+            Target::All(_) => tr("all games").into(),
             Target::Game { layer, .. } => {
                 let app = if layer.status.app.is_empty() { layer.id.as_str() } else { layer.status.app.as_str() };
                 format!("{app} (pid {})", layers::pid_of(&layer.id).unwrap_or("?"))
@@ -76,7 +77,7 @@ impl<'a> Target<'a> {
             Target::All(state) => Ok(state.selection()),
             Target::Game { layer, global, .. } => match global.layer_selection(&layer.id) {
                 ChannelSelection::Path(path) => Ok(SelectionRead::Path(path)),
-                ChannelSelection::NoEffect => Err(format!("{} está sem efeito; escolha um com 'lrctl use <Nome> --layer ...'", self.label())),
+                ChannelSelection::NoEffect => Err(fmt("{} has no effect; choose one with 'lrctl use <Name> --layer ...'", &[&self.label()])),
                 ChannelSelection::Inherit | ChannelSelection::Unstable => Ok(global.selection()),
             },
         }
@@ -101,7 +102,7 @@ fn config_command(init: bool, dir: Option<PathBuf>) -> ExitCode {
     let env = |name: &str| std::env::var_os(name);
     if init {
         let Some(dir) = dir.or_else(|| config::default_data_dir(&env)) else {
-            return fail("não sei onde ficam seus dados (HOME e XDG_DATA_HOME vazios): passe a pasta");
+            return fail(tr("do not know where your data lives (HOME and XDG_DATA_HOME are empty): pass the folder"));
         };
         let dir = match std::path::absolute(&dir) {
             Ok(d) => d,
@@ -110,13 +111,13 @@ fn config_command(init: bool, dir: Option<PathBuf>) -> ExitCode {
         match config::init(&dir, &env) {
             Ok(done) => {
                 for path in &done.created {
-                    println!("criado: {}", path.display());
+                    println!("{}", fmt("created: {}", &[&path.display()]));
                 }
                 match &done.location {
-                    Some(file) => println!("escolhida como pasta de dados (ponteiro em {})", file.display()),
-                    None => println!("pasta pronta, mas não achei onde gravar o ponteiro (HOME/XDG_CONFIG_HOME): use LINUX_RESHADE_DATA={}", dir.display()),
+                    Some(file) => println!("{}", fmt("chosen as the data folder (pointer in {})", &[&file.display()])),
+                    None => println!("{}", fmt("folder ready, but could not find where to write the pointer (HOME/XDG_CONFIG_HOME): use LINUX_RESHADE_DATA={}", &[&dir.display()])),
                 }
-                println!("coloque os efeitos em {}/Shaders e as imagens em {}/Textures", dir.display(), dir.display());
+                println!("{}", fmt("put the effects in {}/Shaders and the images in {}/Textures", &[&dir.display(), &dir.display()]));
             }
             Err(e) => return fail(format!("{}: {e}", dir.display())),
         }
@@ -129,7 +130,7 @@ fn config_command(init: bool, dir: Option<PathBuf>) -> ExitCode {
 fn describe_bundle(bundle: &Bundle) -> String {
     let t = bundle.manifest.target;
     let names: Vec<&str> = bundle.manifest.techniques.iter().map(|t| t.name.as_str()).collect();
-    format!("{} ({}x{}, técnica(s): {})", bundle.manifest.source, t.width, t.height, names.join(", "))
+    fmt("{} ({}x{}, technique(s): {})", &[&bundle.manifest.source, &t.width, &t.height, &names.join(", ")])
 }
 
 pub fn run(command: Command, state: &ipc::Writer) -> ExitCode {
@@ -144,7 +145,7 @@ pub fn run(command: Command, state: &ipc::Writer) -> ExitCode {
         Command::Screenshot => {
             let config = config::Config::load();
             println!("{}", action::Action::Screenshot.run(state, None, config.screenshot_before));
-            println!("as capturas vão para {}", config.screenshot_dir.display());
+            println!("{}", fmt("screenshots go to {}", &[&config.screenshot_dir.display()]));
             ExitCode::SUCCESS
         }
         Command::Setup(true) => match control_core::install::install_layer() {
@@ -153,20 +154,20 @@ pub fn run(command: Command, state: &ipc::Writer) -> ExitCode {
                 if let Err(e) = control_core::install::first_run() {
                     eprintln!("lrctl: aviso: {e}");
                 }
-                println!("camada instalada: {}\nmanifesto: {}", lib.display(), control_core::install::manifest_path().display());
+                println!("{}", fmt("layer installed: {}\nmanifest: {}", &[&lib.display(), &control_core::install::manifest_path().display()]));
                 ExitCode::SUCCESS
             }
             Err(e) => fail(e),
         },
         Command::Setup(false) => {
             control_core::install::uninstall_layer();
-            println!("camada removida");
+            println!("{}", tr("layer removed"));
             ExitCode::SUCCESS
         }
         Command::Flatpak(action) => flatpak(action),
         Command::Stats(on) => match ipc::set_stats_on(on) {
             Ok(()) => {
-                println!("medição de desempenho {}", if on { "ligada: veja com 'lrctl layers' (ou na aba Desempenho do painel)" } else { "desligada" });
+                println!("{}", if on { tr("performance measurement on: see it with 'lrctl layers' (or in the panel's Performance tab)") } else { tr("performance measurement off") });
                 ExitCode::SUCCESS
             }
             Err(e) => {
@@ -178,6 +179,32 @@ pub fn run(command: Command, state: &ipc::Writer) -> ExitCode {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => fail(e),
         },
+        Command::DaemonEnsure => match control_core::install::ensure_daemon_current() {
+            control_core::install::DaemonAction::Kept => {
+                println!("{}", tr("the daemon is already from this build"));
+                ExitCode::SUCCESS
+            }
+            control_core::install::DaemonAction::Started => {
+                println!("{}", tr("daemon started"));
+                ExitCode::SUCCESS
+            }
+            control_core::install::DaemonAction::Replaced => {
+                println!("{}", tr("daemon from an older build replaced by this one"));
+                ExitCode::SUCCESS
+            }
+            control_core::install::DaemonAction::Failed => fail(tr("could not start the daemon")),
+        },
+        Command::DaemonStop => {
+            if !ipc::daemon_lock::is_running() {
+                println!("{}", tr("no daemon running"));
+                ExitCode::SUCCESS
+            } else if control_core::install::stop_daemon() {
+                println!("{}", tr("daemon stopped"));
+                ExitCode::SUCCESS
+            } else {
+                fail(tr("the daemon did not stop"))
+            }
+        }
         Command::Keys => match daemon::run_keys(state) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => fail(e),
@@ -190,7 +217,7 @@ pub fn run(command: Command, state: &ipc::Writer) -> ExitCode {
         Command::Layers => {
             match ipc::live_layers() {
                 Ok(list) => print!("{}", layers::render(&list)),
-                Err(e) => return fail(format!("não consegui listar as layers: {e}")),
+                Err(e) => return fail(fmt("could not list the layers: {}", &[&e])),
             }
             ExitCode::SUCCESS
         }
@@ -201,7 +228,7 @@ pub fn run(command: Command, state: &ipc::Writer) -> ExitCode {
             Ok(compiler) => {
                 let available = compiler.available();
                 if available.is_empty() {
-                    println!("nenhum efeito encontrado em: {}", compiler.effect_dirs().iter().map(|d| d.display().to_string()).collect::<Vec<_>>().join(", "));
+                    println!("{}", fmt("no effect found in: {}", &[&compiler.effect_dirs().iter().map(|d| d.display().to_string()).collect::<Vec<_>>().join(", ")]));
                 }
                 for (name, dir) in available {
                     println!("{name:<24} {}", dir.display());
@@ -212,7 +239,7 @@ pub fn run(command: Command, state: &ipc::Writer) -> ExitCode {
         },
         Command::Watch => match Compiler::from_env() {
             Ok(compiler) => {
-                println!("vigiando os jogos com a layer (Ctrl+C para sair)");
+                println!("{}", tr("watching the games with the layer (Ctrl+C to quit)"));
                 {
                     let config = config::Config::load();
                     watch::run(&compiler, state, config.presets_dir, &config.global_macros, &config.screenshot_dir)
@@ -223,11 +250,11 @@ pub fn run(command: Command, state: &ipc::Writer) -> ExitCode {
         Command::Uniforms { bundle, layer } => with_bundle(bundle, layer, state, |bundle, target| {
             for row in target.with_params(|store| params::describe(bundle, store)) {
                 match &row.source {
-                    Some(source) => println!("{:<22} {:<8} (preenchido pelo runtime: {source})", row.name, row.type_name),
+                    Some(source) => println!("{:<22} {:<8} {}", row.name, row.type_name, fmt("(filled in by the runtime: {})", &[&source])),
                     None => {
                         let range = row.range.map(|(a, b)| format!("  [{} .. {}]", params::fmt_number(a), params::fmt_number(b))).unwrap_or_default();
                         let label = row.label.as_deref().map(|l| format!("  \"{l}\"")).unwrap_or_default();
-                        let default = if row.value == row.default { String::new() } else { format!("  (padrão {})", params::fmt_values(&row.default)) };
+                        let default = if row.value == row.default { String::new() } else { fmt("  (default {})", &[&params::fmt_values(&row.default)]) };
                         println!("{:<22} {:<8} = {}{default}{range}{label}", row.name, row.type_name, params::fmt_values(&row.value));
                     }
                 }
@@ -259,7 +286,7 @@ pub fn run(command: Command, state: &ipc::Writer) -> ExitCode {
         }),
         Command::Reset { bundle, layer } => with_bundle(bundle, layer, state, |bundle, target| match target.with_params(|store| params::reset(bundle, store)) {
             Ok(()) => {
-                println!("parâmetros de volta aos valores padrão ({})", target.label());
+                println!("{}", fmt("parameters back to the default values ({})", &[&target.label()]));
                 ExitCode::SUCCESS
             }
             Err(e) => fail(e),
@@ -291,11 +318,11 @@ fn use_none(target: &Target) -> ExitCode {
     match target {
         Target::All(state) => {
             state.clear_selection();
-            println!("nenhum efeito escolhido (a layer volta a usar LINUX_RESHADE_BUNDLE, se o jogo tiver)");
+            println!("{}", tr("no effect chosen (the layer goes back to LINUX_RESHADE_BUNDLE, if the game has it)"));
         }
         Target::Game { channel, .. } => {
             channel.publish_no_effect();
-            println!("{}: sem efeito (mesmo que haja um escolhido para todos)", target.label());
+            println!("{}", fmt("{}: no effect (even if one is chosen for everyone)", &[&target.label()]));
         }
     }
     ExitCode::SUCCESS
@@ -305,7 +332,7 @@ fn use_none(target: &Target) -> ExitCode {
 fn inherit(target: &Target) -> ExitCode {
     if let Target::Game { channel, .. } = target {
         channel.inherit();
-        println!("{}: volta a seguir a escolha de todos os jogos", target.label());
+        println!("{}", fmt("{}: follows the choice for all games again", &[&target.label()]));
     }
     ExitCode::SUCCESS
 }
@@ -320,12 +347,12 @@ fn select(dir: &Path, target: &Target) -> ExitCode {
         Ok(b) => b,
         Err(e) => return fail(e),
     };
-    let Some(text) = abs.to_str() else { return fail("o caminho do bundle não é UTF-8") };
+    let Some(text) = abs.to_str() else { return fail(tr("the bundle path is not UTF-8")) };
     if let Err(e) = target.selection_store().publish_selection(text) {
-        return fail(format!("não consegui publicar a escolha: {e}"));
+        return fail(fmt("could not publish the choice: {}", &[&e]));
     }
-    println!("efeito escolhido para {}: {}", target.label(), describe_bundle(&bundle));
-    println!("a layer o carrega no próximo frame com os efeitos ligados (o tamanho precisa ser o do jogo)");
+    println!("{}", fmt("effect chosen for {}: {}", &[&target.label(), &describe_bundle(&bundle)]));
+    println!("{}", tr("the layer loads it on the next frame with the effects on (the size must be the game's)"));
     ExitCode::SUCCESS
 }
 
@@ -342,13 +369,13 @@ fn select_by_name(name: &str, target: &Target) -> ExitCode {
         Err(e) => return fail(e),
     };
     for (w, h, fresh) in &outcome.prepared {
-        println!("{name} {w}x{h}: {}", if *fresh { "compilado" } else { "já estava compilado" });
+        println!("{name} {w}x{h}: {}", if *fresh { tr("compiled") } else { tr("was already compiled") });
     }
-    println!("efeito escolhido para {}: {name}", target.label());
+    println!("{}", fmt("effect chosen for {}: {}", &[&target.label(), &name]));
     if outcome.prepared.is_empty() {
-        println!("nenhum jogo com a layer aberto agora; ele é compilado quando um aparecer (o 'lrctl daemon' ou 'lrctl watch' precisa estar rodando)");
+        println!("{}", tr("no game with the layer open right now; it is compiled when one shows up ('lrctl daemon' or 'lrctl watch' must be running)"));
     } else {
-        println!("o vigia (daemon ou watch) compila as resoluções novas que aparecerem");
+        println!("{}", tr("the watcher (daemon or watch) compiles the new resolutions that show up"));
     }
     ExitCode::SUCCESS
 }
@@ -356,12 +383,12 @@ fn select_by_name(name: &str, target: &Target) -> ExitCode {
 fn current(target: &Target) -> ExitCode {
     if let Target::Game { layer, global, .. } = target {
         match global.layer_selection(&layer.id) {
-            ChannelSelection::Path(_) => println!("{}: escolha própria", target.label()),
+            ChannelSelection::Path(_) => println!("{}", fmt("{}: its own choice", &[&target.label()])),
             ChannelSelection::NoEffect => {
-                println!("{}: sem efeito (escolha própria)", target.label());
+                println!("{}", fmt("{}: no effect (its own choice)", &[&target.label()]));
                 return ExitCode::SUCCESS;
             }
-            ChannelSelection::Inherit | ChannelSelection::Unstable => println!("{}: sem escolha própria; segue a de todos os jogos", target.label()),
+            ChannelSelection::Inherit | ChannelSelection::Unstable => println!("{}", fmt("{}: no choice of its own; follows the one for all games", &[&target.label()])),
         }
     }
     match target.selection() {
@@ -374,20 +401,20 @@ fn current(target: &Target) -> ExitCode {
 fn describe_selection(selection: SelectionRead) {
     match selection {
         SelectionRead::Path(path) if path.contains("{W}") => match Compiler::from_env().ok().and_then(|c| c.name_from_template(&path)) {
-            Some(name) => println!("{name} (por nome; um bundle por resolução em {path})"),
-            None => println!("{path} (modelo por resolução)"),
+            Some(name) => println!("{}", fmt("{} (by name; one bundle per resolution in {})", &[&name, &path])),
+            None => println!("{}", fmt("{} (template per resolution)", &[&path])),
         },
         SelectionRead::Path(path) => match load(Path::new(&path)) {
             Ok(bundle) => println!("{path}\n  {}", describe_bundle(&bundle)),
-            Err(e) => println!("{path}\n  (não carrega agora: {e})"),
+            Err(e) => println!("{}", fmt("{}\n  (does not load right now: {})", &[&path, &e])),
         },
         SelectionRead::Cleared => {
-            println!("nenhum efeito escolhido");
+            println!("{}", tr("no effect chosen"));
             if let Some(env) = std::env::var_os("LINUX_RESHADE_BUNDLE") {
                 println!("(LINUX_RESHADE_BUNDLE={})", Path::new(&env).display());
             }
         }
-        SelectionRead::Unstable => println!("a escolha está sendo atualizada; tente de novo"),
+        SelectionRead::Unstable => println!("{}", tr("the choice is being updated; try again")),
     }
 }
 
@@ -395,7 +422,7 @@ fn describe_selection(selection: SelectionRead) {
 fn depth_pick(pick: DepthPick, layer: Option<String>) -> ExitCode {
     let layers = match ipc::live_layers() {
         Ok(l) => l,
-        Err(e) => return fail(format!("não consegui listar as layers: {e}")),
+        Err(e) => return fail(fmt("could not list the layers: {}", &[&e])),
     };
     let targets: Vec<LiveLayer> = match layer {
         Some(query) => match layers::find(&layers, &query) {
@@ -405,7 +432,7 @@ fn depth_pick(pick: DepthPick, layer: Option<String>) -> ExitCode {
         None => layers,
     };
     if targets.is_empty() {
-        return fail("nenhum jogo com a layer ativa");
+        return fail(tr("no game with the layer active"));
     }
     for l in targets {
         let wanted = match pick {
@@ -416,10 +443,10 @@ fn depth_pick(pick: DepthPick, layer: Option<String>) -> ExitCode {
         };
         match ipc::set_depth_pick(&l.id, wanted) {
             Ok(()) => println!("{}: {}", l.status.app, match pick {
-                DepthPick::Auto => "profundidade automática".to_string(),
-                DepthPick::Candidate(n) => format!("candidata {n}"),
-                DepthPick::Pass(n) => format!("profundidade depois do passe {n}"),
-                DepthPick::Clear(n) => format!("profundidade antes da limpeza {n}"),
+                DepthPick::Auto => tr("automatic depth").to_string(),
+                DepthPick::Candidate(n) => fmt("candidate {}", &[&n]),
+                DepthPick::Pass(n) => fmt("depth after pass {}", &[&n]),
+                DepthPick::Clear(n) => fmt("depth before clear {}", &[&n]),
             }),
             Err(e) => return fail(format!("{}: {e}", l.id)),
         }
@@ -431,28 +458,28 @@ fn depth_pick(pick: DepthPick, layer: Option<String>) -> ExitCode {
 fn flatpak(action: cli::FlatpakAction) -> ExitCode {
     use control_core::flatpak::{self, State};
     if !flatpak::available() {
-        return fail("o comando 'flatpak' não está instalado");
+        return fail(tr("the 'flatpak' command is not installed"));
     }
     let result = match action {
         cli::FlatpakAction::List => flatpak::installed_apps().map(|apps| {
-            println!("configuração global: {}", if flatpak::global_enabled() { "ligada (todos os apps)" } else { "desligada" });
+            println!("{}", if flatpak::global_enabled() { tr("global setting: on (all apps)") } else { tr("global setting: off") });
             for app in apps {
                 let state = match flatpak::state(&app.id) {
-                    State::Off => "desligado",
-                    State::On => "ligado",
-                    State::Global => "ligado (global)",
-                    State::DisabledHere => "desligado só aqui (LINUX_RESHADE=0)",
+                    State::Off => tr("off"),
+                    State::On => tr("on"),
+                    State::Global => tr("on (global)"),
+                    State::DisabledHere => tr("off here only (LINUX_RESHADE=0)"),
                 };
                 println!("{:<44} {:<28} {state}", app.id, app.name);
             }
         }),
-        cli::FlatpakAction::Set { app, on: true } => match flatpak::installed_apps().and_then(|apps| apps.into_iter().find(|a| a.id == app).ok_or(format!("{app}: não é um app Flatpak instalado"))) {
-            Ok(found) => flatpak::enable(&found).map(|()| println!("ligado em {app}")),
+        cli::FlatpakAction::Set { app, on: true } => match flatpak::installed_apps().and_then(|apps| apps.into_iter().find(|a| a.id == app).ok_or(fmt("{}: not an installed Flatpak app", &[&app]))) {
+            Ok(found) => flatpak::enable(&found).map(|()| println!("{}", fmt("enabled for {}", &[&app]))),
             Err(e) => Err(e),
         },
-        cli::FlatpakAction::Set { app, on: false } => flatpak::disable(&app).map(|()| println!("desfeito em {app}")),
-        cli::FlatpakAction::Global(true) => flatpak::enable_global().map(|()| println!("ligado para todos os apps Flatpak")),
-        cli::FlatpakAction::Global(false) => flatpak::disable_global().map(|()| println!("desfeito para todos os apps Flatpak")),
+        cli::FlatpakAction::Set { app, on: false } => flatpak::disable(&app).map(|()| println!("{}", fmt("undone for {}", &[&app]))),
+        cli::FlatpakAction::Global(true) => flatpak::enable_global().map(|()| println!("{}", tr("enabled for all Flatpak apps"))),
+        cli::FlatpakAction::Global(false) => flatpak::disable_global().map(|()| println!("{}", tr("undone for all Flatpak apps"))),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

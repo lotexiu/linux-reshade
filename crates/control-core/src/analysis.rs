@@ -7,7 +7,7 @@ use fx_bundle::Manifest;
 use fx_bundle::images::source_of;
 use ini::Ini;
 use std::path::PathBuf;
-use crate::i18n::tr;
+use i18n::tr;
 
 /// Uma característica de um efeito (o que o filtro da lista oferece).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -78,7 +78,7 @@ impl EffectInfo {
     pub fn reason(&self) -> Option<String> {
         match (&self.error, self.problems.first()) {
             (Some(e), _) => Some(e.clone()),
-            (None, Some(p)) => Some(crate::i18n::tr_dyn(p)),
+            (None, Some(p)) => Some(i18n::tr_dyn(p)),
             _ => None,
         }
     }

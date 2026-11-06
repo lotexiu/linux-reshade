@@ -5,6 +5,7 @@
 //! `--screenshot <arquivo.png>` grava a janela; `--hold <ms>` a mantém aberta antes de sair; `--wait <ms>` espera antes de agir.
 
 mod add_effect;
+mod audit;
 mod controls;
 mod depth_picker;
 mod disclosure;
@@ -54,6 +55,10 @@ struct Options {
     open_shortcuts: bool,
     /// Abre e fecha os menus da janela como uma pessoa e confere que nada some.
     smoke_popovers: bool,
+    /// Lista todo texto da janela e das Configurações (para conferir um idioma).
+    dump_texts: bool,
+    /// Troca o idioma com a janela aberta e confere que ela foi refeita no lugar (uma só janela, com os textos do novo idioma).
+    switch_language: Option<String>,
     /// Abre esta página da janela (`add`, `flatpak`) antes de fotografar.
     page: Option<String>,
     /// Espera antes de agir (para um jogo abrir depois do painel).
@@ -68,7 +73,7 @@ struct Options {
 
 impl Options {
     fn is_test_run(&self) -> bool {
-        self.game.is_some() || self.smoke.is_some() || self.open_macros || self.open_shortcuts || self.smoke_popovers || self.page.is_some() || self.screenshot.is_some() || self.effect.is_some() || self.hold_ms > 0 || self.wait_ms > 0 || self.keepalive_check
+        self.game.is_some() || self.smoke.is_some() || self.open_macros || self.open_shortcuts || self.smoke_popovers || self.dump_texts || self.switch_language.is_some() || self.page.is_some() || self.screenshot.is_some() || self.effect.is_some() || self.hold_ms > 0 || self.wait_ms > 0 || self.keepalive_check
     }
 }
 
@@ -85,6 +90,8 @@ fn parse_args() -> Result<Options, String> {
             "--open-macros" => options.open_macros = true,
             "--open-shortcuts" => options.open_shortcuts = true,
             "--smoke-popovers" => options.smoke_popovers = true,
+            "--dump-texts" => options.dump_texts = true,
+            "--switch-language" => options.switch_language = Some(args.next().ok_or("--switch-language precisa de um código de idioma")?),
             "--page" => options.page = Some(args.next().ok_or("--page precisa do nome de uma página (add, flatpak)")?),
             "--keepalive-check" => options.keepalive_check = true,
             "--screenshot" => options.screenshot = Some(args.next().ok_or("--screenshot precisa de um arquivo .png")?),
@@ -159,7 +166,7 @@ fn main() -> glib::ExitCode {
                         let _ = control_core::install::install_layer();
                     }
                 }
-                control_core::install::start_daemon_if_needed();
+                control_core::install::ensure_daemon_current();
             }
             let home = panel::Home::new(Compiler::from_env(), config::Config::load().presets_dir, state);
             let ui = window::Ui::new(app, home);
@@ -167,10 +174,28 @@ fn main() -> glib::ExitCode {
             // Os botões e o relógio da tela guardam só referências fracas da interface (para não formarem um ciclo):
             // alguém precisa segurá-la viva enquanto o programa roda. Sem isto ela some ao fim desta função e
             // nada responde. O teste `--keepalive-check` confere.
-            let keep = ui.clone();
+            let current = Rc::new(RefCell::new(ui.clone()));
+            let keep = current.clone();
             app.connect_shutdown(move |_| {
                 let _ = &keep;
             });
+            // Trocar o idioma refaz a janela no mesmo lugar, com o mesmo modelo (nada se perde): é a ação que as Configurações disparam.
+            let relocalize = gtk::gio::SimpleAction::new("relocalize", None);
+            relocalize.connect_activate({
+                let (app, current) = (app.clone(), current.clone());
+                move |_, _| {
+                    let old = current.borrow().clone();
+                    let (width, height) = (old.window.width(), old.window.height());
+                    let new = window::Ui::with_home(&app, old.home());
+                    new.window.set_default_size(width, height);
+                    new.window.present();
+                    *current.borrow_mut() = new.clone();
+                    // As Configurações eram filhas da janela velha e saem com ela: volta a abri-las, na mesma aba.
+                    old.window.destroy();
+                    shortcuts_dialog::open_at(&new.window, 0);
+                }
+            });
+            app.add_action(&relocalize);
             if options.keepalive_check {
                 glib::MainContext::default().spawn_local(keepalive_check(app.clone(), Rc::downgrade(&ui), exit.clone()));
                 drop(ui);
@@ -217,6 +242,37 @@ async fn test_run(app: gtk::Application, ui: Rc<window::Ui>, options: Rc<Options
         }
         for p in problems {
             fail(format!("smoke FALHOU: {p}"));
+        }
+    }
+    if let Some(code) = &options.switch_language {
+        let before = audit::texts_of(&ui.window);
+        control_core::i18n::set(code);
+        app.activate_action("relocalize", None);
+        glib::timeout_future(Duration::from_millis(1500)).await;
+        let windows: Vec<gtk::Window> = app.windows();
+        let mains = windows.iter().filter(|w| w.is::<gtk::ApplicationWindow>()).count();
+        let after = windows.iter().find(|w| w.is::<gtk::ApplicationWindow>()).map(|w| audit::texts_of(w)).unwrap_or_default();
+        if mains != 1 {
+            fail(format!("trocar o idioma deixou {mains} janelas principais (esperava 1)"));
+        } else if before == after {
+            fail("trocar o idioma não mudou nenhum texto".to_string());
+        } else {
+            println!("lrpanel switch-language: ok ({} textos mudaram, {} janelas no total)", after.difference(&before).count(), windows.len());
+        }
+    }
+    if options.dump_texts {
+        let mut all = std::collections::BTreeSet::new();
+        for page in ["main", "add", "flatpak", "main"] {
+            ui.show_page(page);
+            glib::timeout_future(Duration::from_millis(2500)).await;
+            all.extend(audit::texts_of(&ui.window));
+        }
+        let settings = shortcuts_dialog::open(&ui.window);
+        glib::timeout_future(Duration::from_millis(800)).await;
+        all.extend(audit::texts_of(&settings));
+        settings.close();
+        for text in all {
+            println!("{}", text.replace('\n', "\\n"));
         }
     }
     if options.smoke_popovers {

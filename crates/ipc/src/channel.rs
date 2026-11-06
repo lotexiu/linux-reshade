@@ -16,6 +16,7 @@ use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, SystemTime};
+use i18n::{fmt, tr};
 
 const MAGIC: u32 = 0x4C52_4348; // "LRCH"
 const VERSION: u32 = 2;
@@ -92,7 +93,7 @@ pub fn channel_name(layer_id: &str) -> Option<String> {
 }
 
 fn channel_path(dir: &Path, layer_id: &str) -> io::Result<PathBuf> {
-    let name = channel_name(layer_id).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, format!("id de layer inválido: {layer_id:?}")))?;
+    let name = channel_name(layer_id).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, fmt("invalid layer id: {}", &[&format!("{:?}", layer_id)])))?;
     Ok(dir.join(name))
 }
 
@@ -121,7 +122,7 @@ impl ChannelWriter {
             f.version.store(VERSION, Ordering::Relaxed);
             f.magic.store(MAGIC, Ordering::Release);
         } else if f.version.load(Ordering::Relaxed) != VERSION {
-            return Err(io::Error::other("versão do canal incompatível; apague o arquivo"));
+            return Err(io::Error::other(tr("incompatible channel version; delete the file")));
         }
         Ok(Self { map })
     }
@@ -202,7 +203,7 @@ impl ChannelReader {
         };
         let meta = file.metadata()?;
         if meta.uid() != rustix::process::getuid().as_raw() {
-            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "canal pertence a outro usuário"));
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, tr("channel belongs to another user")));
         }
         if meta.len() < SIZE as u64 {
             return Ok(None); // o criador ainda não dimensionou
@@ -213,7 +214,7 @@ impl ChannelReader {
             return Ok(None);
         }
         if f.version.load(Ordering::Relaxed) != VERSION {
-            return Err(io::Error::other("versão do canal incompatível"));
+            return Err(io::Error::other(tr("incompatible channel version")));
         }
         Ok(Some(Self { map }))
     }

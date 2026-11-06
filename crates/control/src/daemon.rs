@@ -5,6 +5,7 @@ use control_core::compiler::Compiler;
 use crate::{backend, bindings};
 use control_core::{action::Action, watch};
 use shortcuts::{Context, Error};
+use control_core::i18n::{fmt, tr};
 
 /// Onde o daemon anota as teclas que registrou (id=tecla), para saber, na próxima vez, quais o sistema precisa esquecer.
 fn registered_file(config: &config::Config) -> std::path::PathBuf {
@@ -49,10 +50,15 @@ fn stop_keys() {
 /// `LINUX_RESHADE_KEYS_ALWAYS=1` volta a registrá-los sempre.
 pub fn run(state: &ipc::Writer) -> Result<(), Error> {
     // Um daemon só: o painel (AppImage) o inicia quando não há, e dois registrariam os atalhos em dobro.
-    let Some(_lock) = ipc::daemon_lock::acquire() else {
-        control_core::logln!("o daemon já está rodando; este sai");
+    let Some(lock) = ipc::daemon_lock::acquire() else {
+        control_core::logln!("{}", tr("the daemon is already running; this one exits"));
         return Ok(());
     };
+    // Diz de que build é: o painel troca o daemon que sobrou de uma versão anterior (ver `install::ensure_daemon_current`).
+    if let Some(stamp) = std::env::current_exe().ok().and_then(|exe| ipc::daemon_lock::exe_stamp(&exe)) {
+        ipc::daemon_lock::publish(&lock, &stamp);
+    }
+    let _lock = lock;
     let config = config::Config::load();
     let techs = config.presets_dir.as_deref().map(control_core::tech_keys::scan).unwrap_or_default();
     // A troca de tecla no painel vale na hora: o daemon reinicia a si mesmo ao ver o `config.ini` mudar.
@@ -63,11 +69,11 @@ pub fn run(state: &ipc::Writer) -> Result<(), Error> {
         // O vigia precisa do fx2spv; sem ele o atalho continua funcionando e só a compilação automática fica de fora.
         match Compiler::from_env() {
             Ok(compiler) => {
-                control_core::logln!("vigiando os jogos com a layer: compila os efeitos escolhidos por nome para cada resolução");
+                control_core::logln!("{}", tr("watching the games with the layer: compiling the effects chosen by name for each resolution"));
                 let config = config::Config::load();
                 scope.spawn(move || watch::run(&compiler, state, config.presets_dir, &config.global_macros, &config.screenshot_dir));
             }
-            Err(e) => control_core::elogln!("aviso: sem compilação automática de efeitos ({e})"),
+            Err(e) => control_core::elogln!("{}", fmt("warning: no automatic effect compilation ({})", &[&e])),
         }
 
         let exe = std::env::current_exe().map_err(|e| Error::Backend(e.to_string()))?;
@@ -85,10 +91,10 @@ pub fn run(state: &ipc::Writer) -> Result<(), Error> {
                     missing_since = None;
                     match std::process::Command::new(&exe).arg("keys").spawn() {
                         Ok(child) => {
-                            control_core::logln!("jogo aberto: atalhos globais ligados");
+                            control_core::logln!("{}", tr("game open: global shortcuts on"));
                             *slot = Some(child);
                         }
-                        Err(e) => control_core::elogln!("não consegui iniciar os atalhos: {e}"),
+                        Err(e) => control_core::elogln!("{}", fmt("could not start the shortcuts: {}", &[&e])),
                     }
                 }
                 // Um jogo que fecha e abre em seguida (trocar de mapa) não deve soltar as teclas por um instante.
@@ -98,7 +104,7 @@ pub fn run(state: &ipc::Writer) -> Result<(), Error> {
                         drop(slot);
                         stop_keys();
                         missing_since = None;
-                        control_core::logln!("nenhum jogo aberto: atalhos globais soltos (F1, F2... voltam aos outros programas)");
+                        control_core::logln!("{}", tr("no game open: global shortcuts released (F1, F2... go back to the other programs)"));
                     }
                 }
                 _ => missing_since = None,
@@ -124,14 +130,14 @@ pub fn run_keys(state: &ipc::Writer) -> Result<(), Error> {
     let registered = registered_file(&config);
     let forgotten = forget_changed(&read_registered(&registered), &wanted);
     if forgotten > 0 {
-        control_core::logln!("{forgotten} atalho(s) com tecla nova ou sem tecla esquecido(s) pelo sistema");
+        control_core::logln!("{}", fmt("{} shortcut(s) with a new key or no key forgotten by the system", &[&forgotten]));
     }
     let mut backend = backend::select()?;
-    control_core::logln!("backend de atalhos: {}", backend.name());
+    control_core::logln!("{}", fmt("shortcuts backend: {}", &[&backend.name()]));
 
     for bound in backend.bind(&dispatcher.global_shortcuts())? {
         // A combinação em vigor pode ser diferente da sugerida: o usuário pode tê-la trocado.
-        control_core::logln!("atalho {:?}: {}", bound.id, bound.trigger_description);
+        control_core::logln!("{}", fmt("shortcut {}: {}", &[&format!("{:?}", bound.id), &bound.trigger_description]));
     }
     // Anota o que foi registrado (sempre: um id que perde a tecla some da lista).
     let mut note = ini::Ini::new();
@@ -161,7 +167,7 @@ fn report(action: Action, state: &ipc::Writer, presets_dir: Option<&std::path::P
                 Ok(on) => format!("{} {}", key.technique.name, if on { "ligada" } else { "desligada" }),
                 Err(why) => why,
             },
-            _ => "técnica desconhecida".into(),
+            _ => tr("unknown technique").into(),
         },
         Action::ReloadEffects => reload_effects(compiler, presets_dir),
         other => other.run(state, presets_dir, screenshot_before),
@@ -171,7 +177,7 @@ fn report(action: Action, state: &ipc::Writer, presets_dir: Option<&std::path::P
 
 /// Apaga os compilados dos efeitos dos presets dos jogos abertos (e do global): o vigia os compila de novo (pega o `.fx` editado).
 fn reload_effects(compiler: Option<&Compiler>, presets_dir: Option<&std::path::Path>) -> String {
-    let (Some(compiler), Some(dir)) = (compiler, presets_dir) else { return "sem compilador ou pasta de presets".into() };
+    let (Some(compiler), Some(dir)) = (compiler, presets_dir) else { return tr("no compiler or presets folder").into() };
     let mut names: Vec<String> = Vec::new();
     let mut presets: Vec<std::path::PathBuf> = vec![dir.join("preset.ini")];
     for layer in ipc::live_layers().unwrap_or_default() {
@@ -192,7 +198,7 @@ fn reload_effects(compiler: Option<&Compiler>, presets_dir: Option<&std::path::P
         }
     }
     let removed: usize = names.iter().map(|n| compiler.invalidate(n)).sum();
-    format!("{removed} compilado(s) de {} efeito(s) apagado(s); o vigia refaz", names.len())
+    fmt("{} compiled bundle(s) of {} effect(s) deleted; the watcher redoes them", &[&removed, &names.len()])
 }
 
 /// Olha o `config.ini` a cada 2 s; se as teclas mudaram, o daemon se reexecuta (os atalhos são registrados na partida).
@@ -212,12 +218,12 @@ fn spawn_config_watch(config: &config::Config, techs: &[control_core::tech_keys:
         std::thread::sleep(std::time::Duration::from_secs(2));
         let config_changed = std::fs::metadata(&path).is_ok() && keys_now(&config::Config::load()) != start;
         if config_changed || tech_signature(&presets_dir) != start_techs {
-            control_core::logln!("teclas de atalho mudaram (config.ini ou presets): reiniciando o daemon");
+            control_core::logln!("{}", tr("shortcut keys changed (config.ini or presets): restarting the daemon"));
             let Ok(exe) = std::env::current_exe() else { return };
             stop_keys(); // o exec mantém o pid: o processo dos atalhos antigo não perceberia que o daemon mudou
             use std::os::unix::process::CommandExt;
             let error = std::process::Command::new(exe).args(std::env::args().skip(1)).exec();
-            control_core::elogln!("não consegui reiniciar o daemon: {error}");
+            control_core::elogln!("{}", fmt("could not restart the daemon: {}", &[&error]));
             return;
         }
     });

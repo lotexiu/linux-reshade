@@ -6,5 +6,6 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+i18n = { path = "../i18n" }
 png = { version = "0.18", default-features = false }
 jpeg-decoder = { version = "0.3", default-features = false }

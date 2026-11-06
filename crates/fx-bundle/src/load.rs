@@ -4,6 +4,7 @@ use crate::{Error, Manifest};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use i18n::{fmt, tr};
 
 /// Limites para um bundle corrompido ou malicioso não consumir memória à toa.
 const MAX_MANIFEST_BYTES: u64 = 4 << 20;
@@ -30,7 +31,7 @@ fn io(path: &Path, source: std::io::Error) -> Error {
 fn read_limited(path: &Path, max: u64) -> Result<Vec<u8>, Error> {
     let len = fs::metadata(path).map_err(|e| io(path, e))?.len();
     if len > max {
-        return Err(Error::Invalid(format!("{} tem {len} bytes (máximo {max})", path.display())));
+        return Err(Error::Invalid(fmt("{} has {} bytes (maximum {})", &[&path.display(), &len, &max])));
     }
     fs::read(path).map_err(|e| io(path, e))
 }
@@ -50,11 +51,11 @@ pub fn fnv1a64(bytes: &[u8]) -> u64 {
 /// Converte bytes de um `.spv` (little endian) em palavras, conferindo o tamanho e o magic number.
 pub fn spirv_words(bytes: &[u8]) -> Result<Vec<u32>, Error> {
     if bytes.len() < 20 || bytes.len() % 4 != 0 {
-        return Err(Error::Invalid(format!("SPIR-V com {} bytes", bytes.len())));
+        return Err(Error::Invalid(fmt("SPIR-V with {} bytes", &[&bytes.len()])));
     }
     let words: Vec<u32> = bytes.chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
     if words[0] != SPIRV_MAGIC {
-        return Err(Error::Invalid("SPIR-V sem o magic number".into()));
+        return Err(Error::Invalid(tr("SPIR-V without the magic number").into()));
     }
     Ok(words)
 }
@@ -65,7 +66,7 @@ impl Bundle {
         let manifest_path: PathBuf = dir.join("manifest.json");
         let bytes = read_limited(&manifest_path, MAX_MANIFEST_BYTES)?;
         let mut id = fnv1a64(&bytes);
-        let text = String::from_utf8(bytes).map_err(|_| Error::Parse("não é UTF-8".into()))?;
+        let text = String::from_utf8(bytes).map_err(|_| Error::Parse(tr("not UTF-8").into()))?;
         let manifest = Manifest::parse(&text)?;
         manifest.validate()?;
 

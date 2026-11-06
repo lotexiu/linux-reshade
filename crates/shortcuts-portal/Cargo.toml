@@ -6,5 +6,6 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+i18n = { path = "../i18n" }
 shortcuts = { path = "../shortcuts" }
 zbus = "5"

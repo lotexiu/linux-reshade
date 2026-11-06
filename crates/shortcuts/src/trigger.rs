@@ -4,6 +4,8 @@
 //! As teclas OEM do Windows (as que o ReShade mostra, como "OEM 7") valem pela posição no teclado americano; no xkb isso
 //! vira o keysym que a tecla produz sem modificador.
 
+use i18n::fmt;
+
 /// Modificadores aceitos, na ordem em que saem no texto final.
 const MODIFIERS: [(&str, &[&str]); 4] = [("CTRL", &["ctrl", "control", "ctl"]), ("ALT", &["alt"]), ("SHIFT", &["shift"]), ("LOGO", &["super", "logo", "meta", "win", "windows"])];
 
@@ -84,14 +86,14 @@ pub fn normalize(text: &str) -> Result<String, String> {
     for m in mods {
         let lower = m.to_lowercase();
         let Some((name, _)) = MODIFIERS.iter().find(|(_, aliases)| aliases.contains(&lower.as_str())) else {
-            return Err(format!("modificador desconhecido: {m:?} (use Ctrl, Alt, Shift ou Super)"));
+            return Err(fmt("unknown modifier: {} (use Ctrl, Alt, Shift or Super)", &[&format!("{:?}", m)]));
         };
         if !found.contains(name) {
             found.push(name);
         }
     }
     found.sort_by_key(|m| MODIFIERS.iter().position(|(n, _)| n == m));
-    let key = if key.eq_ignore_ascii_case("plus") { "plus".to_string() } else { key_name(key).ok_or_else(|| format!("tecla desconhecida: {key:?}"))? };
+    let key = if key.eq_ignore_ascii_case("plus") { "plus".to_string() } else { key_name(key).ok_or_else(|| fmt("unknown key: {}", &[&format!("{:?}", key)]))? };
     let mut out: Vec<String> = found.into_iter().map(String::from).collect();
     out.push(key);
     Ok(out.join("+"))
@@ -225,8 +227,8 @@ mod tests {
     fn nonsense_is_refused_with_a_reason() {
         assert!(normalize("").is_err());
         assert!(normalize("Ctrl+").is_err() || normalize("Ctrl+").is_ok_and(|t| t == "CTRL+plus"));
-        assert!(normalize("Hyper+F1").unwrap_err().contains("modificador"));
-        assert!(normalize("Ctrl+Banana").unwrap_err().contains("tecla"));
+        assert!(normalize("Hyper+F1").unwrap_err().contains("modifier"));
+        assert!(normalize("Ctrl+Banana").unwrap_err().contains("key"));
     }
 
     #[test]

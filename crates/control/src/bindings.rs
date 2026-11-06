@@ -8,15 +8,16 @@
 use control_core::action::Action;
 use control_core::tech_keys::TechKey;
 use shortcuts::{trigger, Binding, Dispatcher, Error, Scope, Shortcut};
+use control_core::i18n::{fmt, tr};
 
 /// O que cada tecla do `config.ini` faz: `(nome no config.ini, id do atalho, ação, descrição)`.
 /// Os ids são guardados pelo sistema: não renomear depois de publicados.
 const TABLE: [(&str, &str, Action, &str); 5] = [
-    ("KeyEffects", "toggle-effects", Action::ToggleEffects, "linux-reshade: ligar/desligar efeitos"),
-    ("KeyNextPreset", "next-preset", Action::NextPreset, "linux-reshade: próximo preset do jogo"),
-    ("KeyPreviousPreset", "previous-preset", Action::PreviousPreset, "linux-reshade: preset anterior do jogo"),
-    ("KeyScreenshot", "screenshot", Action::Screenshot, "linux-reshade: capturar a tela do jogo"),
-    ("KeyReload", "reload-effects", Action::ReloadEffects, "linux-reshade: recarregar os efeitos"),
+    ("KeyEffects", "toggle-effects", Action::ToggleEffects, "linux-reshade: turn the effects on/off"),
+    ("KeyNextPreset", "next-preset", Action::NextPreset, "linux-reshade: next preset of the game"),
+    ("KeyPreviousPreset", "previous-preset", Action::PreviousPreset, "linux-reshade: previous preset of the game"),
+    ("KeyScreenshot", "screenshot", Action::Screenshot, "linux-reshade: capture the game screen"),
+    ("KeyReload", "reload-effects", Action::ReloadEffects, "linux-reshade: reload the effects"),
 ];
 
 /// Todos os ids fixos que o programa pode registrar: os que ficam sem tecla são esquecidos pelo sistema.
@@ -54,10 +55,10 @@ pub fn dispatcher(wanted: &[(String, String)], techs: &[TechKey]) -> Result<Disp
             .iter()
             .filter_map(|(id, trigger)| {
                 let (action, description) = match TABLE.iter().find(|(_, table_id, _, _)| table_id == id) {
-                    Some((_, _, action, description)) => (*action, (*description).to_string()),
+                    Some((_, _, action, description)) => (*action, tr(description).to_string()),
                     None => {
                         let index = techs.iter().position(|k| &k.id == id)?;
-                        (Action::Technique(index), format!("linux-reshade: ligar/desligar {} ({})", techs[index].technique.name, techs[index].game.as_deref().unwrap_or("todos os jogos")))
+                        (Action::Technique(index), fmt("linux-reshade: turn {} on/off ({})", &[&techs[index].technique.name, &techs[index].game.as_deref().unwrap_or(tr("all games"))]))
                     }
                 };
                 Some(Binding::on_press(Shortcut { id: id.clone(), description, preferred_trigger: Some(trigger.clone()) }, Scope::Global, action))

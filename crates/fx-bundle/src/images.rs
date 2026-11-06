@@ -10,6 +10,7 @@
 use crate::manifest::{Manifest, Scalar, Texture, Value};
 use crate::Error;
 use std::path::{Path, PathBuf};
+use i18n::{fmt, tr};
 
 const MAGIC: &[u8; 4] = b"LRIM";
 /// Limite de uma imagem: 128 MiB de pixels (por exemplo 5000x6500), para um bundle corrompido não esgotar a memória.
@@ -46,12 +47,12 @@ pub fn encode(image: &TextureImage) -> Vec<u8> {
 
 pub fn decode(bytes: &[u8]) -> Result<TextureImage, Error> {
     let invalid = |why: &str| Error::Invalid(format!("imagem de textura: {why}"));
-    let header = bytes.get(..12).filter(|h| &h[..4] == MAGIC).ok_or_else(|| invalid("cabeçalho ausente"))?;
+    let header = bytes.get(..12).filter(|h| &h[..4] == MAGIC).ok_or_else(|| invalid(tr("missing header")))?;
     let width = u32::from_le_bytes(header[4..8].try_into().expect("4 bytes"));
     let height = u32::from_le_bytes(header[8..12].try_into().expect("4 bytes"));
     let expected = u64::from(width) * u64::from(height) * 4;
     if width == 0 || height == 0 || expected != (bytes.len() - 12) as u64 {
-        return Err(invalid(&format!("{width}x{height} não bate com {} bytes de pixels", bytes.len() - 12)));
+        return Err(invalid(&fmt("{}x{} does not match {} bytes of pixels", &[&width, &height, &(bytes.len() - 12)])));
     }
     Ok(TextureImage { width, height, rgba: bytes[12..].to_vec() })
 }
@@ -105,7 +106,7 @@ pub fn load_all(dir: &Path, manifest: &Manifest) -> Result<Vec<(usize, TextureIm
             Err(source) => return Err(Error::Io { path: file, source }),
         };
         if len > MAX_IMAGE_BYTES {
-            return Err(Error::Invalid(format!("{} tem {len} bytes (máximo {MAX_IMAGE_BYTES})", file.display())));
+            return Err(Error::Invalid(fmt("{} has {} bytes (maximum {})", &[&file.display(), &len, &MAX_IMAGE_BYTES])));
         }
         let bytes = std::fs::read(&file).map_err(|source| Error::Io { path: file.clone(), source })?;
         let image = decode(&bytes).map_err(|e| Error::Invalid(format!("{}: {e}", file.display())))?;

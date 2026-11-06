@@ -16,6 +16,7 @@
 use std::hint::spin_loop;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering, fence};
 use std::time::{Duration, Instant};
+use i18n::fmt;
 
 /// Tamanho máximo dos parâmetros: o mínimo que o Vulkan garante para um buffer de uniforms.
 pub const MAX_PARAM_BYTES: usize = 16384;
@@ -58,7 +59,7 @@ pub enum PublishError {
 impl std::fmt::Display for PublishError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PublishError::TooLarge { len, max } => write!(f, "{len} bytes (máximo {max})"),
+            PublishError::TooLarge { len, max } => write!(f, "{}", fmt("{} bytes (maximum {})", &[&len, &max])),
         }
     }
 }

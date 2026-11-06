@@ -2,7 +2,7 @@
 
 use crate::compiler::{CompileError, Compiler, Ensured};
 use ipc::{LiveLayer, SelectionStore};
-use crate::i18n::fmt;
+use i18n::fmt;
 
 /// O que escolher um efeito por nome fez.
 #[derive(Debug, Default, PartialEq, Eq)]

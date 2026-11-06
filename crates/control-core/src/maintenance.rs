@@ -4,7 +4,7 @@
 use crate::compiler::{self, Compiler};
 use std::path::Path;
 use std::time::{Duration, Instant};
-use crate::i18n::{fmt, tr};
+use i18n::{fmt, tr};
 
 /// O que há no cache.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]

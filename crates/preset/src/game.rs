@@ -11,6 +11,7 @@
 use ini::Ini;
 use std::io;
 use std::path::{Path, PathBuf};
+use i18n::fmt;
 
 pub const GAME_FILE: &str = "game.ini";
 pub const GLOBAL_PRESET: &str = "preset.ini";
@@ -64,12 +65,12 @@ pub fn find(presets_dir: &Path, game: &str) -> Option<Found> {
 /// Escolhe o preset de um jogo (cria `game.ini` e a pasta se preciso; o resto do arquivo é preservado).
 /// `None` volta a seguir o preset global.
 pub fn set_game_preset(presets_dir: &Path, game: &str, preset: Option<&str>) -> io::Result<()> {
-    let dir = game_dir(presets_dir, game).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, format!("id de jogo inválido: {game:?}")))?;
+    let dir = game_dir(presets_dir, game).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, fmt("invalid game id: {}", &[&format!("{:?}", game)])))?;
     let file = dir.join(GAME_FILE);
     let mut ini = Ini::load(&file).unwrap_or_default();
     match preset {
         Some(name) if valid_preset_file(name) => ini.set("", PRESET_KEY, name),
-        Some(name) => return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("nome de preset inválido: {name:?}"))),
+        Some(name) => return Err(io::Error::new(io::ErrorKind::InvalidInput, fmt("invalid preset name: {}", &[&format!("{:?}", name)]))),
         None => {
             ini.remove("", PRESET_KEY);
         }
@@ -87,7 +88,7 @@ pub fn depth_choice(presets_dir: &Path, game: &str) -> Option<String> {
 /// Grava (ou apaga, com `None`) a escolha de profundidade do jogo. O resto do `game.ini` é preservado; sem `game.ini`
 /// e sem escolha, não cria nada.
 pub fn set_depth_choice(presets_dir: &Path, game: &str, choice: Option<&str>) -> io::Result<()> {
-    let dir = game_dir(presets_dir, game).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, format!("id de jogo inválido: {game:?}")))?;
+    let dir = game_dir(presets_dir, game).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, fmt("invalid game id: {}", &[&format!("{:?}", game)])))?;
     let file = dir.join(GAME_FILE);
     if choice.is_none() && !file.exists() {
         return Ok(());

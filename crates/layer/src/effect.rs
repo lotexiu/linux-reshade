@@ -585,7 +585,7 @@ fn assemble_partial(old: Option<Built>, partial: Partial, steps: &[ResolvedStep]
         for effect in new_effects.iter_mut().flatten() {
             unsafe { effect.destroy(device) };
         }
-        return Err(("a cadeia anterior sumiu antes da atualização terminar".into(), Some(shared)));
+        return Err(("the previous chain vanished before the update finished".into(), Some(shared)));
     };
     unsafe {
         if !old.fences.is_empty() {
@@ -836,7 +836,7 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
                 Ok(SendOut(Ok(Output::Full(built)))) => Ok(built),
                 Ok(SendOut(Ok(Output::Partial(partial)))) => assemble_partial(fx.retiring.take(), partial, &job_steps, built_with, &data.device),
                 Ok(SendOut(Err(failure))) => Err((failure.why, failure.shared)),
-                Err(_) => Err(("a thread de criação da cadeia falhou".to_string(), None)),
+                Err(_) => Err(("the chain creation thread failed".to_string(), None)),
             };
             fx.fx = match outcome {
                 Ok(mut built) => {

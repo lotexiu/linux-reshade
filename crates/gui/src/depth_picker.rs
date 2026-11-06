@@ -1,4 +1,4 @@
-//! O botão tr("Depth…"): lista as imagens de profundidade que a layer achou no jogo aberto (e a opção automática) para a
+//! O botão "Profundidade…": lista as imagens de profundidade que a layer achou no jogo aberto (e a opção automática) para a
 //! pessoa escolher qual os efeitos usam. Sem `DropDown` dentro do popover (ele trava os cliques ao fechar): botões de opção.
 
 use gtk::prelude::*;

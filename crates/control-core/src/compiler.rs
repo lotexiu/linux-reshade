@@ -9,7 +9,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::SystemTime;
-use crate::i18n::fmt;
+use i18n::{fmt, tr};
 
 pub struct Compiler {
     /// O executável do `fx2spv`.
@@ -139,7 +139,7 @@ pub(crate) fn prune_plan(entries: &[CacheEntry], in_use: &std::collections::Hash
     for (_, mut bundles) in by_effect {
         bundles.sort_by_key(|e| std::cmp::Reverse(e.modified)); // os mais novos primeiro
         for entry in bundles.into_iter().skip(keep_per_effect) {
-            if !in_use.contains(&parse_bundle_name(&entry.file_name).expect("já foi lido")) {
+            if !in_use.contains(&parse_bundle_name(&entry.file_name).expect(tr("already read"))) {
                 doomed.push(entry.path.clone());
             }
         }
@@ -293,7 +293,7 @@ impl Compiler {
         let fx2spv = std::env::var_os("LINUX_RESHADE_FX2SPV")
             .map(PathBuf::from)
             .or_else(|| in_repo("build/fx2spv/fx2spv"))
-            .ok_or("não achei o fx2spv: rode 'scripts/dev.sh fx-tool' ou defina LINUX_RESHADE_FX2SPV")?;
+            .ok_or(tr("could not find fx2spv: run 'scripts/dev.sh fx-tool' or set LINUX_RESHADE_FX2SPV"))?;
 
         let (effects, default_includes) = if config.is_configured() {
             // Os `#include` (ReShade.fxh e cia.) moram junto dos efeitos, como no ReShade.
@@ -491,7 +491,7 @@ impl Compiler {
     /// controles são os mesmos em toda resolução, então serve o de um jogo aberto; sem nenhum, usa
     /// [`DEFAULT_SIZE`] (compilando se preciso).
     pub fn schema_bundle(&self, template: &str, live: &[ipc::LiveLayer]) -> Result<PathBuf, CompileError> {
-        let name = self.name_from_template(template).ok_or_else(|| CompileError::Io(format!("{template}: não é uma escolha por nome")))?;
+        let name = self.name_from_template(template).ok_or_else(|| CompileError::Io(fmt("{}: not a choice by name", &[&template])))?;
         let (width, height) = live
             .iter()
             .flat_map(|l| &l.status.swapchains)
@@ -603,7 +603,7 @@ impl Compiler {
             let Some(source) = fx_bundle::images::source_of(texture) else { continue };
             let path = find_texture(&dirs, source).ok_or_else(|| {
                 let searched: Vec<_> = dirs.iter().map(|d| d.display().to_string()).collect();
-                CompileError::Texture(format!("não achei a imagem {source:?} da textura {:?} (procurei em: {})", texture.name, searched.join(", ")))
+                CompileError::Texture(fmt("could not find the image {} of the texture {} (searched in: {})", &[&format!("{:?}", source), &format!("{:?}", texture.name), &(searched.join(", "))]))
             })?;
             let bytes = std::fs::read(&path).map_err(|e| CompileError::Texture(format!("{}: {e}", path.display())))?;
             let decoded = image_file::decode(source, &bytes).map_err(|e| CompileError::Texture(format!("{}: {e}", path.display())))?;

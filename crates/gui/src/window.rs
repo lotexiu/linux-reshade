@@ -58,7 +58,7 @@ pub struct Ui {
     signature: RefCell<String>,
     /// Efeitos (arquivos) com os parâmetros abertos: sobrevive às refeituras da lista.
     expanded: Rc<RefCell<HashSet<String>>>,
-    /// A página tr("Add effect") e a pilha que a alterna com a lista do preset.
+    /// A página "Adicionar efeito" e a pilha que a alterna com a lista do preset.
     add_view: Rc<AddEffectView>,
     stack: gtk::Stack,
     flatpak_view: Rc<FlatpakView>,
@@ -112,7 +112,15 @@ fn caption(text: &str) -> gtk::Label {
 
 impl Ui {
     pub fn new(app: &gtk::Application, home: Home) -> Rc<Ui> {
-        let home = Rc::new(RefCell::new(home));
+        Self::with_home(app, Rc::new(RefCell::new(home)))
+    }
+
+    /// O modelo da janela: quem refaz a janela (a troca de idioma) o passa à nova, que continua de onde a outra estava.
+    pub fn home(&self) -> Rc<RefCell<Home>> {
+        self.home.clone()
+    }
+
+    pub fn with_home(app: &gtk::Application, home: Rc<RefCell<Home>>) -> Rc<Ui> {
         let hook: Hook = Rc::new(RefCell::new(None));
         let redraw = {
             let hook = hook.clone();
@@ -237,7 +245,7 @@ impl Ui {
         shortcuts_button.set_tooltip_text(Some(tr("Settings: shortcuts, screenshots, folders, performance and cache")));
         header.pack_start(&shortcuts_button);
 
-        // A página tr("Add effect") e a lista do preset se alternam numa pilha (sem popover: ver `add_effect.rs`). Os callbacks da
+        // A página "Adicionar efeito" e a lista do preset se alternam numa pilha (sem popover: ver `add_effect.rs`). Os callbacks da
         // página só guardam uma referência fraca da interface, que ainda não existe aqui.
         let ui_ref: Rc<RefCell<Weak<Ui>>> = Rc::new(RefCell::new(Weak::new()));
         let add_view = AddEffectView::new(
@@ -278,7 +286,7 @@ impl Ui {
 
         let window = gtk::ApplicationWindow::builder().application(app).title("linux-reshade").default_width(600).default_height(780).child(&stack).build();
         window.set_titlebar(Some(&header));
-        // Esc na página tr("Add effect") volta à lista do preset (um campo de busca com texto usa o primeiro Esc para limpá-lo).
+        // Esc na página "Adicionar efeito" volta à lista do preset (um campo de busca com texto usa o primeiro Esc para limpá-lo).
         let escape = gtk::EventControllerKey::new();
         escape.connect_key_pressed({
             let ui_ref = ui_ref.clone();
@@ -646,7 +654,7 @@ impl Ui {
 
             self.depth_picker.set(&s.depth_choices, s.depth_pick);
 
-            // A página tr("Add effect") (só monta a lista enquanto está na tela).
+            // A página "Adicionar efeito" (só monta a lista enquanto está na tela).
             self.add_view.set(&s.effects, &s.folders, &s.infos, s.analysis, self.stack.visible_child_name().as_deref() == Some("add"));
 
             self.show_groups(&s.groups);
@@ -764,7 +772,7 @@ impl Ui {
 
 
     /// O que a tela sabe dos jogos, em texto (para os testes automáticos conferirem de fora).
-    /// Mexe na página tr("Add effect") como uma pessoa (abrir, abrir os filtros, escolher uma pasta, digitar, voltar, reabrir) e
+    /// Mexe na página "Adicionar efeito" como uma pessoa (abrir, abrir os filtros, escolher uma pasta, digitar, voltar, reabrir) e
     /// devolve o que deu errado: uma página que some, um campo que não aparece. Os avisos e erros do GTK durante o roteiro também
     /// contam (é assim que um widget com dois pais aparece).
     pub async fn smoke_popovers(self: &Rc<Self>) -> Vec<String> {
@@ -873,7 +881,7 @@ impl Ui {
 
     /// Adiciona um efeito ao preset do jogo escolhido, como pelo botão. `false` se o efeito não existe.
     pub fn choose_effect(self: &Rc<Self>, name: &str) -> bool {
-        // A lista da página tr("Add effect") só é montada quando ela está na tela: vai direto ao modelo (o mesmo que o clique faz).
+        // A lista da página "Adicionar efeito" só é montada quando ela está na tela: vai direto ao modelo (o mesmo que o clique faz).
         if self.home.borrow().snapshot().effects.iter().any(|e| e == name) {
             self.act(|h| h.add_effect(name));
             return true;
@@ -944,7 +952,7 @@ impl Ui {
             check(false, "o efeito não gerou nenhum controle");
         }
 
-        // 3b. criar um preset pelo botão tr("Create") do popover (precisa de um jogo escolhido)
+        // 3b. criar um preset pelo botão "Criar" do popover (precisa de um jogo escolhido)
         if self.home.borrow().snapshot().game.is_some() {
             self.new_name.set_text("smoke-novo");
             self.new_create.emit_clicked();

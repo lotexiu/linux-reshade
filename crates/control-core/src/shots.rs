@@ -4,6 +4,7 @@
 use ipc::shot::{self, Kind, RawShot};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use i18n::fmt;
 
 /// Guarda a hora de cada pedido (as duas capturas de um pedido — com e sem efeitos — levam o mesmo nome base).
 #[derive(Default)]
@@ -23,7 +24,7 @@ impl Saver {
             let stamp = self.stamps.entry((shot.game.clone(), number)).or_insert_with(ipc::file_stamp).clone();
             match write_png(out_root, &shot, &stamp) {
                 Ok(path) => saved.push(path),
-                Err(why) => crate::elogln!("captura de tela de {}: {why}", shot.game),
+                Err(why) => crate::elogln!("{}", fmt("screenshot of {}: {}", &[&shot.game, &why])),
             }
         }
         // Não acumula horas de pedidos antigos.

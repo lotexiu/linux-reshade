@@ -31,6 +31,7 @@ use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::PathBuf;
 use std::ptr::{self, NonNull};
 use std::sync::atomic::{AtomicU32, Ordering};
+use i18n::{fmt, tr};
 
 const MAGIC: u32 = 0x4C52_5348; // "LRSH"
 const VERSION: u32 = 3;
@@ -300,7 +301,7 @@ pub(crate) fn ensure_private_dir(dir: &std::path::Path) -> io::Result<()> {
     if meta.uid() != rustix::process::getuid().as_raw() {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            format!("{} pertence a outro usuário", dir.display()),
+            fmt("{} belongs to another user", &[&dir.display()]),
         ));
     }
     fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
@@ -380,7 +381,7 @@ impl Writer {
             state.flags.store(0, Ordering::Relaxed);
             state.magic.store(MAGIC, Ordering::Release);
         } else if state.version.load(Ordering::Relaxed) != VERSION {
-            return Err(io::Error::other("versão do estado incompatível; apague o arquivo"));
+            return Err(io::Error::other(tr("incompatible state version; delete the file")));
         }
         Ok(Self { map, dir: path.parent().map(std::path::Path::to_path_buf).unwrap_or_default() })
     }
@@ -495,7 +496,7 @@ impl Reader {
         };
         let meta = file.metadata()?;
         if meta.uid() != rustix::process::getuid().as_raw() {
-            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "estado pertence a outro usuário"));
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, tr("state belongs to another user")));
         }
         if meta.len() < SIZE as u64 {
             return Ok(None); // o criador ainda não dimensionou
@@ -506,7 +507,7 @@ impl Reader {
             return Ok(None); // o criador ainda não terminou de inicializar
         }
         if state.version.load(Ordering::Relaxed) != VERSION {
-            return Err(io::Error::other("versão do estado incompatível"));
+            return Err(io::Error::other(tr("incompatible state version")));
         }
         Ok(Some(Self { map }))
     }
@@ -746,6 +747,40 @@ pub mod daemon_lock {
     pub fn acquire() -> Option<File> {
         let file = open().ok()?;
         flock(&file, FlockOperation::NonBlockingLockExclusive).ok().map(|()| file)
+    }
+
+    /// O "carimbo" de um executável (tamanho e data): dois daemons de builds diferentes têm carimbos diferentes.
+    pub fn exe_stamp(path: &std::path::Path) -> Option<String> {
+        let meta = std::fs::metadata(path).ok()?;
+        let secs = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
+        Some(format!("{}:{secs}", meta.len()))
+    }
+
+    /// O daemon que pegou a trava diz aqui de que build ele é (para o painel notar um daemon antigo sobrevivendo a uma atualização).
+    pub fn publish(file: &File, stamp: &str) {
+        use std::os::unix::fs::FileExt;
+        let _ = file.set_len(0);
+        let _ = file.write_all_at(stamp.as_bytes(), 0);
+    }
+
+    /// O carimbo que o daemon em execução publicou (vazio: um daemon de antes de existir o carimbo). `None` se não há daemon.
+    pub fn running_stamp() -> Option<String> {
+        if !is_running() {
+            return None;
+        }
+        Some(std::fs::read_to_string(super::state_dir().join("daemon.lock")).unwrap_or_default().trim().to_string())
+    }
+
+    /// O processo que segura a trava (lido de `/proc/locks`: vale também para daemons que não publicaram nada).
+    pub fn holder_pid() -> Option<u32> {
+        use std::os::unix::fs::MetadataExt;
+        let inode = std::fs::metadata(super::state_dir().join("daemon.lock")).ok()?.ino();
+        let locks = std::fs::read_to_string("/proc/locks").ok()?;
+        locks.lines().find_map(|line| {
+            let f: Vec<&str> = line.split_whitespace().collect();
+            let id = f.iter().find(|w| w.matches(':').count() == 2)?;
+            (f.get(1) == Some(&"FLOCK") && id.rsplit(':').next()?.parse::<u64>().ok()? == inode).then(|| f.get(4)?.parse().ok())?
+        })
     }
 
     /// Há um daemon rodando?

@@ -1,4 +1,5 @@
 use std::fmt;
+use i18n::{fmt, tr};
 
 #[derive(Debug)]
 pub enum Error {
@@ -17,11 +18,11 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::Unavailable(why) => write!(f, "backend indisponível: {why}"),
-            Error::Backend(why) => write!(f, "falha no backend: {why}"),
-            Error::Denied => write!(f, "o usuário recusou o registro dos atalhos"),
+            Error::Unavailable(why) => write!(f, "{}", fmt("backend unavailable: {}", &[&why])),
+            Error::Backend(why) => write!(f, "{}", fmt("backend failure: {}", &[&why])),
+            Error::Denied => write!(f, "{}", tr("the user refused to register the shortcuts")),
             Error::Closed => write!(f, "a fonte de eventos foi encerrada"),
-            Error::DuplicateId(id) => write!(f, "atalho duplicado: {id:?}"),
+            Error::DuplicateId(id) => write!(f, "{}", fmt("duplicate shortcut: {}", &[&format!("{:?}", id)])),
         }
     }
 }

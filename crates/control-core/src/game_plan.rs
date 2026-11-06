@@ -13,7 +13,7 @@ use crate::compiler::{Compiler, Defines, valid_define, valid_name, variant_key};
 use fx_bundle::{Bundle, uniforms};
 use ipc::{Plan, PlanStep};
 use preset::{Macros, Preset, TechId, merge_macros};
-use crate::i18n::{fmt};
+use i18n::{fmt};
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Built {

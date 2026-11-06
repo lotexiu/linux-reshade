@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use zbus::blocking::{Connection, Proxy};
 use zbus::zvariant::{DynamicType, OwnedValue};
+use i18n::{fmt, tr};
 
 const REQUEST_INTERFACE: &str = "org.freedesktop.portal.Request";
 
@@ -23,7 +24,7 @@ impl Outcome {
         match self {
             Outcome::Success(results) => Ok(results),
             Outcome::Cancelled => Err(Error::Denied),
-            Outcome::Failed(code) => Err(Error::Backend(format!("o portal respondeu com código {code}"))),
+            Outcome::Failed(code) => Err(Error::Backend(fmt("the portal answered with code {}", &[&code]))),
         }
     }
 }
@@ -55,7 +56,7 @@ impl Requester {
         B: zbus::export::serde::Serialize + DynamicType,
     {
         let token = self.next_token();
-        let unique = self.connection.unique_name().ok_or_else(|| Error::Backend("conexão sem nome único".into()))?;
+        let unique = self.connection.unique_name().ok_or_else(|| Error::Backend(tr("connection without a unique name").into()))?;
         let path = request_path(unique.as_str(), &token);
         let request = Proxy::new(&self.connection, DESTINATION, path, REQUEST_INTERFACE).map_err(backend_err)?;
         // Assina antes de chamar: o Response pode chegar antes de a chamada retornar.

@@ -1,5 +1,5 @@
-//! A página tr("Flatpak games"): lista os apps Flatpak instalados (como o Flatseal) e liga o linux-reshade neles com um clique: o painel instala
-//! a extensão da layer e ajusta as permissões do app. Para desfazer há o botão tr("Remove changes…"), que avisa o que será desfeito.
+//! A página "Jogos Flatpak": lista os apps Flatpak instalados (como o Flatseal) e liga o linux-reshade neles com um clique: o painel instala
+//! a extensão da layer e ajusta as permissões do app. Para desfazer há o botão "Remover alterações…", que avisa o que será desfeito.
 //!
 //! É uma página da janela (um `gtk::Stack`), como `add_effect.rs`, e não um menu. O trabalho (rodar o `flatpak`, que leva segundos) roda
 //! fora da thread da tela; a linha do app fica desabilitada e mostra o andamento até ele terminar.

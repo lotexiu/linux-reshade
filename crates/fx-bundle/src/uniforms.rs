@@ -6,6 +6,7 @@
 
 use crate::manifest::{Manifest, Scalar, ScalarBase, Uniform, Value};
 use crate::Error;
+use i18n::fmt;
 
 /// Bloco de `total_uniform_size` bytes com os valores padrão de todos os uniforms.
 pub fn default_block(manifest: &Manifest) -> Vec<u8> {
@@ -93,7 +94,7 @@ fn write_default(block: &mut [u8], u: &Uniform) {
 /// Converte `values` (um número por componente) nos bytes do uniform, conferindo o tipo e a faixa.
 pub fn encode(u: &Uniform, values: &[f64]) -> Result<Vec<u8>, Error> {
     if !is_plain(u) {
-        return Err(Error::Unsupported(format!("uniform {:?}: só escalares e vetores podem ser alterados", u.name)));
+        return Err(Error::Unsupported(fmt("uniform {}: only scalars and vectors can be changed", &[&format!("{:?}", u.name)])));
     }
     let rows = u.ty.rows as usize;
     if values.len() != rows {
@@ -102,25 +103,25 @@ pub fn encode(u: &Uniform, values: &[f64]) -> Result<Vec<u8>, Error> {
     let mut bytes = Vec::with_capacity(rows * 4);
     for &v in values {
         if !v.is_finite() {
-            return Err(Error::Invalid(format!("uniform {:?}: valor não finito", u.name)));
+            return Err(Error::Invalid(fmt("uniform {}: non-finite value", &[&format!("{:?}", u.name)])));
         }
         match u.ty.base {
             ScalarBase::Float => bytes.extend_from_slice(&(v as f32).to_le_bytes()),
             ScalarBase::Int => {
                 if v.fract() != 0.0 || v < f64::from(i32::MIN) || v > f64::from(i32::MAX) {
-                    return Err(Error::Invalid(format!("uniform {:?}: {v} não é um int de 32 bits", u.name)));
+                    return Err(Error::Invalid(fmt("uniform {}: {} is not a 32-bit int", &[&format!("{:?}", u.name), &v])));
                 }
                 bytes.extend_from_slice(&(v as i32).to_le_bytes());
             }
             ScalarBase::Uint => {
                 if v.fract() != 0.0 || v < 0.0 || v > f64::from(u32::MAX) {
-                    return Err(Error::Invalid(format!("uniform {:?}: {v} não é um uint de 32 bits", u.name)));
+                    return Err(Error::Invalid(fmt("uniform {}: {} is not a 32-bit uint", &[&format!("{:?}", u.name), &v])));
                 }
                 bytes.extend_from_slice(&(v as u32).to_le_bytes());
             }
             ScalarBase::Bool => {
                 if v != 0.0 && v != 1.0 {
-                    return Err(Error::Invalid(format!("uniform {:?}: bool deve ser 0 ou 1", u.name)));
+                    return Err(Error::Invalid(fmt("uniform {}: bool must be 0 or 1", &[&format!("{:?}", u.name)])));
                 }
                 bytes.extend_from_slice(&(v as u32).to_le_bytes());
             }

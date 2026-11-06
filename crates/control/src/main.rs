@@ -13,20 +13,21 @@ mod daemon;
 mod preset_cmd;
 
 use std::process::ExitCode;
+use control_core::i18n::fmt;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let command = match cli::parse(&args) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("lrctl: {e}\n\n{}", cli::USAGE);
+            eprintln!("lrctl: {e}\n\n{}", control_core::i18n::tr(cli::USAGE));
             return ExitCode::from(2);
         }
     };
     let state = match ipc::Writer::create() {
         Ok(w) => w,
         Err(e) => {
-            eprintln!("lrctl: não consegui abrir {}: {e}", ipc::state_path().display());
+            eprintln!("{}", fmt("lrctl: could not open {}: {}", &[&ipc::state_path().display(), &e]));
             return ExitCode::FAILURE;
         }
     };

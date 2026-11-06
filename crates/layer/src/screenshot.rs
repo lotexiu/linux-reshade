@@ -99,8 +99,8 @@ pub unsafe fn capture(data: &DeviceData, queue: vk::Queue, family: u32, target: 
             let fail = |what: &str, e: vk::Result| format!("{what}: erro {}", e.as_raw());
             made.buffer = device.create_buffer(&vk::BufferCreateInfo::default().size(size).usage(vk::BufferUsageFlags::TRANSFER_DST), None).map_err(|e| fail("buffer", e))?;
             let req = device.get_buffer_memory_requirements(made.buffer);
-            let type_index = host_memory_type(data, req.memory_type_bits).ok_or("sem memória visível ao processador")?;
-            made.memory = device.allocate_memory(&vk::MemoryAllocateInfo::default().allocation_size(req.size).memory_type_index(type_index), None).map_err(|e| fail("memória", e))?;
+            let type_index = host_memory_type(data, req.memory_type_bits).ok_or("no CPU-visible memory")?;
+            made.memory = device.allocate_memory(&vk::MemoryAllocateInfo::default().allocation_size(req.size).memory_type_index(type_index), None).map_err(|e| fail("memory", e))?;
             device.bind_buffer_memory(made.buffer, made.memory, 0).map_err(|e| fail("bind", e))?;
             made.pool = device.create_command_pool(&vk::CommandPoolCreateInfo::default().queue_family_index(family).flags(vk::CommandPoolCreateFlags::TRANSIENT), None).map_err(|e| fail("pool", e))?;
             let cb = device.allocate_command_buffers(&vk::CommandBufferAllocateInfo::default().command_pool(made.pool).command_buffer_count(1)).map_err(|e| fail("command buffer", e))?[0];
@@ -109,7 +109,7 @@ pub unsafe fn capture(data: &DeviceData, queue: vk::Queue, family: u32, target: 
                 return Err(format!("loader data: erro {}", init.as_raw()));
             }
             made.fence = device.create_fence(&vk::FenceCreateInfo::default(), None).map_err(|e| fail("fence", e))?;
-            made.semaphore = device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None).map_err(|e| fail("semáforo", e))?;
+            made.semaphore = device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None).map_err(|e| fail("semaphore", e))?;
 
             device.begin_command_buffer(cb, &vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)).map_err(|e| fail("begin", e))?;
             let range = vk::ImageSubresourceRange { aspect_mask: vk::ImageAspectFlags::COLOR, base_mip_level: 0, level_count: 1, base_array_layer: 0, layer_count: 1 };
