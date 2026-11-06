@@ -8,6 +8,7 @@ mod add_effect;
 mod controls;
 mod depth_picker;
 mod disclosure;
+mod effect_row;
 mod games;
 mod macros;
 mod rx;
