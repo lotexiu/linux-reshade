@@ -64,6 +64,10 @@ struct TechRow {
     /// O que a busca compara: nome do efeito, arquivo e nomes das técnicas.
     haystack: String,
     check: gtk::CheckButton,
+    /// As caixas de cada técnica (só nos efeitos com várias), para atualizar o estado sem refazer a linha.
+    sub_checks: Vec<(TechId, gtk::CheckButton)>,
+    dot: gtk::Label,
+    alert_slot: gtk::Box,
     controls: Option<RefCell<ControlsView>>,
     row: gtk::ListBoxRow,
 }
@@ -583,11 +587,19 @@ impl Ui {
         self.updating.set(false);
     }
 
+    /// O que exige refazer as linhas: a ordem, os nomes, as teclas e as definições. Ligado/desligado e o estado no jogo NÃO entram:
+    /// mudam no lugar (`update_row`), porque refazer a lista a cada clique troca a caixa sob o ponteiro e o clique seguinte se perde.
     fn signature_of(groups: &[EffectGroup]) -> String {
         groups
             .iter()
             .map(|g| {
-                let techniques: Vec<String> = g.techniques.iter().map(|t| format!("{}:{}:{}:{:?}:{:?}:{}", t.id, t.label, t.enabled, t.problem, t.runtime, t.key)).collect();
+                let multi = g.techniques.len() > 1;
+                let techniques: Vec<String> = g
+                    .techniques
+                    .iter()
+                    // Num efeito com várias técnicas, o estado no jogo de cada uma está escrito dentro do painel dele.
+                    .map(|t| format!("{}:{}:{}:{}", t.id, t.label, t.key, if multi { format!("{:?}", t.runtime) } else { String::new() }))
+                    .collect();
                 format!("{}|{}|{}\n", g.file, g.macros, techniques.join(";"))
             })
             .collect()
@@ -601,6 +613,7 @@ impl Ui {
             *self.signature.borrow_mut() = signature;
         }
         for (row, g) in self.rows.borrow().iter().zip(groups) {
+            Self::update_row(row, g);
             if let Some(view) = &row.controls {
                 view.borrow_mut().show(&g.controls);
             }
@@ -647,6 +660,105 @@ impl Ui {
         l
     }
 
+    /// A caixa de ligar/desligar com uma área de clique do tamanho do círculo de destaque do tema: clicar em qualquer ponto dele liga ou
+    /// desliga (a caixa sozinha só responde sobre o quadradinho, e o destaque aparece antes, com o mouse ao lado).
+    fn big_hit_area(check: &gtk::CheckButton) -> gtk::Box {
+        let hit = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        hit.set_size_request(40, 40);
+        hit.set_valign(gtk::Align::Center);
+        check.set_halign(gtk::Align::Center);
+        check.set_valign(gtk::Align::Center);
+        check.set_hexpand(true);
+        check.set_can_target(false); // o clique é da área, não só do quadradinho
+        hit.append(check);
+        hit.set_tooltip_text(check.tooltip_text().as_deref());
+        let click = gtk::GestureClick::new();
+        click.set_button(1);
+        click.connect_released({
+            let check = check.clone();
+            move |gesture, _, x, y| {
+                let inside = gesture.widget().is_some_and(|w| x >= 0.0 && y >= 0.0 && x <= f64::from(w.width()) && y <= f64::from(w.height()));
+                if inside {
+                    check.set_active(!check.is_active());
+                }
+            }
+        });
+        hit.add_controller(click);
+        let motion = gtk::EventControllerMotion::new();
+        motion.connect_enter({
+            let check = check.clone();
+            move |_, _, _| check.set_state_flags(gtk::StateFlags::PRELIGHT, false)
+        });
+        motion.connect_leave({
+            let check = check.clone();
+            move |_| check.unset_state_flags(gtk::StateFlags::PRELIGHT)
+        });
+        hit.add_controller(motion);
+        hit
+    }
+
+    /// A bolinha à esquerda do nome mostra o estado: apagada (desligado ou sem jogo), verde (aplicada no jogo), amarela (aviso) ou
+    /// vermelha (pulada no jogo). O texto só aparece quando há algo a dizer, no ícone de alerta à direita (abre ao clicar). Muda só o
+    /// que mudou: o ícone aberto não é recriado a cada atualização.
+    fn apply_status(dot: &gtk::Label, slot: &gtk::Box, g: &EffectGroup) {
+        let skipped = g.techniques.iter().find_map(|t| match &t.runtime {
+            Some(ipc::TechniqueState::Skipped(why)) => Some(why.clone()),
+            _ => None,
+        });
+        let applied = g.techniques.iter().filter(|t| matches!(t.runtime, Some(ipc::TechniqueState::Applied))).count();
+        let problem = g.techniques.iter().find_map(|t| t.problem.clone());
+        let (class, tip) = match (&skipped, &problem, applied > 0) {
+            (Some(_), _, _) => ("error", "Pulada no jogo"),
+            (None, Some(_), _) => ("warning", "Tem um aviso"),
+            (None, None, true) => ("success", "Aplicada no jogo"),
+            _ => ("dim-label", "Não aplicada agora"),
+        };
+        for c in ["error", "warning", "success", "dim-label"] {
+            dot.remove_css_class(c);
+        }
+        dot.add_css_class(class);
+        dot.set_tooltip_text(Some(tip));
+        let text = skipped.as_ref().map(|w| format!("Pulada no jogo: {w}")).or(problem);
+        // O texto atual do aviso fica no nome do espaço (`widget_name`): só refaz o ícone quando ele muda.
+        let shown = text.clone().unwrap_or_default();
+        if slot.widget_name() == shown {
+            return;
+        }
+        slot.set_widget_name(&shown);
+        while let Some(child) = slot.first_child() {
+            slot.remove(&child);
+        }
+        if let Some(text) = text {
+            let button = gtk::MenuButton::new();
+            button.set_icon_name("dialog-warning-symbolic");
+            button.add_css_class("flat");
+            button.add_css_class(if skipped.is_some() { "error" } else { "warning" });
+            button.set_valign(gtk::Align::Center);
+            button.set_tooltip_text(Some("Ver o aviso"));
+            let label = gtk::Label::new(Some(&text));
+            label.set_wrap(true);
+            label.set_max_width_chars(48);
+            label.set_xalign(0.0);
+            margins(&label, 8);
+            let popover = gtk::Popover::new();
+            popover.set_child(Some(&label));
+            button.set_popover(Some(&popover));
+            slot.append(&button);
+        }
+    }
+
+    /// Põe na linha o que muda sem refazê-la: as caixas de ligado/desligado e o estado no jogo.
+    fn update_row(row: &TechRow, g: &EffectGroup) {
+        row.check.set_active(g.any_enabled());
+        row.check.set_inconsistent(g.any_enabled() && !g.all_enabled());
+        for (id, sub) in &row.sub_checks {
+            if let Some(t) = g.techniques.iter().find(|t| t.id == *id) {
+                sub.set_active(t.enabled);
+            }
+        }
+        Self::apply_status(&row.dot, &row.alert_slot, g);
+    }
+
     fn build_row(self: &Rc<Self>, index: usize, last: usize, g: &EffectGroup) -> TechRow {
         let weak = Rc::downgrade(self);
         let file = g.file.clone();
@@ -670,6 +782,8 @@ impl Ui {
             }
         });
 
+        let hit = Self::big_hit_area(&check);
+
         let title = gtk::Label::new(Some(&g.name));
         title.set_halign(gtk::Align::Start);
         title.set_xalign(0.0);
@@ -683,44 +797,11 @@ impl Ui {
         names.append(&title);
         names.append(&subtitle);
 
-        // A bolinha à esquerda do nome mostra o estado: apagada (desligado ou sem jogo), verde (aplicada no jogo), amarela (aviso) ou
-        // vermelha (pulada no jogo). O texto só aparece quando há algo a dizer, no ícone de alerta à direita (abre ao clicar).
-        let skipped = g.techniques.iter().find_map(|t| match &t.runtime {
-            Some(ipc::TechniqueState::Skipped(why)) => Some(why.clone()),
-            _ => None,
-        });
-        let applied = g.techniques.iter().filter(|t| matches!(t.runtime, Some(ipc::TechniqueState::Applied))).count();
-        let problem = g.techniques.iter().find_map(|t| t.problem.clone());
-        let (dot_class, dot_tip) = match (&skipped, &problem, applied > 0) {
-            (Some(_), _, _) => ("error", "Pulada no jogo"),
-            (None, Some(_), _) => ("warning", "Tem um aviso"),
-            (None, None, true) => ("success", "Aplicada no jogo"),
-            _ => ("dim-label", "Não aplicada agora"),
-        };
+        // A bolinha à esquerda do nome mostra o estado e o ícone de alerta à direita traz o texto, quando há (ver `apply_status`).
         let dot = gtk::Label::new(Some("●"));
-        dot.add_css_class(dot_class);
-        dot.set_tooltip_text(Some(dot_tip));
         dot.set_valign(gtk::Align::Center);
-        let alert = match skipped.as_ref().map(|w| format!("Pulada no jogo: {w}")).or(problem.clone()) {
-            Some(text) => {
-                let button = gtk::MenuButton::new();
-                button.set_icon_name("dialog-warning-symbolic");
-                button.add_css_class("flat");
-                button.add_css_class(if skipped.is_some() { "error" } else { "warning" });
-                button.set_valign(gtk::Align::Center);
-                button.set_tooltip_text(Some("Ver o aviso"));
-                let label = gtk::Label::new(Some(&text));
-                label.set_wrap(true);
-                label.set_max_width_chars(48);
-                label.set_xalign(0.0);
-                margins(&label, 8);
-                let popover = gtk::Popover::new();
-                popover.set_child(Some(&label));
-                button.set_popover(Some(&popover));
-                Some(button)
-            }
-            None => None,
-        };
+        let alert_slot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        Self::apply_status(&dot, &alert_slot, g);
 
         let icon_button = |icon: &str, tip: &str| {
             let b = gtk::Button::from_icon_name(icon);
@@ -760,12 +841,10 @@ impl Ui {
         });
 
         let head = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        head.append(&check);
+        head.append(&hit);
         head.append(&dot);
         head.append(&names);
-        if let Some(alert) = &alert {
-            head.append(alert);
-        }
+        head.append(&alert_slot);
 
         // O painel que abre e fecha (⋮): as técnicas do efeito (se são várias) e os parâmetros dele.
         let controls = (!g.controls.is_empty()).then(|| {
@@ -788,6 +867,7 @@ impl Ui {
         top.append(&head);
         let has_panel = true; // as definições de pré-processador do efeito estão sempre no painel
         let revealer = gtk::Revealer::new();
+        let mut sub_checks: Vec<(TechId, gtk::CheckButton)> = Vec::new();
         if has_panel {
             let panel = gtk::Box::new(gtk::Orientation::Vertical, 8);
             panel.set_margin_start(32);
@@ -802,6 +882,7 @@ impl Ui {
                 for t in &g.techniques {
                     let line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
                     let sub = gtk::CheckButton::with_label(&t.label);
+                    sub_checks.push((t.id.clone(), sub.clone()));
                     sub.set_active(t.enabled);
                     sub.set_tooltip_text(Some("Ligar ou desligar só esta técnica"));
                     sub.connect_toggled({
@@ -920,7 +1001,7 @@ impl Ui {
         row.set_activatable(false);
         row.set_child(Some(&outer));
         let haystack = std::iter::once(g.name.clone()).chain(std::iter::once(g.file.clone())).chain(g.techniques.iter().flat_map(|t| [t.label.clone(), t.id.name.clone()])).collect::<Vec<_>>().join(" ").to_lowercase();
-        TechRow { file: g.file.clone(), haystack, check, controls, row }
+        TechRow { file: g.file.clone(), haystack, check, sub_checks, dot, alert_slot, controls, row }
     }
 
     /// O que a tela sabe dos jogos, em texto (para os testes automáticos conferirem de fora).
@@ -1060,10 +1141,18 @@ impl Ui {
             c.set_active(false);
             check(find(self).is_some_and(|t| !t.enabled), "a caixa não desligou a técnica");
         }
+        let row_before = self.rows.borrow().iter().find(|r| r.file == file).map(|r| r.row.clone());
         let check_button = self.rows.borrow().iter().find(|r| r.file == file).map(|r| r.check.clone());
         if let Some(c) = check_button {
-            c.set_active(true);
+            // Ligar e desligar várias vezes seguidas: o estado acompanha cada clique e a linha NÃO é refeita (refazer troca a caixa
+            // sob o ponteiro e o clique seguinte se perde).
+            for n in 0..6 {
+                c.set_active(n % 2 == 1);
+                check(find(self).is_some_and(|t| t.enabled == (n % 2 == 1)), &format!("a caixa não acompanhou o clique {n}"));
+            }
             check(find(self).is_some_and(|t| t.enabled), "a caixa não religou a técnica");
+            let row_after = self.rows.borrow().iter().find(|r| r.file == file).map(|r| r.row.clone());
+            check(row_before.is_some() && row_before == row_after, "ligar e desligar refez a linha do efeito");
         }
 
         // 3. mexer num slider e ver o modelo receber; depois restaurar
