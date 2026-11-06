@@ -238,6 +238,19 @@ pub fn similar_aspect(width: u32, height: u32, frame_width: u32, frame_height: u
     ((fw / fh) - (w / h)).abs() <= 0.1 && (0.5..=1.85).contains(&w_ratio) && (0.5..=1.85).contains(&h_ratio)
 }
 
+/// Qual limpeza da profundidade delimita a cena (a regra automática): `(desenhos apagados, dá para copiar antes)` de cada limpeza do
+/// quadro, na ordem; devolve o número (de 1) dela.
+pub fn scene_clear(events: &[(u32, bool)]) -> Option<u32> {
+    // Quantos desenhos a maior limpeza do quadro apaga; a cena é a PRIMEIRA que apaga uma parte relevante disso (1/8 ou mais, e
+    // pelo menos 32). A de mais desenhos não serve: depois da cena vêm outras camadas, e o número de limpezas pequenas no meio
+    // varia muito de um quadro para o outro (no A Hat in Time, 16, 15 ou 39 por quadro), então o índice da maior não é estável,
+    // o da primeira relevante é (a limpeza 2 em todos os quadros).
+    let max = events.iter().filter(|(_, splittable)| *splittable).map(|(draws, _)| *draws).max()?;
+    let threshold = (max / 8).max(32);
+    let index = events.iter().position(|(draws, splittable)| *splittable && *draws >= threshold)?;
+    u32::try_from(index + 1).ok()
+}
+
 /// Em que ponto a profundidade é a "da cena": o número (de 1) do último passe antes de a imagem ser recomeçada. Um passe
 /// (depois do primeiro) que começa com `DontCare` ou `Clear` descarta o conteúdo: é outra câmera ou camada no mesmo alvo
 /// (o personagem de um menu, a arma de um jogo em primeira pessoa), e a cena é o que existia antes dele. `None` se a imagem
@@ -249,6 +262,30 @@ pub fn scene_pass(passes: &[PassRecord]) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
+    use super::scene_clear;
+
+    #[test]
+    fn the_scene_clear_is_the_first_relevant_one_not_the_biggest() {
+        // Quadros reais do A Hat in Time: 16, 16 e 39 limpezas, com a maior (1143, 959, 861) bem no fim e o índice dela mudando.
+        let frame = |draws: &[u32]| draws.iter().map(|d| (*d, true)).collect::<Vec<_>>();
+        assert_eq!(scene_clear(&frame(&[0, 333, 2, 13, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1143])), Some(2));
+        assert_eq!(scene_clear(&frame(&[0, 307, 2, 12, 3, 2, 2, 4, 2, 2, 2, 2, 2, 2, 959, 64])), Some(2));
+        let mut long = vec![0, 226];
+        long.extend([2; 7]);
+        long.push(12);
+        long.extend([2; 25]);
+        long.extend([861, 2, 4, 77]);
+        assert_eq!(scene_clear(&frame(&long)), Some(2));
+        // ATLYSS: 4, 1399 e 1 desenhos: a segunda.
+        assert_eq!(scene_clear(&frame(&[4, 1399, 1])), Some(2));
+        // Uma única limpeza relevante, e uma que não dá para partir é ignorada.
+        assert_eq!(scene_clear(&frame(&[500])), Some(1));
+        assert_eq!(scene_clear(&[(900, false), (300, true)]), Some(2));
+        assert_eq!(scene_clear(&[]), None);
+        // Só limpezas pequenas: nenhuma delimita uma cena.
+        assert_eq!(scene_clear(&[(0, true), (3, true)]), None);
+    }
+
     use super::*;
 
     fn info(w: u32, h: u32, samples: u32) -> ImageInfo {

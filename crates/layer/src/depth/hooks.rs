@@ -1069,14 +1069,14 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
     data.depth.snapshot_clear.store(0, Ordering::Relaxed);
     if let Some(c) = &active {
         // A regra automática da limpeza (como o "copiar antes de limpar" do ReShade): entre as limpezas da profundidade do
-        // quadro, a que apaga mais desenhos é a da cena. O número da limpeza é estável de um quadro para o outro (o de
+        // quadro, a primeira que apaga uma parte relevante deles é a da cena (a de mais desenhos vem depois, e o índice dela varia). O número da limpeza é estável de um quadro para o outro (o de
         // passes não é: o DXVK os divide como quer), e a escolha só muda depois de vários quadros discordando.
         let auto_clear = || {
             let mut state = data.depth.auto_clear.lock().unwrap();
             if state.0 != c.image {
                 *state = (c.image, 0, 0, 0);
             }
-            let best = clear_events.iter().enumerate().filter(|(_, e)| e.splittable).max_by_key(|(i, e)| (e.draws_before, *i)).map_or(0, |(i, _)| i as u32 + 1);
+            let best = super::observe::scene_clear(&clear_events.iter().map(|e| (e.draws_before, e.splittable)).collect::<Vec<_>>()).unwrap_or(0);
             if best == 0 {
                 // Sem limpezas neste quadro: só esquece a escolha depois de muito tempo.
                 state.3 += 1;
