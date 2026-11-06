@@ -729,3 +729,29 @@ mod tests {
         assert!(Reader::open_at(&path).unwrap().is_none());
     }
 }
+
+/// O trava que o daemon segura enquanto roda (`daemon.lock` no diretório do estado): quem quer saber se ele está rodando tenta pegá-la.
+/// Some o dono (ou o processo morre), a trava some junto: não sobra arquivo velho dizendo que ele roda.
+pub mod daemon_lock {
+    use rustix::fs::{FlockOperation, flock};
+    use std::fs::{File, OpenOptions};
+
+    fn open() -> std::io::Result<File> {
+        let dir = super::state_dir();
+        std::fs::create_dir_all(&dir)?;
+        OpenOptions::new().create(true).truncate(false).write(true).read(true).open(dir.join("daemon.lock"))
+    }
+
+    /// Pega a trava do daemon. `None` se outro daemon já a tem. Quem pega deve guardar o `File` enquanto viver.
+    pub fn acquire() -> Option<File> {
+        let file = open().ok()?;
+        flock(&file, FlockOperation::NonBlockingLockExclusive).ok().map(|()| file)
+    }
+
+    /// Há um daemon rodando?
+    pub fn is_running() -> bool {
+        let Ok(file) = open() else { return false };
+        // Se a trava compartilhada vem, ninguém a segura de forma exclusiva: não há daemon.
+        flock(&file, FlockOperation::NonBlockingLockShared).is_err()
+    }
+}

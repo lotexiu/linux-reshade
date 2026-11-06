@@ -17,6 +17,7 @@ uso: lrctl <comando> [opções]
   effects                         lista os efeitos que podem ser escolhidos por nome
   layers                          mostra os jogos com a layer ativa: resolução, formato, estado
   watch                           só compila, sem atalho global (o daemon já faz isso)
+  setup [--remove]                instala (ou tira) a camada do Vulkan para o usuário: a biblioteca vai para ~/.local/share/linux-reshade/lib
   flatpak [list]                  lista os apps Flatpak e se o linux-reshade está ligado em cada um
   flatpak enable|disable <app-id> liga/desfaz a configuração de um app Flatpak (extensão da layer e permissões)
   flatpak global on|off           liga/desfaz para TODOS os apps Flatpak (um app se exclui com LINUX_RESHADE=0)
@@ -77,6 +78,8 @@ pub enum Command {
     /// Liga ou desliga a medição de desempenho da layer (aparece em `layers`).
     Stats(bool),
     Layers,
+    /// Instala a camada do Vulkan para o usuário (a biblioteca numa pasta fixa e o manifesto), ou a tira (`false`).
+    Setup(bool),
     /// Liga o linux-reshade a jogos Flatpak (ver `control_core::flatpak`).
     Flatpak(FlatpakAction),
     Watch,
@@ -234,6 +237,11 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "daemon" => no_args(Command::Daemon),
         "keys" => no_args(Command::Keys),
         "screenshot" => no_args(Command::Screenshot),
+        "setup" => match tail {
+            [] => Ok(Command::Setup(true)),
+            [x] if x == "--remove" => Ok(Command::Setup(false)),
+            _ => Err("uso: lrctl setup [--remove]".to_string()),
+        },
         "flatpak" => match tail {
             [] => Ok(Command::Flatpak(FlatpakAction::List)),
             [x] if x == "list" => Ok(Command::Flatpak(FlatpakAction::List)),

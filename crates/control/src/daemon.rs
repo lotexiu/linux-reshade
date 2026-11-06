@@ -48,6 +48,11 @@ fn stop_keys() {
 /// ao daemon, não à janela em foco. Os atalhos moram num processo à parte (`lrctl keys`): ao encerrá-lo, o sistema os solta.
 /// `LINUX_RESHADE_KEYS_ALWAYS=1` volta a registrá-los sempre.
 pub fn run(state: &ipc::Writer) -> Result<(), Error> {
+    // Um daemon só: o painel (AppImage) o inicia quando não há, e dois registrariam os atalhos em dobro.
+    let Some(_lock) = ipc::daemon_lock::acquire() else {
+        control_core::logln!("o daemon já está rodando; este sai");
+        return Ok(());
+    };
     let config = config::Config::load();
     let techs = config.presets_dir.as_deref().map(control_core::tech_keys::scan).unwrap_or_default();
     // A troca de tecla no painel vale na hora: o daemon reinicia a si mesmo ao ver o `config.ini` mudar.

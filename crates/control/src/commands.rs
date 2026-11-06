@@ -147,6 +147,18 @@ pub fn run(command: Command, state: &ipc::Writer) -> ExitCode {
             println!("as capturas vão para {}", config.screenshot_dir.display());
             ExitCode::SUCCESS
         }
+        Command::Setup(true) => match control_core::install::install_layer() {
+            Ok(lib) => {
+                println!("camada instalada: {}\nmanifesto: {}", lib.display(), control_core::install::manifest_path().display());
+                ExitCode::SUCCESS
+            }
+            Err(e) => fail(e),
+        },
+        Command::Setup(false) => {
+            control_core::install::uninstall_layer();
+            println!("camada removida");
+            ExitCode::SUCCESS
+        }
         Command::Flatpak(action) => flatpak(action),
         Command::Stats(on) => match ipc::set_stats_on(on) {
             Ok(()) => {
