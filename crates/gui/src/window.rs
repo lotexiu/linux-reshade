@@ -2,6 +2,7 @@
 //! técnicas em ordem de execução, cada uma com caixa de seleção, setas, remover e os parâmetros do efeito.
 //! Nenhuma regra de negócio mora aqui; tudo o que se decide está em `panel::Home`.
 
+use crate::add_effect::AddEffectView;
 use crate::controls::ControlsView;
 use crate::games::GamesView;
 use gtk4 as gtk;
@@ -9,11 +10,10 @@ use crate::depth_picker::DepthPicker;
 use crate::macros::MacroEditor;
 use gtk::glib;
 use gtk::prelude::*;
-use control_core::analysis::{EffectInfo, Feature};
 use panel::{EffectGroup, Home};
 use preset::TechId;
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::rc::{Rc, Weak};
 use std::time::Duration;
 
@@ -48,17 +48,9 @@ pub struct Ui {
     signature: RefCell<String>,
     /// Efeitos (arquivos) com os parâmetros abertos: sobrevive às refeituras da lista.
     expanded: RefCell<HashSet<String>>,
-    add_list: gtk::ListBox,
-    add_rows: RefCell<Vec<AddRow>>,
-    add_filter: Rc<RefCell<AddFilter>>,
-    /// Há uma montagem da lista "Adicionar efeito" em andamento (em pedaços, quando o ociosa).
-    add_building: Cell<bool>,
-    folder_list: gtk::ListBox,
-    add_progress: gtk::Label,
-    /// Quantas análises de efeitos a lista já mostra (para só reescrevê-la quando mudam).
-    add_infos_shown: Cell<usize>,
-    add_effects: RefCell<Vec<String>>,
-    add_popover: gtk::Popover,
+    /// A página "Adicionar efeito" e a pilha que a alterna com a lista do preset.
+    add_view: Rc<AddEffectView>,
+    stack: gtk::Stack,
     games_view: RefCell<GamesView>,
     notice: gtk::Label,
     /// Verdadeiro enquanto a janela atualiza os widgets a partir do modelo.
@@ -76,54 +68,10 @@ struct TechRow {
     row: gtk::ListBoxRow,
 }
 
-/// O que a lista "Adicionar efeito" mostra: a busca, as características marcadas e o que se sabe de cada efeito.
-#[derive(Default)]
-struct AddFilter {
-    query: String,
-    /// O efeito precisa ter TODAS as características marcadas.
-    features: HashSet<Feature>,
-    only_compatible: bool,
-    /// Só os efeitos desta subpasta (e das de dentro dela); vazio: todas.
-    folder: String,
-    folders: HashMap<String, String>,
-    infos: HashMap<String, EffectInfo>,
-}
-
-impl AddFilter {
-    fn accepts(&self, name: &str) -> bool {
-        let folder = self.folders.get(name).map(String::as_str).unwrap_or("");
-        if !self.query.is_empty() && !name.to_lowercase().contains(&self.query) && !folder.to_lowercase().contains(&self.query) {
-            return false;
-        }
-        if !self.folder.is_empty() && folder != self.folder && !folder.strip_prefix(&self.folder).is_some_and(|rest| rest.starts_with('/')) {
-            return false;
-        }
-        let info = self.infos.get(name);
-        if self.only_compatible && !info.is_some_and(EffectInfo::compatible) {
-            return false;
-        }
-        // Sem análise ainda, um efeito só aparece enquanto nenhuma característica está marcada.
-        self.features.iter().all(|f| info.is_some_and(|i| i.has(*f)))
-    }
-}
-
-/// Uma linha da lista "Adicionar efeito".
-struct AddRow {
-    name: String,
-    title: gtk::Label,
-    detail: gtk::Label,
-}
-
 /// Quem refaz a tela depois de uma ação; preenchido quando a `Ui` existe (as ações nascem antes dela).
 type Hook = Rc<RefCell<Option<Box<dyn Fn()>>>>;
 
-/// O texto do botão de filtros: quantos estão ligados.
-fn filters_label(f: &AddFilter) -> String {
-    let n = f.features.len() + usize::from(f.only_compatible) + usize::from(!f.folder.is_empty());
-    if n == 0 { "Filtros".to_string() } else { format!("Filtros ({n})") }
-}
-
-fn margins(w: &impl IsA<gtk::Widget>, all: i32) {
+pub(crate) fn margins(w: &impl IsA<gtk::Widget>, all: i32) {
     w.set_margin_top(all);
     w.set_margin_bottom(all);
     w.set_margin_start(all);
@@ -181,8 +129,7 @@ impl Ui {
         let search = gtk::SearchEntry::new();
         search.set_hexpand(true);
         search.set_placeholder_text(Some("Procurar nos efeitos do preset"));
-        let add_button = gtk::MenuButton::new();
-        add_button.set_label("Adicionar efeito");
+        let add_button = gtk::Button::with_label("Adicionar efeito");
 
         let list = gtk::ListBox::new();
         list.set_selection_mode(gtk::SelectionMode::None);
@@ -197,126 +144,6 @@ impl Ui {
         notice.set_wrap(true);
         notice.add_css_class("warning");
         notice.add_css_class("heading");
-
-        // "Adicionar efeito": busca e lista de todos os efeitos que as pastas de shaders têm.
-        let add_search = gtk::SearchEntry::new();
-        add_search.set_placeholder_text(Some("Procurar efeito"));
-        let add_filter = Rc::new(RefCell::new(AddFilter::default()));
-        let add_progress = gtk::Label::new(None);
-        add_progress.set_halign(gtk::Align::Start);
-        add_progress.add_css_class("dim-label");
-        add_progress.add_css_class("caption");
-        let add_list = gtk::ListBox::new();
-        add_list.set_selection_mode(gtk::SelectionMode::None);
-        let add_scroller = gtk::ScrolledWindow::new();
-        add_scroller.set_child(Some(&add_list));
-        add_scroller.set_min_content_height(380);
-        add_scroller.set_min_content_width(420);
-        let add_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        margins(&add_box, 8);
-        add_box.append(&add_search);
-        // Os filtros ficam num menu à parte (uma linha só na janela): características (várias ao mesmo tempo), só os
-        // compatíveis e a subpasta.
-        let only_ok = gtk::CheckButton::with_label("Só compatíveis");
-        let chip_buttons: Vec<(Feature, gtk::CheckButton)> = [Feature::Depth, Feature::Color, Feature::Textures, Feature::Mipmaps, Feature::Srgb, Feature::Compute]
-            .into_iter()
-            .map(|f| (f, gtk::CheckButton::with_label(f.label())))
-            .collect();
-        // A lista de pastas fica dentro do próprio menu (um seletor suspenso abriria outra janela por cima, que ficava
-        // aberta depois da escolha) e tem busca, porque são muitas.
-        let folder_search = gtk::SearchEntry::new();
-        folder_search.set_placeholder_text(Some("Procurar pasta"));
-        let folder_list = gtk::ListBox::new();
-        folder_list.set_selection_mode(gtk::SelectionMode::Single);
-        let folder_query = Rc::new(RefCell::new(String::new()));
-        {
-            let query = folder_query.clone();
-            folder_list.set_filter_func(move |row| {
-                let q = query.borrow();
-                // A linha "Todas as pastas" (nome vazio) sempre aparece.
-                q.is_empty() || row.widget_name().is_empty() || row.widget_name().to_lowercase().contains(q.as_str())
-            });
-            let (list, query) = (folder_list.clone(), folder_query.clone());
-            folder_search.connect_search_changed(move |e| {
-                *query.borrow_mut() = e.text().to_lowercase();
-                list.invalidate_filter();
-            });
-        }
-        let folder_scroller = gtk::ScrolledWindow::new();
-        folder_scroller.set_child(Some(&folder_list));
-        folder_scroller.set_min_content_height(180);
-        folder_scroller.set_min_content_width(260);
-        folder_scroller.set_hscrollbar_policy(gtk::PolicyType::Never);
-        let clear_filters = gtk::Button::with_label("Limpar");
-        let filters_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
-        margins(&filters_box, 8);
-        filters_box.append(&only_ok);
-        for (_, b) in &chip_buttons {
-            filters_box.append(b);
-        }
-        filters_box.append(&folder_search);
-        filters_box.append(&folder_scroller);
-        filters_box.append(&clear_filters);
-        let filters = crate::disclosure::Disclosure::new("Filtros", &filters_box);
-        let filters_button = filters.button.clone();
-        let search_line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        add_search.set_hexpand(true);
-        // O campo já é filho de `add_box`: sai de lá antes de entrar na linha (senão o GTK recusa e o campo some).
-        add_box.remove(&add_search);
-        search_line.append(&add_search);
-        search_line.append(&filters.button);
-        add_box.prepend(&filters.body);
-        add_box.prepend(&search_line);
-        add_box.append(&add_progress);
-        add_box.append(&add_scroller);
-        let add_popover = gtk::Popover::new();
-        add_popover.set_child(Some(&add_box));
-        add_button.set_popover(Some(&add_popover));
-        {
-            let filter = add_filter.clone();
-            add_list.set_filter_func(move |row| filter.borrow().accepts(&row.widget_name()));
-            let (list, filter) = (add_list.clone(), add_filter.clone());
-            add_search.connect_search_changed(move |e| {
-                filter.borrow_mut().query = e.text().to_lowercase();
-                list.invalidate_filter();
-            });
-            let (list, filter) = (add_list.clone(), add_filter.clone());
-            let label = filters_button.clone();
-            only_ok.connect_toggled(move |b| {
-                filter.borrow_mut().only_compatible = b.is_active();
-                list.invalidate_filter();
-                label.set_label(&filters_label(&filter.borrow()));
-            });
-            for (feature, button) in chip_buttons.iter().cloned() {
-                let (list, filter, label) = (add_list.clone(), add_filter.clone(), filters_button.clone());
-                button.connect_toggled(move |b| {
-                    let mut f = filter.borrow_mut();
-                    if b.is_active() {
-                        f.features.insert(feature);
-                    } else {
-                        f.features.remove(&feature);
-                    }
-                    drop(f);
-                    list.invalidate_filter();
-                    label.set_label(&filters_label(&filter.borrow()));
-                });
-            }
-            let (list, filter, label) = (add_list.clone(), add_filter.clone(), filters_button.clone());
-            folder_list.connect_row_selected(move |_, row| {
-                let Some(row) = row else { return };
-                filter.borrow_mut().folder = row.widget_name().to_string();
-                list.invalidate_filter();
-                label.set_label(&filters_label(&filter.borrow()));
-            });
-            let (only_ok, folders, chips) = (only_ok.clone(), folder_list.clone(), chip_buttons.iter().map(|(_, b)| b.clone()).collect::<Vec<_>>());
-            clear_filters.connect_clicked(move |_| {
-                only_ok.set_active(false);
-                folders.select_row(folders.row_at_index(0).as_ref());
-                for b in &chips {
-                    b.set_active(false);
-                }
-            });
-        }
 
         // "Novo preset": um nome e criar.
         let name_entry = gtk::Entry::new();
@@ -383,7 +210,36 @@ impl Ui {
         shortcuts_button.set_tooltip_text(Some("Configurações: atalhos, capturas de tela, pastas, desempenho e cache"));
         header.pack_start(&shortcuts_button);
 
-        let window = gtk::ApplicationWindow::builder().application(app).title("linux-reshade").default_width(600).default_height(780).child(&page).build();
+        // A página "Adicionar efeito" e a lista do preset se alternam numa pilha (sem popover: ver `add_effect.rs`). Os callbacks da
+        // página só guardam uma referência fraca da interface, que ainda não existe aqui.
+        let ui_ref: Rc<RefCell<Weak<Ui>>> = Rc::new(RefCell::new(Weak::new()));
+        let add_view = AddEffectView::new(
+            {
+                let ui_ref = ui_ref.clone();
+                move |name| {
+                    let ui = ui_ref.borrow().upgrade();
+                    if let Some(ui) = ui {
+                        ui.show_page("main");
+                        ui.act(|h| h.add_effect(name));
+                    }
+                }
+            },
+            {
+                let ui_ref = ui_ref.clone();
+                move || {
+                    let ui = ui_ref.borrow().upgrade();
+                    if let Some(ui) = ui {
+                        ui.show_page("main");
+                    }
+                }
+            },
+        );
+        let stack = gtk::Stack::new();
+        stack.set_transition_type(gtk::StackTransitionType::SlideLeftRight);
+        stack.add_named(&page, Some("main"));
+        stack.add_named(&add_view.root, Some("add"));
+
+        let window = gtk::ApplicationWindow::builder().application(app).title("linux-reshade").default_width(600).default_height(780).child(&stack).build();
         window.set_titlebar(Some(&header));
         {
             let window = window.clone();
@@ -415,21 +271,23 @@ impl Ui {
             rows: RefCell::new(Vec::new()),
             signature: RefCell::new(String::new()),
             expanded: RefCell::new(HashSet::new()),
-            add_list,
-            add_rows: RefCell::new(Vec::new()),
-            add_filter,
-            add_building: Cell::new(false),
-            folder_list,
-            add_progress,
-            add_infos_shown: Cell::new(usize::MAX),
-            add_effects: RefCell::new(Vec::new()),
-            add_popover,
+            add_view: add_view.clone(),
+            stack: stack.clone(),
             games_view: RefCell::new(games_view),
             notice,
             updating: Cell::new(false),
         });
 
         let weak: Weak<Ui> = Rc::downgrade(&ui);
+        *ui_ref.borrow_mut() = weak.clone();
+        add_button.connect_clicked({
+            let weak = weak.clone();
+            move |_| {
+                if let Some(ui) = weak.upgrade() {
+                    ui.show_page("add");
+                }
+            }
+        });
         *hook.borrow_mut() = Some(Box::new(move || {
             if let Some(ui) = weak.upgrade() {
                 ui.apply();
@@ -441,19 +299,19 @@ impl Ui {
         ui
     }
 
+    /// Mostra uma das páginas da janela (`"main"`: a lista do preset; `"add"`: adicionar efeito).
+    pub fn show_page(self: &Rc<Self>, name: &str) {
+        self.stack.set_visible_child_name(name);
+        if name == "add" {
+            self.add_view.focus_search();
+            let ui = self.clone();
+            glib::idle_add_local_once(move || ui.apply()); // começa a montar a lista já, sem esperar a próxima atualização
+        }
+    }
+
     /// Liga os widgets fixos da janela às ações do modelo.
     fn connect(self: &Rc<Self>, redraw: impl Fn() + Clone + 'static, name_entry: gtk::Entry, create: gtk::Button, new_popover: gtk::Popover) {
         let weak = Rc::downgrade(self);
-
-        // Abrir "Adicionar efeito" começa a montar a lista na hora, sem esperar a próxima atualização.
-        self.add_popover.connect_show({
-            let weak = weak.clone();
-            move |_| {
-                if let Some(ui) = weak.upgrade() {
-                    glib::idle_add_local_once(move || ui.apply());
-                }
-            }
-        });
 
         self.enabled.connect_active_notify({
             let (weak, redraw) = (weak.clone(), redraw.clone());
@@ -509,18 +367,6 @@ impl Ui {
         name_entry.connect_activate({
             let create = create.clone();
             move |_| create.emit_clicked()
-        });
-
-        // Escolher um efeito na lista "Adicionar efeito".
-        self.add_list.connect_row_activated({
-            let weak = weak.clone();
-            move |_, row| {
-                if let Some(ui) = weak.upgrade() {
-                    let name = row.widget_name().to_string();
-                    ui.add_popover.popdown();
-                    ui.act(|h| h.add_effect(&name));
-                }
-            }
         });
 
         // A profundidade escolhida pela pessoa: grava o pedido que a layer lê.
@@ -702,108 +548,8 @@ impl Ui {
 
             self.depth_picker.set(&s.depth_choices, s.depth_pick);
 
-            // Efeitos que podem ser adicionados.
-            if self.add_filter.borrow().folders != s.folders {
-                let mut names: Vec<&String> = s.folders.values().filter(|f| !f.is_empty()).collect();
-                names.sort();
-                names.dedup();
-                let keep = self.add_filter.borrow().folder.clone();
-                while let Some(child) = self.folder_list.first_child() {
-                    self.folder_list.remove(&child);
-                }
-                let mut selected = None;
-                for (i, name) in std::iter::once("").chain(names.iter().map(|n| n.as_str())).enumerate() {
-                    let row = gtk::ListBoxRow::new();
-                    row.set_widget_name(name);
-                    let label = gtk::Label::new(Some(if name.is_empty() { "Todas as pastas" } else { name }));
-                    label.set_halign(gtk::Align::Start);
-                    margins(&label, 4);
-                    row.set_child(Some(&label));
-                    self.folder_list.append(&row);
-                    if name == keep {
-                        selected = Some(i);
-                    }
-                }
-                self.folder_list.select_row(self.folder_list.row_at_index(selected.unwrap_or(0) as i32).as_ref());
-                self.add_filter.borrow_mut().folders = s.folders.clone();
-                self.add_list.invalidate_filter();
-            }
-            // A lista tem mais de mil linhas: só é montada quando o menu abre, e aos poucos (senão a janela trava).
-            let open = self.add_popover.is_visible();
-            if open && *self.add_effects.borrow() != s.effects {
-                while let Some(child) = self.add_list.first_child() {
-                    self.add_list.remove(&child);
-                }
-                self.add_rows.borrow_mut().clear();
-                *self.add_effects.borrow_mut() = s.effects.clone();
-                self.add_infos_shown.set(usize::MAX);
-            }
-            if open && self.add_rows.borrow().len() < self.add_effects.borrow().len() && !self.add_building.replace(true) {
-                let ui = self.clone();
-                glib::idle_add_local(move || {
-                    const CHUNK: usize = 60;
-                    let effects = ui.add_effects.borrow();
-                    let mut rows = ui.add_rows.borrow_mut();
-                    for name in effects.iter().skip(rows.len()).take(CHUNK) {
-                        let row = gtk::ListBoxRow::new();
-                        row.set_widget_name(name);
-                        let title = gtk::Label::new(Some(name));
-                        title.set_halign(gtk::Align::Start);
-                        title.set_xalign(0.0);
-                        let detail = gtk::Label::new(None);
-                        detail.set_halign(gtk::Align::Start);
-                        detail.set_xalign(0.0);
-                        detail.set_wrap(true);
-                        detail.add_css_class("caption");
-                        let b = gtk::Box::new(gtk::Orientation::Vertical, 0);
-                        margins(&b, 4);
-                        b.append(&title);
-                        b.append(&detail);
-                        row.set_child(Some(&b));
-                        ui.add_list.append(&row);
-                        rows.push(AddRow { name: name.clone(), title, detail });
-                    }
-                    if rows.len() < effects.len() {
-                        return glib::ControlFlow::Continue;
-                    }
-                    ui.add_infos_shown.set(usize::MAX); // as linhas novas ainda não têm o que a análise sabe
-                    ui.add_building.set(false);
-                    glib::ControlFlow::Break
-                });
-            }
-            // O que a análise já sabe: vermelho para os incompatíveis, e as características embaixo.
-            if open && self.add_infos_shown.get() != s.infos.len() && self.add_rows.borrow().len() == self.add_effects.borrow().len() {
-                for row in self.add_rows.borrow().iter() {
-                    match s.infos.get(&row.name) {
-                        Some(info) => {
-                            let tags: Vec<&str> = info.features.iter().map(|f| f.label().trim_start_matches("Usa ")).collect();
-                            row.detail.set_text(&match info.reason() {
-                                Some(why) => format!("Incompatível: {why}"),
-                                None => tags.join(" · "),
-                            });
-                            if info.compatible() {
-                                row.title.remove_css_class("error");
-                                row.detail.remove_css_class("error");
-                                row.detail.add_css_class("dim-label");
-                            } else {
-                                row.title.add_css_class("error");
-                                row.detail.add_css_class("error");
-                                row.detail.remove_css_class("dim-label");
-                            }
-                        }
-                        None => {
-                            row.detail.set_text("");
-                            row.title.remove_css_class("error");
-                        }
-                    }
-                }
-                self.add_filter.borrow_mut().infos = s.infos.clone();
-                self.add_list.invalidate_filter();
-                self.add_infos_shown.set(s.infos.len());
-            }
-            let (done, total) = s.analysis;
-            self.add_progress.set_visible(done < total);
-            self.add_progress.set_text(&format!("Analisando os efeitos para saber quais servem… {done}/{total}"));
+            // A página "Adicionar efeito" (só monta a lista enquanto está na tela).
+            self.add_view.set(&s.effects, &s.folders, &s.infos, s.analysis, self.stack.visible_child_name().as_deref() == Some("add"));
 
             self.show_groups(&s.groups);
 
@@ -1161,6 +907,73 @@ impl Ui {
     }
 
     /// O que a tela sabe dos jogos, em texto (para os testes automáticos conferirem de fora).
+    /// Mexe na página "Adicionar efeito" como uma pessoa (abrir, abrir os filtros, escolher uma pasta, digitar, voltar, reabrir) e
+    /// devolve o que deu errado: uma página que some, um campo que não aparece. Os avisos e erros do GTK durante o roteiro também
+    /// contam (é assim que um widget com dois pais aparece).
+    pub async fn smoke_popovers(self: &Rc<Self>) -> Vec<String> {
+        use std::time::Duration;
+        let mut problems = Vec::new();
+        let step = |ms: u64| glib::timeout_future(Duration::from_millis(ms));
+        let warnings_before = crate::gtk_warnings();
+        let on_add = |ui: &Ui| ui.stack.visible_child_name().as_deref() == Some("add");
+
+        self.show_page("add");
+        step(800).await;
+        if !on_add(self) {
+            problems.push("a página de adicionar efeito não abriu".to_string());
+            return problems;
+        }
+        if !self.add_view.is_search_shown() {
+            problems.push("o campo de busca dos efeitos não aparece".to_string());
+        }
+        if !self.add_view.is_filters_button_shown() {
+            problems.push("o botão Filtros não aparece".to_string());
+        }
+        if self.add_view.rows_built() == 0 && !self.home.borrow().snapshot().effects.is_empty() {
+            problems.push("a lista de efeitos não foi montada".to_string());
+        }
+
+        self.add_view.open_filters(true);
+        step(500).await;
+        if !on_add(self) {
+            problems.push("abrir os filtros tirou a página".to_string());
+            return problems;
+        }
+        if !self.add_view.is_folder_list_shown() {
+            problems.push("a lista de pastas não apareceu ao abrir os filtros".to_string());
+        }
+        self.add_view.select_folder(1);
+        step(400).await;
+        self.add_view.type_query("a");
+        step(400).await;
+        if !on_add(self) {
+            problems.push("escolher uma pasta ou digitar fechou a página".to_string());
+            return problems;
+        }
+        self.add_view.open_filters(false);
+        step(300).await;
+        self.add_view.type_query("");
+        self.add_view.select_folder(0);
+        self.show_page("main");
+        step(500).await;
+        if on_add(self) {
+            problems.push("voltar não mostrou a lista do preset".to_string());
+        }
+        self.show_page("add");
+        step(500).await;
+        if !on_add(self) {
+            problems.push("a página não reabriu depois de fechada".to_string());
+        }
+        self.show_page("main");
+        step(300).await;
+
+        let new = crate::gtk_warnings().saturating_sub(warnings_before);
+        if new > 0 {
+            problems.push(format!("o GTK reclamou {new} vez(es) durante o roteiro (veja os avisos acima)"));
+        }
+        problems
+    }
+
     pub fn macros_popup(&self) {
         self.macros.button.popup();
     }
@@ -1187,16 +1000,10 @@ impl Ui {
 
     /// Adiciona um efeito ao preset do jogo escolhido, como pelo botão. `false` se o efeito não existe.
     pub fn choose_effect(self: &Rc<Self>, name: &str) -> bool {
-        // Ativa a linha da lista, o mesmo caminho do clique do usuário.
-        let mut child = self.add_list.first_child();
-        while let Some(widget) = child {
-            child = widget.next_sibling();
-            if widget.widget_name() == name
-                && let Ok(row) = widget.downcast::<gtk::ListBoxRow>()
-            {
-                row.emit_by_name::<()>("activate", &[]);
-                return true;
-            }
+        // A lista da página "Adicionar efeito" só é montada quando ela está na tela: vai direto ao modelo (o mesmo que o clique faz).
+        if self.home.borrow().snapshot().effects.iter().any(|e| e == name) {
+            self.act(|h| h.add_effect(name));
+            return true;
         }
         false
     }

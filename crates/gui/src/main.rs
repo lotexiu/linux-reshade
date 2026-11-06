@@ -4,6 +4,7 @@
 //! resultado (sai com código diferente de 0 se algo falhar); `--effect <Efeito>` o adiciona ao preset do jogo (e o tira ao sair);
 //! `--screenshot <arquivo.png>` grava a janela; `--hold <ms>` a mantém aberta antes de sair; `--wait <ms>` espera antes de agir.
 
+mod add_effect;
 mod controls;
 mod depth_picker;
 mod disclosure;
@@ -12,6 +13,23 @@ mod macros;
 mod settings;
 mod shortcuts_dialog;
 mod window;
+
+static GTK_WARNINGS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Quantos avisos ou erros o GTK emitiu desde o início (menos os de linha de base de `GtkImage`, que são conhecidos e inofensivos).
+pub(crate) fn gtk_warnings() -> usize {
+    GTK_WARNINGS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn count_gtk_warnings() {
+    glib::log_set_writer_func(|level, fields| {
+        let message = fields.iter().find(|f| f.key() == "MESSAGE").and_then(|f| f.value_str()).unwrap_or("");
+        if matches!(level, glib::LogLevel::Warning | glib::LogLevel::Critical | glib::LogLevel::Error) && !message.contains("baselines") {
+            GTK_WARNINGS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        glib::log_writer_default(level, fields)
+    });
+}
 
 use control_core::compiler::Compiler;
 use gtk4 as gtk;
@@ -30,6 +48,8 @@ struct Options {
     /// Abre o editor de definições (para fotografar a tela com ele aberto).
     open_macros: bool,
     open_shortcuts: bool,
+    /// Abre e fecha os menus da janela como uma pessoa e confere que nada some.
+    smoke_popovers: bool,
     /// Espera antes de agir (para um jogo abrir depois do painel).
     wait_ms: u64,
     /// Escolhe este efeito na lista (e desfaz ao sair).
@@ -42,7 +62,7 @@ struct Options {
 
 impl Options {
     fn is_test_run(&self) -> bool {
-        self.game.is_some() || self.smoke.is_some() || self.open_macros || self.open_shortcuts || self.screenshot.is_some() || self.effect.is_some() || self.hold_ms > 0 || self.wait_ms > 0 || self.keepalive_check
+        self.game.is_some() || self.smoke.is_some() || self.open_macros || self.open_shortcuts || self.smoke_popovers || self.screenshot.is_some() || self.effect.is_some() || self.hold_ms > 0 || self.wait_ms > 0 || self.keepalive_check
     }
 }
 
@@ -58,6 +78,7 @@ fn parse_args() -> Result<Options, String> {
             "--game" => options.game = Some(args.next().ok_or("--game precisa do id de um jogo")?),
             "--open-macros" => options.open_macros = true,
             "--open-shortcuts" => options.open_shortcuts = true,
+            "--smoke-popovers" => options.smoke_popovers = true,
             "--keepalive-check" => options.keepalive_check = true,
             "--screenshot" => options.screenshot = Some(args.next().ok_or("--screenshot precisa de um arquivo .png")?),
             other => return Err(format!("opção desconhecida: {other}\nuso: lrpanel [--smoke <Efeito>] [--effect <Efeito>] [--screenshot <arquivo.png>] [--wait <ms>] [--hold <ms>]")),
@@ -94,6 +115,7 @@ fn apply_dark_theme() {
 }
 
 fn main() -> glib::ExitCode {
+    count_gtk_warnings();
     let options = match parse_args() {
         Ok(o) => o,
         Err(e) => {
@@ -177,6 +199,15 @@ async fn test_run(app: gtk::Application, ui: Rc<window::Ui>, options: Rc<Options
         }
         for p in problems {
             fail(format!("smoke FALHOU: {p}"));
+        }
+    }
+    if options.smoke_popovers {
+        let problems = ui.smoke_popovers().await;
+        if problems.is_empty() {
+            println!("lrpanel smoke-popovers: ok");
+        }
+        for p in problems {
+            fail(format!("smoke-popovers FALHOU: {p}"));
         }
     }
     if let Some(name) = &options.effect {

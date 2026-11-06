@@ -158,7 +158,15 @@ target/release/lrpanel --effect Sepia --screenshot /tmp/painel.png --hold 2000 -
 - O portal só usa a tecla sugerida na primeira vez que vê um id (confirmado no KDE). Para trocar, o daemon anota o que registrou (`shortcuts-bound.ini`, ao lado do cache), esquece o atalho pelo `KGlobalAccel` do KDE (`shortcuts_portal::forget`) e registra de novo; o daemon se reexecuta sozinho ao ver o `[INPUT]` mudar. No GNOME não há "esquecer": a tecla só muda pelas configurações do sistema.
 - Uma tecla sem modificador (como `'`) vale em TODOS os programas enquanto o daemon roda; a janela avisa.
 
-## Regra da interface: sem popover dentro de popover
-Um popover (ou `DropDown`, que abre um) dentro de outro deixa o de fora aberto depois do clique que fecha o de dentro: a
-janela parece travada. Dentro de um popover use `crates/gui/src/disclosure.rs` (botão que revela o conteúdo no lugar) ou
-botões/listas comuns, como `depth_picker.rs` e `macros.rs` já fazem.
+## Arquitetura da interface (regras, depois de vários bugs de menus que fecham)
+O que aconteceu: popovers (menus) que mudam de tamanho com a janela aberta, ou que se aninham (menu dentro de menu, `DropDown`
+dentro de menu), são fechados pelo compositor no Wayland e deixam o GTK sem o "grab" (o painel parece travado; ver o erro
+[GTK 5414](https://gitlab.gnome.org/GNOME/gtk/-/issues/5414)). Por isso:
+1. **Fluxos com lista, busca ou filtros são páginas** de um `gtk::Stack` na janela, nunca menus. Exemplo: `add_effect.rs`
+   ("Adicionar efeito"), que o botão da janela alterna com a lista do preset.
+2. **Menus só para conteúdo pequeno e de tamanho fixo** (um campo e um botão, um aviso). Nunca dentro de outro menu, e nada que
+   abra e feche seções dentro deles. Dentro de um menu, "mais opções" usa `disclosure.rs` (seção que abre no lugar) ou botões.
+3. **Cada parte é um componente** (um arquivo, uma struct, `Rc<Self>`): recebe dados por um `set(...)` e avisa o que a pessoa
+   fez por callbacks. Não conhece a janela. `window.rs` só monta os componentes e liga um ao outro. Modelo: `add_effect.rs`.
+4. **Todo fluxo novo ganha um roteiro automático** em `--smoke-popovers` (`scripts/dev.sh ui-smoke`): aciona os widgets, confere que
+   nada some e falha se o GTK emitir qualquer aviso ou erro (um widget com dois pais, por exemplo). Rode antes de entregar.

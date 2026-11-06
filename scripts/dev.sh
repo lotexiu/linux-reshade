@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Utilitário de desenvolvimento. Idempotente; serve para trocar de máquina sem esforço.
-# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|smoke-preset|smoke-depth|smoke-depth-effect|smoke-compute|smoke-dynamic|flatpak-layer|daemon|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-survey|fx-golden|xid|placement|logs> [args]
+# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|smoke-preset|smoke-depth|smoke-depth-effect|smoke-compute|smoke-dynamic|flatpak-layer|daemon|panel|panel-smoke|ui-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-survey|fx-golden|xid|placement|logs> [args]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -627,6 +627,13 @@ cmd_panel() {
 
 # Teste de ponta a ponta da interface: um vkcube de verdade com a layer, o vigia, e a interface escolhendo o
 # Sépia e mantendo a janela aberta. O script confere, de fora, que o jogo ficou "pronto" e que o efeito foi construído.
+# Roteiro da interface: abre a página "Adicionar efeito", os filtros, escolhe pasta, digita, volta e reabre, e falha se algo
+# some ou se o GTK emite aviso/erro. Abre a janela do painel por alguns segundos.
+cmd_ui_smoke() {
+  cmd_build -p linux-reshade-gui
+  timeout 90 "$ROOT/target/release/lrpanel" --smoke-popovers
+}
+
 cmd_panel_smoke() {
   say "smoke (interface): abre um vkcube e a janela do lrpanel por ~10 s; evite mexer em janelas até terminar"
   cmd_install
@@ -790,6 +797,7 @@ case "${1:-}" in
   daemon)    cmd_daemon ;;
   panel)     shift; cmd_panel "$@" ;;
   panel-smoke) cmd_panel_smoke ;;
+  ui-smoke)  cmd_ui_smoke ;;
   hotkey)    cmd_hotkey ;;
   fx-tool)   cmd_fx_tool ;;
   game-options) shift; cmd_game_options "$@" ;;
@@ -800,5 +808,5 @@ case "${1:-}" in
   xid)       shift; cmd_xid "$@" ;;
   placement) shift; cmd_placement "$@" ;;
   logs)      shift; cmd_logs "$@" ;;
-  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|smoke-preset|smoke-depth|smoke-depth-effect|daemon|panel|panel-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-survey|fx-golden|xid|placement|logs>" >&2; exit 2 ;;
+  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|smoke-preset|smoke-depth|smoke-depth-effect|daemon|panel|panel-smoke|ui-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-survey|fx-golden|xid|placement|logs>" >&2; exit 2 ;;
 esac
