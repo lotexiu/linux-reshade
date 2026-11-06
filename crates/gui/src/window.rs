@@ -59,6 +59,25 @@ pub struct Ui {
     updating: Cell<bool>,
 }
 
+/// Marca "a janela está mudando widgets" enquanto vive; ao sair (por qualquer caminho) desmarca. Aninhado, o de fora é que desmarca.
+struct Programmatic<'a> {
+    flag: &'a Cell<bool>,
+    was: bool,
+}
+
+impl<'a> Programmatic<'a> {
+    fn enter(flag: &'a Cell<bool>) -> Self {
+        let was = flag.replace(true);
+        Self { flag, was }
+    }
+}
+
+impl Drop for Programmatic<'_> {
+    fn drop(&mut self) {
+        self.flag.set(self.was);
+    }
+}
+
 /// Quem refaz a tela depois de uma ação; preenchido quando a `Ui` existe (as ações nascem antes dela).
 type Hook = Rc<RefCell<Option<Box<dyn Fn()>>>>;
 
@@ -503,7 +522,9 @@ impl Ui {
     /// Empurra o estado do modelo para os widgets.
     pub fn apply(self: &Rc<Self>) {
         self.applied_version.set(self.home.borrow().version());
-        self.updating.set(true);
+        // Enquanto a janela põe valores do modelo nos widgets, os avisos deles não são da pessoa: o guarda desliga isto sozinho ao sair
+        // (um `return` ou um pânico no meio deixaria a interface ignorando todos os cliques para sempre).
+        let _programmatic = Programmatic::enter(&self.updating);
         {
             let home = self.home.borrow();
             let s = home.snapshot();
@@ -581,7 +602,6 @@ impl Ui {
             self.notice.set_visible(s.notice.is_some());
             self.notice.set_text(s.notice.as_deref().unwrap_or(""));
         }
-        self.updating.set(false);
     }
 
     /// O que exige mexer na lista: a ordem e a assinatura de cada linha (ver `EffectRow::signature_of`).
