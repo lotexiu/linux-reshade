@@ -969,6 +969,25 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
             command_buffers = all;
             timed = true;
         }
+        // A profundidade que a cadeia lê é a foto: se nenhuma regra copiou neste quadro, copia agora (como o ReShade faz na hora dos
+        // efeitos), com o layout de agora, no mesmo envio e antes dos efeitos.
+        if let (Some(key), Some(snapshot)) = (built.depth_key, data.depth.snapshot_raw())
+            && key.0 == snapshot
+        {
+            let family = data.queues.lock().unwrap().get(&queue.as_raw()).copied().unwrap_or(0);
+            match crate::depth::copy_for_present(data, family, index) {
+                crate::depth::PresentCopy::Recorded(cb) => command_buffers.insert(0, cb),
+                crate::depth::PresentCopy::NotNeeded => {}
+                crate::depth::PresentCopy::Unavailable => {
+                    // Sem cópia nunca gravada a foto está sem layout: não dá para os efeitos a lerem. A fence já foi resetada: um lote
+                    // vazio a sinaliza de novo.
+                    if !data.depth.snapshot_written.load(std::sync::atomic::Ordering::Relaxed) {
+                        let _ = data.device.queue_submit(queue, &[vk::SubmitInfo::default()], fence);
+                        return None;
+                    }
+                }
+            }
+        }
         let signal = [built.semaphores[index]];
         let submit = vk::SubmitInfo::default()
             .wait_semaphores(waits)

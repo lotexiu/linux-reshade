@@ -568,7 +568,7 @@ cmd_smoke_dynamic() {
   cmd_install
   cargo build --release -p linux-reshade-layer --example dynamic_clear >/dev/null 2>&1 || { warn "não compilei o exemplo"; exit 1; }
   local tmp out; tmp="$(mktemp -d)"
-  out="$(LINUX_RESHADE=1 LINUX_RESHADE_DEPTH=1 LINUX_RESHADE_STATE_DIR="$tmp" LINUX_RESHADE_LOG="$tmp/log.txt" VK_LOADER_LAYERS_ENABLE='*validation*' timeout 120 "$ROOT/target/release/examples/dynamic_clear" 2>&1)"
+  out="$(LINUX_RESHADE=1 LINUX_RESHADE_DEPTH=1 LINUX_RESHADE_DEPTH_SPLIT=1 LINUX_RESHADE_STATE_DIR="$tmp" LINUX_RESHADE_LOG="$tmp/log.txt" VK_LOADER_LAYERS_ENABLE='*validation*' timeout 120 "$ROOT/target/release/examples/dynamic_clear" 2>&1)"
   local ok=1
   check() { if eval "$2"; then printf '  ok     %s\n' "$1"; else printf '  FALHOU %s\n' "$1"; ok=0; fi; }
   check "o app terminou os quadros" 'grep -q "dynamic_clear: 150 quadros" <<<"$out"'
@@ -756,6 +756,8 @@ cmd_placement() {
 
 cmd_logs() { tail -n "${1:-50}" -f "$LOG_FILE"; }
 
+# Os roteiros de teste conferem textos em português (do `lrctl layers` etc.): o idioma deles é fixo, seja qual for o da pessoa.
+case "${1:-}" in smoke*|panel-smoke|ui-smoke|xid|placement) export LR_LANG="${LR_LANG:-pt_BR}" ;; esac
 case "${1:-}" in
   setup)     shift; cmd_setup "$@" ;;
   doctor)    cmd_doctor ;;

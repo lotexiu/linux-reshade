@@ -244,8 +244,8 @@ unsafe fn run() {
             device.cmd_set_scissor(cb, 0, &[area]);
             let clear_depth = [vk::ClearAttachment { aspect_mask: vk::ImageAspectFlags::DEPTH, color_attachment: 0, clear_value: vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 0.0, stencil: 0 } } }];
             let rect = [vk::ClearRect { rect: area, base_array_layer: 0, layer_count: 1 }];
-            // Três segmentos separados por limpezas de profundidade dentro do passe: 5, 3 e 1 desenhos.
-            for _ in 0..5 {
+            // Três segmentos separados por limpezas de profundidade dentro do passe: 40, 3 e 1 desenhos (a regra automática exige pelo menos 32).
+            for _ in 0..40 {
                 device.cmd_draw(cb, 3, 1, 0, 0);
             }
             device.cmd_clear_attachments(cb, &clear_depth, &rect);

@@ -15,6 +15,7 @@ mod screen;
 mod snapshot;
 
 pub use hooks::{destroy, end_frame, intercept_name};
+pub(crate) use snapshot::{PresentCopy, copy_for_present};
 
 use ash::vk;
 use observe::{FrameStats, ImageInfo, LoadOp, PassRecord, StoreOp};
@@ -254,6 +255,28 @@ pub struct Depth {
     pub(crate) frame_depth_draws: AtomicU32,
     pub(crate) frame_clear_attachments: AtomicU32,
     pub(crate) frame_clear_images: AtomicU32,
+    /// Como o ReShade: os efeitos leem sempre uma CÓPIA da profundidade (a foto), nunca a imagem do jogo. A cópia é feita no ponto da
+    /// limpeza ou do passe quando há regra para isso e, senão, na hora dos efeitos, com o layout de agora. `LINUX_RESHADE_DEPTH_DIRECT=1`
+    /// volta a amostrar a imagem original (para comparar).
+    pub(crate) copy_mode: bool,
+    /// Partir um passe de renderização numa limpeza dentro dele (`vkCmdClearAttachments`) para copiar antes: o ReShade não faz isso (é
+    /// inválido copiar dentro de um passe ativo). Só com `LINUX_RESHADE_DEPTH_SPLIT=1` ou um pedido explícito "antes da limpeza N".
+    pub(crate) split_enabled: bool,
+    /// Já houve uma cópia da profundidade neste quadro (no ponto de uma limpeza ou passe): a da hora dos efeitos fica desnecessária.
+    pub(crate) copied_frame: AtomicBool,
+    /// A imagem do jogo que a cópia da hora dos efeitos lê.
+    pub(crate) live: Mutex<Option<Live>>,
+    /// Command buffers próprios da cópia da hora dos efeitos.
+    pub(crate) frame_copier: Mutex<Option<snapshot::FrameCopier>>,
+}
+
+/// A imagem de profundidade do jogo que a cópia da hora dos efeitos lê.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Live {
+    pub image: u64,
+    pub format: i32,
+    pub width: u32,
+    pub height: u32,
 }
 
 /// Carrega do próximo elo a primeira das funções que existir (nome do núcleo e da extensão).
@@ -337,6 +360,11 @@ impl Depth {
             frame_depth_draws: AtomicU32::new(0),
             frame_clear_attachments: AtomicU32::new(0),
             frame_clear_images: AtomicU32::new(0),
+            copy_mode: !flag("LINUX_RESHADE_DEPTH_DIRECT"),
+            split_enabled: flag("LINUX_RESHADE_DEPTH_SPLIT"),
+            copied_frame: AtomicBool::new(false),
+            live: Mutex::new(None),
+            frame_copier: Mutex::new(None),
         }
     }
 
@@ -347,6 +375,11 @@ impl Depth {
     /// Liga a observação (um efeito do plano precisa de profundidade). Barato e idempotente.
     pub fn need(&self) {
         self.enabled.store(true, Ordering::Relaxed);
+    }
+
+    /// A imagem (bruta) da foto atual, se há.
+    pub fn snapshot_raw(&self) -> Option<u64> {
+        self.snapshot.lock().unwrap().as_ref().map(|s| ash::vk::Handle::as_raw(s.image))
     }
 
     /// A profundidade que os efeitos podem amostrar neste momento.

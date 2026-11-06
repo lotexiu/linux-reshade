@@ -161,6 +161,77 @@ pub(super) unsafe fn record_copy(data: &DeviceData, cmd: vk::CommandBuffer, src:
     }
 }
 
+/// Command buffers próprios (um por imagem do swapchain) para a cópia da profundidade feita na hora dos efeitos.
+pub(crate) struct FrameCopier {
+    pool: vk::CommandPool,
+    family: u32,
+    buffers: Vec<vk::CommandBuffer>,
+}
+
+/// O que a cópia da hora dos efeitos fez neste quadro.
+pub enum PresentCopy {
+    /// Não precisa (já houve cópia no ponto de uma limpeza ou passe, ou o modo é o da imagem original).
+    NotNeeded,
+    /// Gravada neste command buffer: vai à frente dos efeitos no mesmo envio.
+    Recorded(vk::CommandBuffer),
+    /// Não deu (a imagem do jogo está sem layout conhecido, ou sumiu).
+    Unavailable,
+}
+
+/// A cópia da profundidade do jogo para a foto, gravada agora com o layout de agora (o que o jogo deixou depois do último envio):
+/// é a "cópia na hora dos efeitos" do ReShade. Os efeitos leem a foto, que está sempre no layout de leitura que gravamos, e não
+/// dependem do layout da imagem do jogo (que variava entre quadros e estava fixo na cadeia gravada).
+///
+/// # Safety
+/// `data.device` válido; chamado na thread do present, depois de esperar a fence do índice `index` (que protege o command buffer).
+pub(crate) unsafe fn copy_for_present(data: &DeviceData, family: u32, index: usize) -> PresentCopy {
+    if !data.depth.copy_mode || data.depth.copied_frame.load(std::sync::atomic::Ordering::Relaxed) {
+        return PresentCopy::NotNeeded;
+    }
+    let Some(live) = *data.depth.live.lock().unwrap() else { return PresentCopy::Unavailable };
+    let layout = data.depth.image_layouts.lock().unwrap().get(&live.image).copied().unwrap_or(0);
+    let Some((dst, format)) = data.depth.snapshot.lock().unwrap().as_ref().map(|s| (s.image, s.format)) else { return PresentCopy::Unavailable };
+    if layout == 0 || layout == vk::ImageLayout::UNDEFINED.as_raw() || format.as_raw() != live.format {
+        return PresentCopy::Unavailable;
+    }
+    let device = &data.device;
+    let mut slot = data.depth.frame_copier.lock().unwrap();
+    unsafe {
+        if slot.as_ref().is_some_and(|c| c.family != family) {
+            if let Some(old) = slot.take() {
+                device.destroy_command_pool(old.pool, None);
+            }
+        }
+        if slot.is_none() {
+            let Ok(pool) = device.create_command_pool(&vk::CommandPoolCreateInfo::default().queue_family_index(family).flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER), None) else {
+                return PresentCopy::Unavailable;
+            };
+            *slot = Some(FrameCopier { pool, family, buffers: Vec::new() });
+        }
+        let copier = slot.as_mut().expect("criado acima");
+        while copier.buffers.len() <= index {
+            let Ok(cbs) = device.allocate_command_buffers(&vk::CommandBufferAllocateInfo::default().command_pool(copier.pool).command_buffer_count(1)) else {
+                return PresentCopy::Unavailable;
+            };
+            if (data.set_loader_data)(device.handle(), cbs[0].as_raw() as *mut std::ffi::c_void) != vk::Result::SUCCESS {
+                device.free_command_buffers(copier.pool, &cbs);
+                return PresentCopy::Unavailable;
+            }
+            copier.buffers.push(cbs[0]);
+        }
+        let cb = copier.buffers[index];
+        if device.reset_command_buffer(cb, vk::CommandBufferResetFlags::empty()).is_err() || device.begin_command_buffer(cb, &vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)).is_err() {
+            return PresentCopy::Unavailable;
+        }
+        record_copy(data, cb, vk::Image::from_raw(live.image), vk::ImageLayout::from_raw(layout), dst, format, live.width, live.height);
+        if device.end_command_buffer(cb).is_err() {
+            return PresentCopy::Unavailable;
+        }
+        data.depth.snapshot_written.store(true, std::sync::atomic::Ordering::Relaxed);
+        PresentCopy::Recorded(cb)
+    }
+}
+
 /// Libera a imagem da foto (ao destruir o dispositivo).
 ///
 /// # Safety
@@ -171,6 +242,9 @@ pub(super) unsafe fn destroy(data: &DeviceData) {
     }
     if let Some(s) = data.depth.snapshot.lock().unwrap().take() {
         unsafe { free(&data.device, s) };
+    }
+    if let Some(copier) = data.depth.frame_copier.lock().unwrap().take() {
+        unsafe { data.device.destroy_command_pool(copier.pool, None) };
     }
     unsafe { super::resolve::destroy_resolver(data) };
 }

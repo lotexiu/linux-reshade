@@ -134,3 +134,22 @@ Teste ao vivo com `lrctl depth pick pass N` (foto da profundidade depois do N-é
 - MSAA: depth multiamostrado precisa de resolve; fora do primeiro passo.
 - Custo: uma cópia por quadro da imagem de profundidade.
 - Isso mexe em command buffers do jogo: o mais arriscado de todo o projeto; exige a validation layer em cada passo.
+
+## Modo cópia (o desenho do ReShade), 2026-11-06
+Depois de seis Xid 69 num dia (Slime Rancher 2 e A Hat in Time) e da leitura da fonte do add-on (`generic_depth_addon.cpp`), a layer passou
+a seguir o ReShade nos pontos em que divergia de um jeito arriscado. Cada ponto tem uma variável de ambiente para voltar ao de antes.
+
+- **Os efeitos leem sempre uma cópia (a foto), nunca a imagem do jogo.** Antes a cadeia lia a imagem original, com a barreira de layout
+  gravada uma vez, na criação da cadeia, a partir do layout que a layer rastreava; se o jogo deixasse a imagem noutro layout num quadro
+  (carregamento, menu, passe a menos), a barreira mentia. Agora, a cada present, a layer grava (num command buffer próprio, à frente dos
+  efeitos no mesmo envio) a cópia original → foto com o layout **daquele momento**, e a foto está sempre no layout de leitura que a
+  própria layer gravou. É a "cópia na hora dos efeitos" do ReShade. `LINUX_RESHADE_DEPTH_DIRECT=1` volta a amostrar a original.
+- **A cópia da hora dos efeitos só acontece se nenhuma regra copiou no quadro** (limpeza, passe), como o `copied_during_frame` do ReShade.
+  Isso também elimina a foto velha: se a limpeza escolhida não existe num quadro, a foto vem da profundidade viva.
+- **Não se parte mais o passe de renderização numa `vkCmdClearAttachments`.** O ReShade não copia dentro de um passe ativo (é inválido, e uma
+  consulta ou renderização condicional aberta no passe não sobrevive ao `vkCmdEndRendering`; o DXVK usa as duas). Fica atrás de
+  `LINUX_RESHADE_DEPTH_SPLIT=1`, ou de um pedido explícito "Antes da limpeza N" no painel. As cópias antes de `loadOp = CLEAR` e de
+  `vkCmdClearDepthStencilImage` (fora de passe) continuam.
+- Custo da cópia: ~8 MB lidos e ~8 MB escritos por quadro a 1080p (D32), na ordem de 0,05 a 0,15 ms numa RTX 3060, e só com algum efeito
+  de profundidade ligado.
+- Os roteiros `smoke-depth-effect` (vkcube, validation layer) e `smoke-dynamic` (partição e MSAA, `LINUX_RESHADE_DEPTH_SPLIT=1`) passam.

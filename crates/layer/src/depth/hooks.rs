@@ -517,6 +517,7 @@ unsafe fn snapshot_now(data: &DeviceData, cmd: vk::CommandBuffer, image: u64, la
         }
         unsafe { super::snapshot::record_copy(data, cmd, vk::Image::from_raw(image), layout, dst, format, info.width, info.height) };
     }
+    data.depth.copied_frame.store(true, Ordering::Relaxed);
     if !data.depth.snapshot_written.swap(true, Ordering::Relaxed) {
         let (clear, pass) = (data.depth.snapshot_clear.load(Ordering::Relaxed), data.depth.snapshot_pass.load(Ordering::Relaxed));
         if clear > 0 {
@@ -583,7 +584,10 @@ unsafe extern "system" fn cmd_clear_attachments(cmd: vk::CommandBuffer, count: u
                 Some(state) => (state.current.map_or(0, |p| p.image), state.rendering.clone()),
                 None => (0, None),
             };
-            if image != 0 && register_clear_event(&data, image, copy.is_some()) && let Some(copy) = copy {
+            // Partir o passe só se pedido: o ReShade não copia dentro de um passe ativo (é inválido, e consultas ou renderização condicional
+            // abertas no passe não sobrevivem ao fim dele). O "antes da limpeza N" explícito da pessoa vale como pedido.
+            let allow = copy.is_some() && (data.depth.split_enabled || data.depth.pick.lock().unwrap().clear.is_some());
+            if image != 0 && register_clear_event(&data, image, allow) && allow && let Some(copy) = copy {
                 split_rendering(&data, cmd, &copy);
             }
         }
@@ -986,6 +990,8 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
     let clear_events = std::mem::take(&mut *data.depth.frame_clears.lock().unwrap());
     let clear_count = clear_events.len();
     poll_pick(data);
+    // O present já usou a marca deste quadro (`copy_for_present`, antes de `end_frame`): começa a do próximo.
+    data.depth.copied_frame.store(false, Ordering::Relaxed);
     let (frame_draws, frame_depth_draws) = (data.depth.frame_draws.swap(0, Ordering::Relaxed), data.depth.frame_depth_draws.swap(0, Ordering::Relaxed));
     let (frame_clear_attachments, frame_clear_images) = (data.depth.frame_clear_attachments.swap(0, Ordering::Relaxed), data.depth.frame_clear_images.swap(0, Ordering::Relaxed));
     let stats = std::mem::take(&mut *data.depth.frame.lock().unwrap());
@@ -1149,7 +1155,10 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
             state.1
         };
         let wanted_pass = if no_snapshot { None } else if msaa { Some(ALL_PASSES) } else if wanted_clear.is_some() { None } else { pick.pass.or_else(auto_pass) };
-        let snapshot = (wanted_pass.is_some() || wanted_clear.is_some()).then_some(()).and_then(|()| {
+        // Modo cópia (o do ReShade): sempre há foto, e a cópia da hora dos efeitos a renova quando nenhuma regra copiou no quadro.
+        let copy_live = data.depth.copy_mode && !no_snapshot && !msaa && c.sampled && c.layout != 0;
+        *data.depth.live.lock().unwrap() = copy_live.then_some(super::Live { image: c.image, format: c.format, width: c.width, height: c.height });
+        let snapshot = (wanted_pass.is_some() || wanted_clear.is_some() || copy_live).then_some(()).and_then(|()| {
             // A foto: precisa da imagem da foto, e a imagem original precisa ter TRANSFER_SRC (armado). MSAA: foto de uma amostra.
             let format = if msaa { super::resolve::RESOLVED_FORMAT } else { vk::Format::from_raw(c.format) };
             unsafe { super::snapshot::ensure(data, format, c.width, c.height, msaa) }
@@ -1159,7 +1168,7 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
                 data.depth.snapshot_pass.store(wanted_pass.unwrap_or(0), Ordering::Relaxed);
                 data.depth.snapshot_clear.store(wanted_clear.unwrap_or(0), Ordering::Relaxed);
                 // Antes da primeira foto a imagem não tem layout: os efeitos só a recebem depois.
-                if data.depth.snapshot_written.load(Ordering::Relaxed) {
+                if data.depth.snapshot_written.load(Ordering::Relaxed) || copy_live {
                     chosen = Some(super::Chosen { image: image.as_raw(), format: c.format, layout: vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL.as_raw(), width: c.width, height: c.height, linear: linear(c.format) });
                 }
             }
