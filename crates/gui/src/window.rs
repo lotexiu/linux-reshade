@@ -665,10 +665,12 @@ impl Ui {
     fn big_hit_area(check: &gtk::CheckButton) -> gtk::Box {
         let hit = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         hit.set_size_request(40, 40);
+        hit.set_hexpand(false);
+        hit.set_halign(gtk::Align::Start);
         hit.set_valign(gtk::Align::Center);
         check.set_halign(gtk::Align::Center);
         check.set_valign(gtk::Align::Center);
-        check.set_hexpand(true);
+        check.set_hexpand(true); // centraliza o quadradinho dentro da área fixa (a área em si não cresce)
         check.set_can_target(false); // o clique é da área, não só do quadradinho
         hit.append(check);
         hit.set_tooltip_text(check.tooltip_text().as_deref());
