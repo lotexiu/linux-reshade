@@ -416,7 +416,13 @@ impl SwapchainFx {
         self.set_state(state);
     }
 
-    /// Libera os recursos de GPU.
+    /// `LINUX_RESHADE_SAFE_SWAP=1`: espera a GPU ficar ociosa antes de destruir uma cadeia de efeitos.
+fn safe_swap() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LINUX_RESHADE_SAFE_SWAP").is_some_and(|v| v != "0"))
+}
+
+/// Libera os recursos de GPU.
     ///
     /// # Safety
     /// A GPU não pode estar executando trabalho deste swapchain (o chamador espera o dispositivo ficar ocioso).
@@ -443,6 +449,12 @@ impl SwapchainFx {
 
     unsafe fn drop_retiring(&mut self, device: &ash::Device) {
         if let Some(built) = self.retiring.take() {
+            // Diagnóstico dos Xid 69 (erro de classe da GPU) que aparecem depois de trocar a cadeia de efeitos: com
+            // `LINUX_RESHADE_SAFE_SWAP=1` a GPU fica ociosa antes de a cadeia antiga ser destruída. Se os erros somem, a causa é um
+            // recurso destruído enquanto a GPU ainda o usava.
+            if Self::safe_swap() {
+                let _ = unsafe { device.device_wait_idle() };
+            }
             let mut old = Fx::Ready(built);
             unsafe { Self::destroy_fx(&mut old, device) };
         }
