@@ -266,15 +266,63 @@ fn override_with(app: Option<&str>, flags: &[String]) -> Result<(), String> {
     flatpak(&args).map(drop)
 }
 
+// ---- os apps em que o painel ligou o linux-reshade (para ligar um jogo aberto ao app Flatpak dele) ----
+
+fn registry_file() -> PathBuf {
+    work_dir().join("apps.ini")
+}
+
+/// Os apps Flatpak em que o painel (ou `lrctl flatpak`) ligou o linux-reshade: `(id do app, nome)`.
+pub fn configured_apps() -> Vec<(String, String)> {
+    ini::Ini::load(&registry_file()).map(|i| i.entries("apps").into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()).unwrap_or_default()
+}
+
+fn record(app_id: &str, name: Option<&str>) {
+    let mut ini = ini::Ini::load(&registry_file()).unwrap_or_else(|_| ini::Ini::new());
+    match name {
+        Some(n) => ini.set("apps", app_id, n),
+        None => {
+            ini.remove("apps", app_id);
+        }
+    }
+    let _ = std::fs::create_dir_all(work_dir());
+    let _ = ini.save(&registry_file());
+}
+
+/// O jogo aberto com a layer chamado `game_id` é o app Flatpak `(id, nome)`? O nome do processo costuma ser o do app (Sober: `sober`).
+pub fn is_game_of(game_id: &str, app_id: &str, name: &str) -> bool {
+    let norm = |s: &str| s.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase();
+    let last = app_id.rsplit('.').next().unwrap_or(app_id);
+    let game = norm(game_id);
+    !game.is_empty() && (game == norm(last) || game == norm(name))
+}
+
+/// O app Flatpak configurado que corresponde a este jogo, se há.
+pub fn app_of_game(game_id: &str) -> Option<(String, String)> {
+    configured_apps().into_iter().find(|(id, name)| is_game_of(game_id, id, name))
+}
+
+/// Põe o registro em dia com o estado real de um app (ligado pelo painel, por `lrctl` ou por outro caminho).
+pub fn remember(app: &App, state: State) {
+    let on = matches!(state, State::On);
+    if on != configured_apps().iter().any(|(id, _)| *id == app.id) {
+        record(&app.id, on.then_some(app.name.as_str()));
+    }
+}
+
 /// Liga o linux-reshade neste app: extensão da versão do runtime dele, permissões e variáveis.
 pub fn enable(app: &App) -> Result<(), String> {
     ensure_extension(&extension_version(&app.runtime)?)?;
-    override_with(Some(&app.id), &grants(&cache_dir()))
+    override_with(Some(&app.id), &grants(&cache_dir()))?;
+    record(&app.id, Some(&app.name));
+    Ok(())
 }
 
 /// Desfaz o que [`enable`] fez neste app (a extensão fica: outros apps e a configuração global podem usá-la).
 pub fn disable(app_id: &str) -> Result<(), String> {
-    override_with(Some(app_id), &revokes(&cache_dir()))
+    override_with(Some(app_id), &revokes(&cache_dir()))?;
+    record(app_id, None);
+    Ok(())
 }
 
 /// Desliga só neste app, mantendo a configuração global (o equivalente a pôr `LINUX_RESHADE=0` no Flatseal).
@@ -348,6 +396,14 @@ mod tests {
         assert_eq!(state_from(on, off), State::On, "ligado no app vale mesmo sem o global");
         // `LINUX_RESHADE_DEPTH=1` não é `LINUX_RESHADE=1`.
         assert_eq!(parse_enable_var("[Environment]\nLINUX_RESHADE_DEPTH=1\n"), None);
+    }
+
+    #[test]
+    fn a_game_matches_its_flatpak_app_by_process_name() {
+        assert!(is_game_of("sober", "org.vinegarhq.Sober", "Sober"));
+        assert!(is_game_of("Beyond_All_Reason", "info.beyondallreason.bar", "Beyond All Reason"));
+        assert!(!is_game_of("HatinTimeGame", "org.vinegarhq.Sober", "Sober"));
+        assert!(!is_game_of("", "org.vinegarhq.Sober", "Sober"));
     }
 
     #[test]

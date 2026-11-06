@@ -55,6 +55,8 @@ pub struct Ui {
     add_view: Rc<AddEffectView>,
     stack: gtk::Stack,
     flatpak_view: Rc<FlatpakView>,
+    /// Aparece quando o jogo escolhido é um app Flatpak configurado: abre a página onde se desfaz a configuração.
+    flatpak_button: gtk::Button,
     /// A versão do modelo que a tela já mostra: se a leitura periódica não a mudou, não há o que redesenhar.
     applied_version: Cell<u64>,
     games_view: RefCell<GamesView>,
@@ -190,7 +192,11 @@ impl Ui {
         };
         let page = gtk::Box::new(gtk::Orientation::Vertical, 10);
         margins(&page, 14);
-        page.append(&line("Jogo", &[game.upcast_ref()]));
+        let flatpak_button = gtk::Button::with_label("Flatpak…");
+        flatpak_button.set_tooltip_text(Some("Este jogo roda como app Flatpak: abre a página onde se vê e se desfaz a configuração dele"));
+        flatpak_button.set_visible(false);
+        game.set_hexpand(true);
+        page.append(&line("Jogo", &[game.upcast_ref(), flatpak_button.upcast_ref()]));
         page.append(&line("Preset", &[preset.upcast_ref(), new_preset.upcast_ref(), delete_preset.upcast_ref()]));
         page.append(&preset_note);
         let depth_line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -315,6 +321,7 @@ impl Ui {
             add_view: add_view.clone(),
             stack: stack.clone(),
             flatpak_view: flatpak_view.clone(),
+            flatpak_button: flatpak_button.clone(),
             applied_version: Cell::new(u64::MAX),
             games_view: RefCell::new(games_view),
             notice,
@@ -323,6 +330,14 @@ impl Ui {
 
         let weak: Weak<Ui> = Rc::downgrade(&ui);
         *ui_ref.borrow_mut() = weak.clone();
+        flatpak_button.connect_clicked({
+            let weak = weak.clone();
+            move |_| {
+                if let Some(ui) = weak.upgrade() {
+                    ui.show_page("flatpak");
+                }
+            }
+        });
         add_button.connect_clicked({
             let weak = weak.clone();
             move |_| {
@@ -628,6 +643,9 @@ impl Ui {
             self.add_view.set(&s.effects, &s.folders, &s.infos, s.analysis, self.stack.visible_child_name().as_deref() == Some("add"));
 
             self.show_groups(&s.groups);
+
+            // O botão "Flatpak…" só aparece se o jogo escolhido é um app Flatpak em que o linux-reshade foi ligado.
+            self.flatpak_button.set_visible(s.game.as_deref().is_some_and(|g| control_core::flatpak::app_of_game(g).is_some()));
 
             self.empty.set_visible(s.groups.is_empty());
             self.empty.set_text(if s.groups.is_empty() {

@@ -130,7 +130,7 @@ impl FlatpakView {
         self.message("Lendo os apps Flatpak…", false);
         let me = self.clone();
         glib::spawn_future_local(async move {
-            let loaded = gtk::gio::spawn_blocking(|| flatpak::installed_apps().map(|apps| apps.into_iter().map(|a| (flatpak::state(&a.id), a)).collect::<Vec<_>>())).await;
+            let loaded = gtk::gio::spawn_blocking(|| flatpak::installed_apps().map(|apps| apps.into_iter().map(|a| (flatpak::state(&a.id), a)).inspect(|(state, app)| flatpak::remember(app, *state)).collect::<Vec<_>>())).await;
             match loaded {
                 Ok(Ok(apps)) => {
                     me.message("", false);
