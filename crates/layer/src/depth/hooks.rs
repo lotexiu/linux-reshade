@@ -1084,6 +1084,7 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
                     *state = (c.image, 0, 0, 0);
                 }
             } else if state.1 == 0 {
+                crate::log::log!("profundidade: limpeza automática = {best} (de {clear_count}; desenhos antes de cada: {:?})", clear_events.iter().map(|e| e.draws_before).collect::<Vec<_>>());
                 *state = (c.image, best, best, 0);
             } else if best == state.1 {
                 state.2 = best;
@@ -1091,6 +1092,7 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
             } else if best == state.2 {
                 state.3 += 1;
                 if state.3 >= AUTO_CLEAR_SWITCH_FRAMES {
+                    crate::log::log!("profundidade: limpeza automática mudou de {} para {best} (desenhos antes de cada: {:?})", state.1, clear_events.iter().map(|e| e.draws_before).collect::<Vec<_>>());
                     *state = (c.image, best, best, 0);
                 }
             } else {
@@ -1167,7 +1169,7 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
             let mut diag = data.depth.diag.lock().unwrap();
             if data.depth.diag_frames.fetch_add(1, Ordering::Relaxed) % 90 == 0 || diag.is_empty() {
                 *diag = format!(
-                    "trocas da imagem: {}, reconstruções da cadeia: {}; um quadro: {} desenhos ({} em passes com profundidade), limpezas de profundidade fora de passe: {} de anexos e {} de imagens; limpeza escolhida: {} de {}; última mudança que reconstruiu: {}; presents sem efeito/com efeito: {}/{}",
+                    "trocas da imagem: {}, reconstruções da cadeia: {}; um quadro: {} desenhos ({} em passes com profundidade), limpezas de profundidade fora de passe: {} de anexos e {} de imagens; limpeza escolhida: {} de {} [desenhos antes de cada uma: {}]; última mudança que reconstruiu: {}; presents sem efeito/com efeito: {}/{}",
                     data.depth.image_changes.load(Ordering::Relaxed),
                     data.depth.chain_rebuilds.load(Ordering::Relaxed),
                     frame_draws,
@@ -1176,6 +1178,7 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
                     frame_clear_images,
                     data.depth.snapshot_clear.load(Ordering::Relaxed),
                     clear_count,
+                    clear_events.iter().map(|e| format!("{}{}", e.draws_before, if e.splittable { "" } else { "!" })).collect::<Vec<_>>().join(" "),
                     data.depth.last_key_change.lock().unwrap(),
                     data.depth.fx_presents[0].load(Ordering::Relaxed),
                     data.depth.fx_presents[1].load(Ordering::Relaxed),
