@@ -4,6 +4,7 @@
 
 use crate::add_effect::AddEffectView;
 use crate::effect_row::{EffectRow, RowCtx};
+use crate::flatpak_view::FlatpakView;
 use crate::games::GamesView;
 use gtk4 as gtk;
 use crate::depth_picker::DepthPicker;
@@ -20,6 +21,8 @@ use std::time::Duration;
 /// Intervalo entre duas leituras do estado (jogos, flag, mudanças feitas pelo `lrctl` ou editando o arquivo).
 const REFRESH: Duration = Duration::from_millis(500);
 const GLOBAL_GAME: &str = "Preset global";
+/// O último item da lista de jogos: abre a página que liga o linux-reshade em apps Flatpak.
+const ADD_FLATPAK: &str = "＋ Adicionar jogo Flatpak…";
 const INHERIT_PRESET: &str = "(usar o preset global)";
 
 pub struct Ui {
@@ -51,6 +54,7 @@ pub struct Ui {
     /// A página "Adicionar efeito" e a pilha que a alterna com a lista do preset.
     add_view: Rc<AddEffectView>,
     stack: gtk::Stack,
+    flatpak_view: Rc<FlatpakView>,
     /// A versão do modelo que a tela já mostra: se a leitura periódica não a mudou, não há o que redesenhar.
     applied_version: Cell<u64>,
     games_view: RefCell<GamesView>,
@@ -112,7 +116,7 @@ impl Ui {
 
         let enabled = gtk::Switch::new();
         enabled.set_valign(gtk::Align::Center);
-        let game = gtk::DropDown::from_strings(&[GLOBAL_GAME]);
+        let game = gtk::DropDown::from_strings(&[GLOBAL_GAME, ADD_FLATPAK]);
         game.set_hexpand(true);
         let preset = gtk::DropDown::from_strings(&[INHERIT_PRESET]);
         preset.set_hexpand(true);
@@ -244,10 +248,20 @@ impl Ui {
                 }
             },
         );
+        let flatpak_view = FlatpakView::new({
+            let ui_ref = ui_ref.clone();
+            move || {
+                let ui = ui_ref.borrow().upgrade();
+                if let Some(ui) = ui {
+                    ui.show_page("main");
+                }
+            }
+        });
         let stack = gtk::Stack::new();
         stack.set_transition_type(gtk::StackTransitionType::SlideLeftRight);
         stack.add_named(&page, Some("main"));
         stack.add_named(&add_view.root, Some("add"));
+        stack.add_named(&flatpak_view.root, Some("flatpak"));
 
         let window = gtk::ApplicationWindow::builder().application(app).title("linux-reshade").default_width(600).default_height(780).child(&stack).build();
         window.set_titlebar(Some(&header));
@@ -259,7 +273,7 @@ impl Ui {
                 let ui = ui_ref.borrow().upgrade();
                 if keyval == gtk::gdk::Key::Escape
                     && let Some(ui) = ui
-                    && ui.stack.visible_child_name().as_deref() == Some("add")
+                    && matches!(ui.stack.visible_child_name().as_deref(), Some("add" | "flatpak"))
                 {
                     ui.show_page("main");
                     return glib::Propagation::Stop;
@@ -300,6 +314,7 @@ impl Ui {
             expanded: Rc::new(RefCell::new(HashSet::new())),
             add_view: add_view.clone(),
             stack: stack.clone(),
+            flatpak_view: flatpak_view.clone(),
             applied_version: Cell::new(u64::MAX),
             games_view: RefCell::new(games_view),
             notice,
@@ -327,9 +342,24 @@ impl Ui {
         ui
     }
 
+    /// Põe no seletor o jogo que o modelo tem escolhido (depois de o último item, "adicionar Flatpak", ter sido clicado).
+    fn apply_game_selection(self: &Rc<Self>) {
+        let _programmatic = Programmatic::enter(&self.updating);
+        let selected = {
+            let home = self.home.borrow();
+            let game = home.snapshot().game.clone();
+            self.game_ids.borrow().iter().position(|g| *g == game).unwrap_or(0) as u32
+        };
+        self.game.set_selected(selected);
+    }
+
     /// Mostra uma das páginas da janela (`"main"`: a lista do preset; `"add"`: adicionar efeito).
     pub fn show_page(self: &Rc<Self>, name: &str) {
         self.stack.set_visible_child_name(name);
+        if name == "flatpak" {
+            self.flatpak_view.reload();
+            self.flatpak_view.focus_search();
+        }
         if name == "add" {
             self.add_view.focus_search();
             let ui = self.clone();
@@ -358,6 +388,12 @@ impl Ui {
             move |dd| {
                 let Some(ui) = weak.upgrade() else { return };
                 if ui.updating.get() {
+                    return;
+                }
+                // O último item não é um jogo: abre a página dos apps Flatpak e a escolha volta ao jogo que estava.
+                if dd.selected() as usize >= ui.game_ids.borrow().len() {
+                    ui.show_page("flatpak");
+                    ui.apply_game_selection();
                     return;
                 }
                 let id = ui.game_ids.borrow().get(dd.selected() as usize).cloned().flatten();
@@ -538,6 +574,7 @@ impl Ui {
             if *self.game_ids.borrow() != ids {
                 let mut items = vec![GLOBAL_GAME.to_string()];
                 items.extend(s.games.iter().map(|g| if g.open { format!("● {}", g.id) } else { g.id.clone() }));
+                items.push(ADD_FLATPAK.to_string());
                 let refs: Vec<&str> = items.iter().map(String::as_str).collect();
                 self.game.set_model(Some(&gtk::StringList::new(&refs)));
                 *self.game_ids.borrow_mut() = ids.clone();
@@ -758,6 +795,22 @@ impl Ui {
         step(500).await;
         if !on_add(self) {
             problems.push("a página não reabriu depois de fechada".to_string());
+        }
+        self.show_page("main");
+        step(300).await;
+
+        // A página dos apps Flatpak, pelo último item da lista de jogos (a escolha volta ao jogo que estava).
+        let before = self.game.selected();
+        self.game.set_selected(self.game_ids.borrow().len() as u32);
+        step(2500).await;
+        if self.stack.visible_child_name().as_deref() != Some("flatpak") {
+            problems.push("o último item da lista de jogos não abriu a página dos apps Flatpak".to_string());
+        }
+        if self.game.selected() != before {
+            problems.push("a lista de jogos não voltou ao jogo anterior".to_string());
+        }
+        if control_core::flatpak::available() && self.flatpak_view.app_count() == 0 {
+            problems.push("a página dos apps Flatpak não listou nenhum app".to_string());
         }
         self.show_page("main");
         step(300).await;

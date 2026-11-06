@@ -282,6 +282,11 @@ pub fn disable_here(app_id: &str) -> Result<(), String> {
     override_with(Some(app_id), &[format!("--env={ENABLE_VAR}=0")])
 }
 
+/// Volta um app que se excluiu da configuração global (`LINUX_RESHADE=0`) a seguir a global.
+pub fn follow_global(app_id: &str) -> Result<(), String> {
+    override_with(Some(app_id), &[format!("--unset-env={ENABLE_VAR}")])
+}
+
 /// Liga em TODOS os apps Flatpak (a configuração global, como a do Flatseal): a extensão de cada versão de runtime em uso e as
 /// permissões e variáveis na configuração global. Um app pode se excluir com `LINUX_RESHADE=0`.
 pub fn enable_global() -> Result<(), String> {

@@ -8,6 +8,7 @@ mod add_effect;
 mod controls;
 mod depth_picker;
 mod disclosure;
+mod flatpak_view;
 mod effect_row;
 mod games;
 mod macros;
@@ -52,6 +53,8 @@ struct Options {
     open_shortcuts: bool,
     /// Abre e fecha os menus da janela como uma pessoa e confere que nada some.
     smoke_popovers: bool,
+    /// Abre esta página da janela (`add`, `flatpak`) antes de fotografar.
+    page: Option<String>,
     /// Espera antes de agir (para um jogo abrir depois do painel).
     wait_ms: u64,
     /// Escolhe este efeito na lista (e desfaz ao sair).
@@ -64,7 +67,7 @@ struct Options {
 
 impl Options {
     fn is_test_run(&self) -> bool {
-        self.game.is_some() || self.smoke.is_some() || self.open_macros || self.open_shortcuts || self.smoke_popovers || self.screenshot.is_some() || self.effect.is_some() || self.hold_ms > 0 || self.wait_ms > 0 || self.keepalive_check
+        self.game.is_some() || self.smoke.is_some() || self.open_macros || self.open_shortcuts || self.smoke_popovers || self.page.is_some() || self.screenshot.is_some() || self.effect.is_some() || self.hold_ms > 0 || self.wait_ms > 0 || self.keepalive_check
     }
 }
 
@@ -81,6 +84,7 @@ fn parse_args() -> Result<Options, String> {
             "--open-macros" => options.open_macros = true,
             "--open-shortcuts" => options.open_shortcuts = true,
             "--smoke-popovers" => options.smoke_popovers = true,
+            "--page" => options.page = Some(args.next().ok_or("--page precisa do nome de uma página (add, flatpak)")?),
             "--keepalive-check" => options.keepalive_check = true,
             "--screenshot" => options.screenshot = Some(args.next().ok_or("--screenshot precisa de um arquivo .png")?),
             other => return Err(format!("opção desconhecida: {other}\nuso: lrpanel [--smoke <Efeito>] [--effect <Efeito>] [--screenshot <arquivo.png>] [--wait <ms>] [--hold <ms>]")),
@@ -218,6 +222,10 @@ async fn test_run(app: gtk::Application, ui: Rc<window::Ui>, options: Rc<Options
         } else {
             fail(format!("o efeito {name:?} não está na lista"));
         }
+    }
+    if let Some(page) = &options.page {
+        ui.show_page(page);
+        glib::timeout_future(Duration::from_millis(2500)).await;
     }
     if options.open_macros {
         ui.macros_popup();
