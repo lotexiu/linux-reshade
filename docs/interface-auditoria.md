@@ -27,9 +27,9 @@ tela. Medido em 2026-11-06 (`LRDBG=1 lrpanel`).
 - **Adicionar efeito virou página** (componente `add_effect.rs`), e o roteiro `--smoke-popovers` cobre o fluxo.
 
 ## Plano (cada etapa verificável e entregue sozinha)
-1. **Lista com chave** (como `key=` do React): linhas reaproveitadas por arquivo; adicionar, remover e mover mexem só nas linhas
+1. **Lista com chave (feito)** (como `key=` do React): linhas reaproveitadas por arquivo; adicionar, remover e mover mexem só nas linhas
    afetadas, sem refazer as outras nem os controles abertos.
-2. **Componente por parte da janela**: cabeçalho, barra do preset, lista de efeitos (+ `EffectRow`), jogos abertos, avisos.
+2. **Componente por parte da janela (a linha de efeito e a página Adicionar efeito feitas)**: cabeçalho, barra do preset, lista de efeitos (+ `EffectRow`), jogos abertos, avisos.
    Cada um com `set(props)` que compara com o que já mostra e ignora o igual. `window.rs` só liga um ao outro.
 3. **Ações em vez de chamadas**: os widgets enviam uma `Action` (enum) e um só lugar a aplica no modelo; o `updating` some porque
    o widget só avisa quando o usuário mexe (`connect_*` ligado só às ações de pessoa).
