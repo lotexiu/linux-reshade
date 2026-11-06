@@ -241,6 +241,23 @@ impl Ui {
 
         let window = gtk::ApplicationWindow::builder().application(app).title("linux-reshade").default_width(600).default_height(780).child(&stack).build();
         window.set_titlebar(Some(&header));
+        // Esc na página "Adicionar efeito" volta à lista do preset (um campo de busca com texto usa o primeiro Esc para limpá-lo).
+        let escape = gtk::EventControllerKey::new();
+        escape.connect_key_pressed({
+            let ui_ref = ui_ref.clone();
+            move |_, keyval, _, _| {
+                let ui = ui_ref.borrow().upgrade();
+                if keyval == gtk::gdk::Key::Escape
+                    && let Some(ui) = ui
+                    && ui.stack.visible_child_name().as_deref() == Some("add")
+                {
+                    ui.show_page("main");
+                    return glib::Propagation::Stop;
+                }
+                glib::Propagation::Proceed
+            }
+        });
+        window.add_controller(escape);
         {
             let window = window.clone();
             shortcuts_button.connect_clicked(move |_| {

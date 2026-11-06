@@ -611,6 +611,20 @@ pub fn open(parent: &gtk::ApplicationWindow) -> gtk::Window {
     notebook.append_page(&log_page(), Some(&gtk::Label::new(Some("Registro"))));
     notebook.append_page(&about_page(), Some(&gtk::Label::new(Some("Sobre"))));
     window.set_child(Some(&notebook));
+    // Esc fecha a janela. Enquanto a aba de atalhos espera uma tecla, o Esc cancela só a captura (o controle dela, na fase de captura,
+    // consome a tecla antes deste).
+    let escape = gtk::EventControllerKey::new();
+    escape.connect_key_pressed({
+        let window = window.clone();
+        move |_, keyval, _, _| {
+            if keyval == gtk::gdk::Key::Escape {
+                window.close();
+                return gtk::glib::Propagation::Stop;
+            }
+            gtk::glib::Propagation::Proceed
+        }
+    });
+    window.add_controller(escape);
     window.present();
     // Só para os testes de captura da tela: abrir direto numa aba.
     if let Some(tab) = std::env::var("LINUX_RESHADE_SETTINGS_TAB").ok().and_then(|v| v.parse().ok()) {
