@@ -971,6 +971,9 @@ const AUTO_CLEAR_SWITCH_FRAMES: u32 = 8;
 /// Quantos quadros seguidos sem um passe que recomeça a imagem fazem a regra automática largar a foto.
 const AUTO_SCENE_FORGET_FRAMES: u32 = 600;
 
+/// O mesmo quando o número da limpeza escolhida passou do que o quadro tem: não há mais o que copiar.
+const AUTO_CLEAR_MISSING_FRAMES: u32 = 30;
+
 /// Fim de um quadro (chamado no present): escolhe a candidata e publica a lista para o app de controle.
 pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
     if !data.depth.is_on() {
@@ -1080,7 +1083,10 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
             if best == 0 {
                 // Sem limpezas neste quadro: só esquece a escolha depois de muito tempo.
                 state.3 += 1;
-                if state.3 >= AUTO_SCENE_FORGET_FRAMES {
+                // A limpeza escolhida nem existe mais neste jogo (o quadro tem menos limpezas que o número guardado): a foto não é
+                // mais gravada e a cena de antes ficaria congelada na tela; larga a escolha logo.
+                let missing = state.1 as usize > clear_count;
+                if state.3 >= if missing { AUTO_CLEAR_MISSING_FRAMES } else { AUTO_SCENE_FORGET_FRAMES } {
                     *state = (c.image, 0, 0, 0);
                 }
             } else if state.1 == 0 {
