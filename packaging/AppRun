@@ -11,6 +11,12 @@ export LINUX_RESHADE_LAYER_LIB="$HERE/usr/lib/liblinux_reshade_layer.so"
 [ -x "$HERE/usr/bin/spirv-opt" ] && export LINUX_RESHADE_SPIRV_OPT="$HERE/usr/bin/spirv-opt"
 # Os ganchos do plugin do GTK (caminhos dos módulos, esquemas, ícones).
 for hook in "$HERE"/apprun-hooks/*.sh; do [ -f "$hook" ] && . "$hook"; done
+# O plugin do GTK força o servidor X11 (o XWayland, com outra escala, fonte e decoração de janela) e o tema Adwaita. Aqui valem o Wayland
+# e o tema do sistema, como no programa instalado; `APPIMAGE_FORCE_X11=1` volta ao do plugin se o Wayland der problema.
+if [ -z "${APPIMAGE_FORCE_X11:-}" ]; then
+  unset GDK_BACKEND
+  [ -n "${APPIMAGE_GTK_THEME_SET:-}" ] || unset GTK_THEME
+fi
 case "${1:-}" in
   --daemon) shift; exec "$HERE/usr/bin/lrctl" daemon "$@" ;;
   --lrctl) shift; exec "$HERE/usr/bin/lrctl" "$@" ;;
