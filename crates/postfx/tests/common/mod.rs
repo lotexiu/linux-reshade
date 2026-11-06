@@ -285,7 +285,8 @@ pub unsafe fn depth_image_with(gpu: &Gpu, format: vk::Format, width: u32, height
             .allocate_memory(&vk::MemoryAllocateInfo::default().allocation_size(req.size).memory_type_index(gpu.memory_type(req.memory_type_bits, vk::MemoryPropertyFlags::empty())), None)
             .unwrap();
         gpu.device.bind_image_memory(image, memory, 0).unwrap();
-        let range = vk::ImageSubresourceRange { aspect_mask: vk::ImageAspectFlags::DEPTH, base_mip_level: 0, level_count: 1, base_array_layer: 0, layer_count: 1 };
+        let aspect = if matches!(format, vk::Format::D24_UNORM_S8_UINT | vk::Format::D32_SFLOAT_S8_UINT) { vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL } else { vk::ImageAspectFlags::DEPTH };
+        let range = vk::ImageSubresourceRange { aspect_mask: aspect, base_mip_level: 0, level_count: 1, base_array_layer: 0, layer_count: 1 };
         let barrier = |old, new| {
             vk::ImageMemoryBarrier::default()
                 .image(image)

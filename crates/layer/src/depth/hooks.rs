@@ -1105,7 +1105,10 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
         // possa partir, como os de passes de renderização clássicos).
         let msaa = c.samples > 1;
         // Uma imagem MSAA só serve resolvida: a foto depois de TODOS os passes (o último vale), sem a regra de limpeza.
-        let wanted_clear = if pick.pass.is_some() || msaa { None } else { pick.clear.or_else(auto_clear) };
+        // Diagnóstico dos Xid 69: `LINUX_RESHADE_DEPTH_NO_SNAPSHOT=1` não parte passes nem copia a profundidade (os efeitos leem a imagem do
+        // jogo, que pode estar velha ou limpa). Se os erros da GPU somem, a causa é a cópia dentro dos command buffers do jogo.
+        let no_snapshot = std::env::var_os("LINUX_RESHADE_DEPTH_NO_SNAPSHOT").is_some_and(|v| v != "0");
+        let wanted_clear = if no_snapshot || pick.pass.is_some() || msaa { None } else { pick.clear.or_else(auto_clear) };
         let auto_pass = || {
             // Com histerese: depois de usar a foto de um passe, só volta à imagem original se o jogo ficar muito tempo sem
             // recomeçar a imagem; o número do passe acompanha o último visto. Sem isso, a escolha trocava entre foto e
@@ -1126,7 +1129,7 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
             }
             state.1
         };
-        let wanted_pass = if msaa { Some(ALL_PASSES) } else if wanted_clear.is_some() { None } else { pick.pass.or_else(auto_pass) };
+        let wanted_pass = if no_snapshot { None } else if msaa { Some(ALL_PASSES) } else if wanted_clear.is_some() { None } else { pick.pass.or_else(auto_pass) };
         let snapshot = (wanted_pass.is_some() || wanted_clear.is_some()).then_some(()).and_then(|()| {
             // A foto: precisa da imagem da foto, e a imagem original precisa ter TRANSFER_SRC (armado). MSAA: foto de uma amostra.
             let format = if msaa { super::resolve::RESOLVED_FORMAT } else { vk::Format::from_raw(c.format) };

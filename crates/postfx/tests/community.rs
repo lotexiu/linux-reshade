@@ -185,7 +185,14 @@ fn a_chain_of_compiled_bundles_runs() {
             .ok()
             .and_then(|s| s.split_once('x').and_then(|(a, b)| Some((a.parse::<u32>().ok()?, b.parse::<u32>().ok()?))))
             .unwrap_or((w, h));
-        let depth_format = if std::env::var_os("LINUX_RESHADE_CHAIN_DEPTH_D16").is_some() { vk::Format::D16_UNORM } else { DEPTH_FORMAT };
+        // `LINUX_RESHADE_CHAIN_DEPTH_D24S8=1`: o formato do A Hat in Time (D24_UNORM_S8, com aspecto de estêncil).
+        let depth_format = if std::env::var_os("LINUX_RESHADE_CHAIN_DEPTH_D16").is_some() {
+            vk::Format::D16_UNORM
+        } else if std::env::var_os("LINUX_RESHADE_CHAIN_DEPTH_D24S8").is_some() {
+            vk::Format::D24_UNORM_S8_UINT
+        } else {
+            DEPTH_FORMAT
+        };
         let depth = depth_image_with(&gpu, depth_format, dw, dh, base, ((spread != 0.0 || disc.is_some()) && depth_format == DEPTH_FORMAT && (dw, dh) == (w, h)).then_some(&gradient));
         let input_depth = DepthInput { image: depth.image, format: depth_format, layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL, extent: vk::Extent2D { width: dw, height: dh }, linear_filter: true };
         let target = Target { images: &images, format: FORMAT, extent: vk::Extent2D { width: w, height: h }, rest_layout: REST, queue_family: gpu.family, init_command_buffer: None, depth: Some(input_depth) };
