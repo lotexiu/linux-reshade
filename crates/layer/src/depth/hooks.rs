@@ -1088,7 +1088,7 @@ fn poll_pick(data: &DeviceData) {
     // Os ajustes de política (`lrctl depth policy`) valem na hora.
     let policy_text = std::fs::read_to_string(ipc::state_dir().join(format!("depth-policy-{id}"))).unwrap_or_default();
     let flag = |key: &str| policy_text.lines().find_map(|l| l.strip_prefix(key)?.strip_prefix('=').map(|v| v.trim() == "on").filter(|_| matches!(l.split_once('=').map(|(_, v)| v.trim()), Some("on" | "off"))));
-    let policy = super::Policy { split: flag("split"), copy: flag("copy"), snapshot: flag("snapshot") };
+    let policy = super::Policy { split: flag("split"), copy: flag("copy"), snapshot: flag("snapshot"), resignal: flag("resignal") };
     {
         let mut current = data.depth.policy.lock().unwrap();
         if *current != policy {

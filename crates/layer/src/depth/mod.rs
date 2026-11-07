@@ -270,6 +270,9 @@ pub struct Depth {
     pub(crate) copy_mode: bool,
     /// Ajustes que a pessoa muda com o jogo aberto (`lrctl depth policy`); `None` = o padrão acima.
     pub(crate) policy: Mutex<Policy>,
+    /// O último present foi com os efeitos no modo "ressinalizar" (para o diagnóstico de presents com efeito).
+    pub(crate) resignal_applied: AtomicBool,
+    resignal_default: bool,
     /// Partir um passe de renderização numa limpeza dentro dele (`vkCmdClearAttachments`) para copiar antes. O ReShade não copia ali (é
     /// inválido copiar dentro de um passe ativo); nós partimos o passe, mas só quando é válido: sem consulta, renderização condicional ou
     /// transform feedback abertos no passe, e guardando a profundidade ao fim da primeira metade. `LINUX_RESHADE_DEPTH_NO_SPLIT=1` desliga.
@@ -291,6 +294,8 @@ pub struct Policy {
     pub split: Option<bool>,
     pub copy: Option<bool>,
     pub snapshot: Option<bool>,
+    /// O envio dos efeitos ressinaliza os semáforos do jogo em vez de o present esperar o nosso.
+    pub resignal: Option<bool>,
 }
 
 /// A imagem de profundidade do jogo que a cópia da hora dos efeitos lê.
@@ -391,6 +396,8 @@ impl Depth {
             frame_clear_images: AtomicU32::new(0),
             copy_mode: !flag("LINUX_RESHADE_DEPTH_DIRECT"),
             policy: Mutex::new(Policy::default()),
+            resignal_applied: AtomicBool::new(false),
+            resignal_default: flag("LINUX_RESHADE_RESIGNAL"),
             split_enabled: !flag("LINUX_RESHADE_DEPTH_NO_SPLIT"),
             splits_done: AtomicU32::new(0),
             splits_skipped: AtomicU32::new(0),
@@ -412,6 +419,11 @@ impl Depth {
     /// Parte o passe numa limpeza dentro dele?
     pub fn split_on(&self) -> bool {
         self.policy.lock().unwrap().split.unwrap_or(self.split_enabled)
+    }
+
+    /// O envio dos efeitos ressinaliza os semáforos do jogo (o present não muda de semáforo)?
+    pub fn resignal_on(&self) -> bool {
+        self.policy.lock().unwrap().resignal.unwrap_or(self.resignal_default)
     }
 
     /// Os efeitos leem a cópia (e não a imagem do jogo)?

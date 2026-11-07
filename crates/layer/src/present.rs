@@ -65,10 +65,10 @@ pub unsafe extern "system" fn queue_present(
         // Com o efeito aplicado, o present passa a esperar o semáforo do efeito, não os do jogo
         // (que o submit do efeito já consumiu).
         let process_started = measure.then(std::time::Instant::now);
-        let effect_semaphore = effect::process(&data, queue, &effect_info, enabled);
+        let effect_semaphore = effect::process(&data, queue, &effect_info, enabled, before.is_none());
         let process_time = process_started.map(|t| t.elapsed());
         if enabled {
-            data.depth.fx_presents[usize::from(effect_semaphore.is_some())].fetch_add(1, Ordering::Relaxed);
+            data.depth.fx_presents[usize::from(effect_semaphore.is_some() || data.depth.resignal_applied.swap(false, Ordering::Relaxed))].fetch_add(1, Ordering::Relaxed);
         }
         // O que o present espera: o efeito; ou, sem efeito mas com captura, a cópia (que consumiu os semáforos do jogo).
         let mut final_wait = effect_semaphore.or(before.as_ref().map(|c| c.semaphore));

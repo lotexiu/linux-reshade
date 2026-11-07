@@ -180,3 +180,10 @@ travava. Uma `VkQueue` não pode ser usada por duas threads ao mesmo tempo, e a 
 cadeia) na fila do jogo de dentro do gancho do present, enquanto o jogo submete na mesma fila de outra thread; o DXVK sincroniza o próprio submit e o
 próprio present, não o nosso submit extra. Agora existe um trinco por fila (`queue_lock.rs`) que os submits do jogo (os ganchos `vkQueueSubmit` e
 `vkQueueSubmit2`) e os nossos (efeitos, criação da cadeia, captura de tela) passam a respeitar. O present em si não é trancado (ele pode bloquear).
+
+## DXVK novo e o present (2026-11-07)
+O DXVK do Proton Experimental (3.1.1-97) cria o swapchain com `PRESENT_ID_2`/`PRESENT_WAIT_2` e usa `VK_EXT_swapchain_maintenance1` (fence de apresentação e modo
+de apresentação em cada present: estruturas `1000275001`/`1000275003`, mais `1000479001`); o GE-Proton 11-7 (DXVK 3.1-19) não. O preset pesado só travava no Experimental. A layer
+trocava os semáforos de espera do present pelo próprio. Modo alternativo `resignal` (`lrctl depth policy resignal=on`, ou `LINUX_RESHADE_RESIGNAL=1` ao abrir o jogo): o envio
+dos efeitos espera os semáforos do jogo e os sinaliza de novo, e o present continua esperando os que o jogo entregou. O `vkCreateDevice`, o pedido de swapchain e os primeiros
+presents vão para o log (extensões, filas e estruturas encadeadas) para comparar os dois Protons.

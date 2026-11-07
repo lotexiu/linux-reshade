@@ -35,7 +35,8 @@ usage: lrctl <command> [options]
   depth pick auto                 go back to the automatic choice
   depth policy [key=on|off|default ...]
                                   split (split the pass at a clear), copy (the depth copy; off = the game's image) and
-                                  snapshot (any copy) in the open game, right away; with no arguments it shows what is in effect
+                                  snapshot (any copy) and resignal (the effects' submit re-signals the game's semaphores instead of the present
+                                  waiting for ours) in the open game, right away; with no arguments it shows what is in effect
 
   config                          show where the effects, textures, presets and cache are
   config init [folder]            prepare the data folder (Shaders, Textures, Presets, config.ini);
@@ -213,8 +214,8 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
             if tail.first().map(String::as_str) == Some("policy") {
                 let mut changes = Vec::new();
                 for arg in &tail[1..] {
-                    let (key, value) = arg.split_once('=').ok_or_else(|| tr("usage: lrctl depth policy [split|copy|snapshot=on|off|default ...]  (--layer <game> optional)").to_string())?;
-                    if !["split", "copy", "snapshot"].contains(&key) {
+                    let (key, value) = arg.split_once('=').ok_or_else(|| tr("usage: lrctl depth policy [split|copy|snapshot|resignal=on|off|default ...]  (--layer <game> optional)").to_string())?;
+                    if !["split", "copy", "snapshot", "resignal"].contains(&key) {
                         return Err(fmt("unknown policy key: {}", &[&key]));
                     }
                     changes.push((key.to_string(), match value {

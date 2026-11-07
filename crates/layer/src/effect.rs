@@ -703,7 +703,7 @@ fn build_chain(a: BuildArgs) -> Result<Built, String> {
 ///
 /// # Safety
 /// `info` deve ser o `VkPresentInfoKHR` recebido do jogo, e `queue` a fila do present.
-pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInfoKHR<'_>, enabled: bool) -> Option<vk::Semaphore> {
+pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInfoKHR<'_>, enabled: bool, allow_resignal: bool) -> Option<vk::Semaphore> {
     // Vários swapchains num mesmo present compartilham a lista de espera: fora do caso comum.
     if info.swapchain_count != 1 {
         return None;
@@ -988,7 +988,11 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
                 }
             }
         }
-        let signal = [built.semaphores[index]];
+        // Modo "ressinalizar": o envio dos efeitos espera os semáforos do jogo e os sinaliza DE NOVO, e o present segue esperando os mesmos
+        // semáforos que o jogo entregou (a lista de espera do present não é trocada). O DXVK novo (3.x) usa `VK_EXT_swapchain_maintenance1`
+        // (fence de apresentação) e `present_id2`, que contam com o que o present espera de fato. Padrão: trocar pelo nosso semáforo.
+        let resignal = allow_resignal && data.depth.resignal_on() && !waits.is_empty();
+        let signal: Vec<vk::Semaphore> = if resignal { waits.to_vec() } else { vec![built.semaphores[index]] };
         let submit = vk::SubmitInfo::default()
             .wait_semaphores(waits)
             .wait_dst_stage_mask(&stages)
@@ -999,7 +1003,12 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
                 if timed && let Some(timer) = built.gpu.as_mut() {
                     timer.written[index] = true;
                 }
-                Some(signal[0])
+                if resignal {
+                    data.depth.resignal_applied.store(true, std::sync::atomic::Ordering::Relaxed);
+                    None
+                } else {
+                    Some(signal[0])
+                }
             }
             Err(e) => {
                 log!("vkQueueSubmit do efeito falhou: erro {}", e.as_raw());

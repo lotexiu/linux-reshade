@@ -292,7 +292,7 @@ pub fn depth_pick_in(dir: &std::path::Path, layer_id: &str) -> DepthPick {
 
 /// Os ajustes de política da profundidade de um jogo (`split`, `copy`, `snapshot` = `on`/`off`), em `depth-policy-<id da layer>`: a layer os
 /// lê de tempos em tempos e vale na hora, sem reiniciar o jogo. Chave ausente = o padrão da layer.
-pub const DEPTH_POLICY_KEYS: [&str; 3] = ["split", "copy", "snapshot"];
+pub const DEPTH_POLICY_KEYS: [&str; 4] = ["split", "copy", "snapshot", "resignal"];
 
 fn depth_policy_file(dir: &std::path::Path, layer_id: &str) -> Option<PathBuf> {
     (!layer_id.is_empty() && !layer_id.contains(['/', '\\', '\0'])).then(|| dir.join(format!("depth-policy-{layer_id}")))
