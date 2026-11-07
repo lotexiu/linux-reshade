@@ -574,3 +574,5 @@ without SAMPLED	sem SAMPLED
 ＋ Add Flatpak game…	＋ Adicionar jogo Flatpak…
 {} shortcut(s) came back without a key; forgotten {} and registering again	{} atalho(s) voltaram sem tecla; {} esquecido(s) e registrando de novo
 ReShade-compatible Vulkan layer for Linux	Camada Vulkan compatível com o ReShade, para Linux
+panel or game open: shortcut keys active	painel ou jogo aberto: teclas de atalho ativas
+no panel or game open: shortcut keys released (F1, F2... go back to the other programs)	nenhum painel ou jogo aberto: teclas de atalho soltas (F1, F2... voltam para os outros programas)

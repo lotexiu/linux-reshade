@@ -26,3 +26,32 @@ pub fn forget(ids: &[&str]) -> usize {
     }
     forgotten
 }
+
+/// Guarda as teclas de cada atalho enquanto ele está solto (ver `set_grabbed`).
+static RELEASED: std::sync::Mutex<Vec<(String, Vec<i32>)>> = std::sync::Mutex::new(Vec::new());
+
+/// Solta ou retoma as teclas (`grabbed = false` solta) dos atalhos `ids` do componente `component` SEM esquecê-los: continuam registrados e
+/// confirmados, mas o KDE deixa de tomar a tecla dos outros programas. Devolve se conseguiu (sem o KDE, `false`).
+pub fn set_grabbed(component: &str, ids: &[&str], grabbed: bool) -> bool {
+    let Ok(connection) = Connection::session() else { return false };
+    let Ok(root) = Proxy::new(&connection, DESTINATION, ROOT, "org.kde.KGlobalAccel") else { return false };
+    let mut released = RELEASED.lock().unwrap_or_else(|e| e.into_inner());
+    let mut done = true;
+    for id in ids {
+        let action: Vec<&str> = vec![component, id, "", ""];
+        const NO_AUTOLOADING: u32 = 4;
+        if grabbed {
+            let Some(at) = released.iter().position(|(i, _)| i == id) else { continue };
+            let keys = released.remove(at).1;
+            done &= root.call::<_, _, Vec<i32>>("setShortcut", &(&action, keys, NO_AUTOLOADING)).is_ok();
+        } else if !released.iter().any(|(i, _)| i == id) {
+            let keys = match root.call::<_, _, Vec<i32>>("shortcut", &(&action,)) { Ok(k) => k, Err(e) => { eprintln!("shortcut: {e}"); done = false; continue } };
+            if keys.is_empty() {
+                continue;
+            }
+            released.push((id.to_string(), keys));
+            let r = root.call::<_, _, Vec<i32>>("setShortcut", &(&action, Vec::<i32>::new(), NO_AUTOLOADING)); if let Err(e) = &r { eprintln!("setShortcut: {e}"); } done &= r.is_ok();
+        }
+    }
+    done
+}

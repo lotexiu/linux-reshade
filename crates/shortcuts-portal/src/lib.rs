@@ -8,7 +8,7 @@
 mod kde;
 mod request;
 
-pub use kde::forget;
+pub use kde::{forget, set_grabbed};
 
 use request::Requester;
 use shortcuts::{Backend, BoundShortcut, Error, Event, Phase, Shortcut};

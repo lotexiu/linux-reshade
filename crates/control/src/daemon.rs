@@ -81,7 +81,7 @@ pub fn run(state: &ipc::Writer) -> Result<(), Error> {
         let mut missing_since: Option<std::time::Instant> = None;
         loop {
             std::thread::sleep(std::time::Duration::from_secs(1));
-            let present = always || ipc::panel_open() || !ipc::live_layers().unwrap_or_default().is_empty();
+            let present = true; let _ = always;
             let mut slot = KEYS_CHILD.lock().unwrap_or_else(|e| e.into_inner());
             if slot.as_mut().is_some_and(|c| c.try_wait().ok().flatten().is_some()) {
                 control_core::logln!("o processo dos atalhos terminou");
@@ -162,6 +162,24 @@ pub fn run_keys(state: &ipc::Writer) -> Result<(), Error> {
     let _ = std::fs::create_dir_all(registered.parent().unwrap_or(std::path::Path::new(".")));
     let _ = note.save(&registered);
 
+    // Os atalhos ficam sempre registrados (aparecem nas configurações do KDE e a confirmação é pedida uma vez), mas só tomam a tecla
+    // enquanto o painel ou um jogo com a layer está aberto: fora disso o KDE as solta e F1, F2... voltam para os outros programas.
+    {
+        let ids: Vec<String> = wanted.iter().map(|(id, _)| id.clone()).collect();
+        let always = std::env::var_os("LINUX_RESHADE_KEYS_ALWAYS").is_some_and(|v| v == "1");
+        std::thread::spawn(move || {
+            let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+            let mut grabbed: Option<bool> = None;
+            loop {
+                let want = always || ipc::panel_open() || !ipc::live_layers().unwrap_or_default().is_empty();
+                if grabbed != Some(want) && shortcuts_portal::set_grabbed(shortcuts_portal::APP_ID, &ids, want) {
+                    grabbed = Some(want);
+                    control_core::logln!("{}", if want { tr("panel or game open: shortcut keys active") } else { tr("no panel or game open: shortcut keys released (F1, F2... go back to the other programs)") });
+                }
+                std::thread::sleep(std::time::Duration::from_millis(700));
+            }
+        });
+    }
     // Ainda não há janela: só atalhos globais valem.
     let ctx = Context { window_visible: false };
     let presets_dir = config.presets_dir.clone();
