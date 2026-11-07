@@ -197,7 +197,16 @@ impl Ui {
         games_title.set_halign(gtk::Align::Start);
         games_title.add_css_class("heading");
         let games_expander = gtk::Expander::new(None);
-        games_expander.set_label_widget(Some(&games_title));
+        // À direita de "Open games": o que está sendo compilado em segundo plano.
+        let activity = crate::activity::Activity::new();
+        let games_head = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        games_head.set_hexpand(true);
+        games_title.set_hexpand(true);
+        games_title.set_xalign(0.0);
+        games_head.append(&games_title);
+        activity.root.set_halign(gtk::Align::End);
+        games_head.append(&activity.root);
+        games_expander.set_label_widget(Some(&games_head));
         games_expander.set_child(Some(&games_view.root));
 
         let line = |caption_text: &str, widgets: &[&gtk::Widget]| {
@@ -244,11 +253,9 @@ impl Ui {
         toggle.append(&gtk::Label::new(Some(tr("Effects on"))));
         toggle.append(&enabled);
         header.pack_end(&toggle);
-        let activity = crate::activity::Activity::new();
         let shortcuts_button = gtk::Button::from_icon_name("emblem-system-symbolic");
         shortcuts_button.set_tooltip_text(Some(tr("Settings: shortcuts, screenshots, folders, performance and cache")));
         header.pack_start(&shortcuts_button);
-        header.pack_start(&activity.root);
 
         // A página "Adicionar efeito" e a lista do preset se alternam numa pilha (sem popover: ver `add_effect.rs`). Os callbacks da
         // página só guardam uma referência fraca da interface, que ainda não existe aqui.

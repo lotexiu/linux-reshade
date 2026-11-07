@@ -53,7 +53,12 @@ pub fn compiling(cache: &std::path::Path) -> Vec<String> {
         .flatten()
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
-            let name = name.rsplit_once('.').map_or(name.as_str(), |(head, _pid)| head).to_string();
+            // Pasta de um processo que já morreu (travou ou foi encerrado no meio): não é compilação em andamento.
+            let (head, pid) = name.rsplit_once('.')?;
+            if !pid.parse::<u32>().is_ok_and(|p| std::path::Path::new(&format!("/proc/{p}")).exists()) {
+                return None;
+            }
+            let name = head.to_string();
             let name = name.rsplit_once('-').map_or(name.as_str(), |(head, _size)| head).to_string();
             let name = name.split(".m").next().unwrap_or(&name).to_string();
             (!name.is_empty()).then_some(name)
@@ -70,8 +75,10 @@ mod tests {
     fn names_lose_pid_size_and_variant() {
         let dir = std::env::temp_dir().join(format!("lr-activity-{}", std::process::id()));
         let building = dir.join("building");
-        std::fs::create_dir_all(building.join("MartysMods_SMAA.mfa2e75dc-800x600.123")).unwrap();
-        std::fs::create_dir_all(building.join("Sepia-400x300.9")).unwrap();
+        let me = std::process::id();
+        std::fs::create_dir_all(building.join(format!("MartysMods_SMAA.mfa2e75dc-800x600.{me}"))).unwrap();
+        std::fs::create_dir_all(building.join(format!("Sepia-400x300.{me}"))).unwrap();
+        std::fs::create_dir_all(building.join("Morto-400x300.4294967")).unwrap();
         assert_eq!(super::compiling(&dir), vec!["MartysMods_SMAA".to_string(), "Sepia".to_string()]);
         let _ = std::fs::remove_dir_all(&dir);
     }
