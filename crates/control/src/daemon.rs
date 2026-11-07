@@ -34,6 +34,9 @@ fn forget_changed(previous: &[(String, String)], wanted: &[(String, String)]) ->
     shortcuts_portal::forget(&ids)
 }
 
+/// Código de saída de `lrctl keys` quando a pessoa recusou o registro dos atalhos na janela do sistema.
+pub const KEYS_DENIED: u8 = 42;
+
 /// O processo dos atalhos (`lrctl keys`) enquanto algum jogo com a layer está aberto.
 static KEYS_CHILD: std::sync::Mutex<Option<std::process::Child>> = std::sync::Mutex::new(None);
 
@@ -82,15 +85,28 @@ pub fn run(state: &ipc::Writer) -> Result<(), Error> {
 
         let exe = std::env::current_exe().map_err(|e| Error::Backend(e.to_string()))?;
         let mut missing_since: Option<std::time::Instant> = None;
+        let (mut denied, mut panel_was_open) = (false, false);
         loop {
             std::thread::sleep(std::time::Duration::from_secs(1));
             let present = true; let _ = always;
             let mut slot = KEYS_CHILD.lock().unwrap_or_else(|e| e.into_inner());
-            if slot.as_mut().is_some_and(|c| c.try_wait().ok().flatten().is_some()) {
-                control_core::logln!("o processo dos atalhos terminou");
+            let panel = ipc::panel_open();
+            if slot.as_mut().is_some_and(|c| match c.try_wait().ok().flatten() {
+                Some(status) => {
+                    denied |= status.code() == Some(i32::from(KEYS_DENIED));
+                    true
+                }
+                None => false,
+            }) {
+                control_core::logln!("{}", if denied { tr("shortcut registration refused: it is asked again when the panel is opened") } else { tr("the shortcuts process ended") });
                 *slot = None;
             }
-            match (present, slot.is_some()) {
+            // Recusado na janela do sistema: não pede de novo a cada segundo; o painel, ao abrir, tenta mais uma vez.
+            if panel && !panel_was_open {
+                denied = false;
+            }
+            panel_was_open = panel;
+            match (present && !denied, slot.is_some()) {
                 (true, false) => {
                     missing_since = None;
                     match std::process::Command::new(&exe).arg("keys").spawn() {

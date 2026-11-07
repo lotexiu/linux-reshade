@@ -417,6 +417,13 @@ impl SwapchainFx {
     }
 
     /// `LINUX_RESHADE_SAFE_SWAP=1`: espera a GPU ficar ociosa antes de destruir uma cadeia de efeitos.
+/// `LINUX_RESHADE_QUIET_SWAP=1`: enquanto a cadeia nova é criada a velha também não desenha (o quadro passa sem efeito). Teste da hipótese
+/// de que os Xid 69 ao trocar definições vêm de a cadeia velha rodar junto com a criação da nova.
+fn quiet_swap() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LINUX_RESHADE_QUIET_SWAP").is_some_and(|v| v != "0"))
+}
+
 fn safe_swap() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("LINUX_RESHADE_SAFE_SWAP").is_some_and(|v| v != "0"))
@@ -902,7 +909,7 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
             Fx::Ready(built) => built,
             // Numa criação incremental a cadeia aposentada cedeu as texturas compartilhadas à thread de criação (que as altera e liga os efeitos
             // novos a elas): desenhar com a cadeia velha agora usaria imagens que outra thread mexe. O quadro passa sem efeito até a nova ficar pronta.
-            Fx::Building(job) if job.incremental => return None,
+            Fx::Building(job) if job.incremental || quiet_swap() => return None,
             _ => match fx.retiring.as_mut() {
                 Some(built) => built,
                 None => return None,

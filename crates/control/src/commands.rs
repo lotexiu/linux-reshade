@@ -207,6 +207,11 @@ pub fn run(command: Command, state: &ipc::Writer) -> ExitCode {
         }
         Command::Keys => match daemon::run_keys(state) {
             Ok(()) => ExitCode::SUCCESS,
+            // Recusado na janela do KDE: um código à parte, para o daemon não pedir de novo a cada segundo.
+            Err(shortcuts::Error::Denied) => {
+                let _ = fail(shortcuts::Error::Denied);
+                ExitCode::from(crate::daemon::KEYS_DENIED)
+            }
             Err(e) => fail(e),
         },
         Command::Use { bundle: None, layer } => with_target(layer, state, use_none),
