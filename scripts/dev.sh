@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Utilitário de desenvolvimento. Idempotente; serve para trocar de máquina sem esforço.
-# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|smoke-preset|smoke-depth|smoke-depth-effect|smoke-compute|smoke-dynamic|flatpak-layer|daemon|panel|panel-smoke|ui-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-survey|fx-golden|xid|placement|logs> [args]
+# Uso: scripts/dev.sh <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|smoke-preset|smoke-depth|smoke-depth-effect|smoke-compute|smoke-dynamic|flatpak-layer|daemon|panel|panel-smoke|ui-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-survey|fx-golden|xid|xid-watch|placement|logs> [args]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -719,6 +719,31 @@ cmd_fx_survey() { "$ROOT/tools/fx2spv/survey.sh" "$@"; }
 
 # Falhas da GPU (Xid da NVIDIA, que derrubam o jogo) com o que a layer registrou nos segundos antes de cada uma.
 # Uso: xid [minutos=60] [log=/tmp/linux-reshade-flatpak.log]
+# Vigia os Xid da NVIDIA ao vivo (vários jogos abertos de uma vez): a cada um, grava o jogo (pelo pid), os ajustes de profundidade que valiam
+# (`lrctl depth policy`), o último estado que a layer dele publicou (profundidade, técnicas) e o fim do log da layer. Ctrl+C sai.
+# Uso: scripts/dev.sh xid-watch [arquivo-de-log-da-layer]   (padrão: $LINUX_RESHADE_LOG ou /tmp/lr.log)
+cmd_xid_watch() {
+  local log="${1:-${LINUX_RESHADE_LOG:-/tmp/lr.log}}" out="${XDG_STATE_HOME:-$HOME/.local/state}/linux-reshade/xid-watch.log"
+  local shm="/dev/shm/linux-reshade-$(id -u)"
+  mkdir -p "$(dirname "$out")"
+  say "vigiando Xid (Ctrl+C sai); relatório em $out; log da layer: $log"
+  journalctl -k -f -n0 --no-pager 2>/dev/null | while IFS= read -r line; do
+    case "$line" in *"NVRM: Xid"*) ;; *) continue ;; esac
+    local pid name; pid="$(sed -n 's/.*pid=\([0-9]*\),.*/\1/p' <<<"$line")"; name="$(sed -n 's/.*name=\([^,]*\),.*/\1/p' <<<"$line")"
+    {
+      printf '\n==== %s  Xid  jogo=%s pid=%s\n%s\n' "$(date +%T)" "$name" "$pid" "$(cut -c1-220 <<<"$line")"
+      local f
+      for f in "$shm"/depth-policy-layer-"$pid"-* ; do [ -f "$f" ] && printf 'política da profundidade: %s\n' "$(tr '\n' ' ' <"$f")"; done
+      for f in "$shm"/layer-"$pid"-* ; do
+        [ -f "$f" ] || continue
+        printf 'último estado publicado pela layer:\n'
+        strings -n 4 "$f" | grep -E "^(depth=|technique=|swapchain=|depthpasses=)" | cut -c1-230 | head -14 | sed 's/^/    /'
+      done
+      [ -f "$log" ] && { printf 'fim do log da layer (pid %s):\n' "$pid"; grep "pid=$pid " "$log" | grep -vE "vkQueuePresentKHR #|uniform sem fonte|bundle carregado" | cut -c1-230 | tail -14 | sed 's/^/    /'; }
+    } | tee -a "$out"
+  done
+}
+
 cmd_xid() {
   local minutes="${1:-60}" log="${2:-/tmp/linux-reshade-flatpak.log}"
   journalctl -k --since "-${minutes}min" --no-pager 2>/dev/null | grep -E "NVRM: Xid" | while IFS= read -r line; do
@@ -798,7 +823,8 @@ case "${1:-}" in
   fx-survey) shift; cmd_fx_survey "$@" ;;
   fx-golden) cmd_fx_golden ;;
   xid)       shift; cmd_xid "$@" ;;
+  xid-watch) shift; cmd_xid_watch "$@" ;;
   placement) shift; cmd_placement "$@" ;;
   logs)      shift; cmd_logs "$@" ;;
-  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|smoke-preset|smoke-depth|smoke-depth-effect|daemon|panel|panel-smoke|ui-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-survey|fx-golden|xid|placement|logs>" >&2; exit 2 ;;
+  *) echo "uso: $0 <setup|doctor|build|install|uninstall|run|smoke|validate|smoke-steam|smoke-auto|smoke-layer|smoke-preset|smoke-depth|smoke-depth-effect|daemon|panel|panel-smoke|ui-smoke|hotkey|game-options|fx-tool|fx-compile|fx-test|fx-survey|fx-golden|xid|xid-watch|placement|logs>" >&2; exit 2 ;;
 esac

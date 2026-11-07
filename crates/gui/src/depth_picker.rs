@@ -61,13 +61,19 @@ impl DepthPicker {
                 text.push_str(tr(" · the automatic one"));
             }
             if let Some(why) = &c.unusable {
-                text.push_str(&fmt(" · unusable: {}", &[why]));
+                text.push_str(&fmt(if c.blocking { " · unusable: {}" } else { " · may not give the expected result: {}" }, &[why]));
             }
             let row = option(&text, pick == DepthPick::Candidate(c.number), Some(&first), DepthPick::Candidate(c.number), &weak);
-            // Uma candidata que não serve (proporção diferente da tela, sem desenhos...) a layer ignora: não dá para escolhê-la.
+            // O que não dá para usar de jeito nenhum fica desligado; o que só não é o esperado (proporção diferente da tela, sem
+            // desenhos...) pode ser escolhido, em amarelo.
             if let Some(why) = &c.unusable {
-                row.set_sensitive(false);
-                row.set_tooltip_text(Some(&fmt("The layer does not use this image: {}", &[why])));
+                if c.blocking {
+                    row.set_sensitive(false);
+                    row.set_tooltip_text(Some(&fmt("The layer cannot use this image: {}", &[why])));
+                } else {
+                    row.add_css_class("warning");
+                    row.set_tooltip_text(Some(&fmt("The automatic choice would not pick this image ({}). You can use it, but the result may not be the expected one.", &[why])));
+                }
             }
             self.list.append(&row);
         }
@@ -82,6 +88,7 @@ impl DepthPicker {
         pass_option.set_group(Some(&first));
         pass_option.set_active(matches!(pick, DepthPick::Pass(_)));
         let spin = gtk::SpinButton::with_range(1.0, 200.0, 1.0);
+        crate::icons::arrows(&spin);
         spin.set_value(f64::from(current_pass));
         let apply = {
             let (weak, spin) = (weak.clone(), spin.clone());
@@ -151,6 +158,7 @@ fn numbered_option(label: &str, active: bool, current: u32, group: &gtk::CheckBu
     option.set_group(Some(group));
     option.set_active(active);
     let spin = gtk::SpinButton::with_range(1.0, 200.0, 1.0);
+        crate::icons::arrows(&spin);
     spin.set_value(f64::from(current));
     let apply = {
         let (weak, spin) = (weak.clone(), spin.clone());

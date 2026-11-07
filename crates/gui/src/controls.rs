@@ -159,6 +159,7 @@ impl ControlsView {
                         scale.set_hexpand(true);
                         scale.set_draw_value(false);
                         let spin = gtk::SpinButton::new(Some(&adjustment), *step, digits);
+                        crate::icons::arrows(&spin);
                         spin.set_numeric(true);
                         spin.set_width_chars(8);
                         spin.set_valign(gtk::Align::Center);
@@ -215,6 +216,7 @@ impl ControlsView {
                 let spins: Vec<gtk::SpinButton> = (0..n)
                     .map(|_| {
                         let s = gtk::SpinButton::with_range(min.unwrap_or(-1.0e9), max.unwrap_or(1.0e9), *step);
+                        crate::icons::arrows(&s);
                         s.set_digits(digits(*step));
                         s.set_hexpand(true);
                         s

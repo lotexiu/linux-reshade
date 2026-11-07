@@ -268,6 +268,8 @@ pub struct Depth {
     /// limpeza ou do passe quando há regra para isso e, senão, na hora dos efeitos, com o layout de agora. `LINUX_RESHADE_DEPTH_DIRECT=1`
     /// volta a amostrar a imagem original (para comparar).
     pub(crate) copy_mode: bool,
+    /// Ajustes que a pessoa muda com o jogo aberto (`lrctl depth policy`); `None` = o padrão acima.
+    pub(crate) policy: Mutex<Policy>,
     /// Partir um passe de renderização numa limpeza dentro dele (`vkCmdClearAttachments`) para copiar antes. O ReShade não copia ali (é
     /// inválido copiar dentro de um passe ativo); nós partimos o passe, mas só quando é válido: sem consulta, renderização condicional ou
     /// transform feedback abertos no passe, e guardando a profundidade ao fim da primeira metade. `LINUX_RESHADE_DEPTH_NO_SPLIT=1` desliga.
@@ -281,6 +283,14 @@ pub struct Depth {
     pub(crate) live: Mutex<Option<Live>>,
     /// Command buffers próprios da cópia da hora dos efeitos.
     pub(crate) frame_copier: Mutex<Option<snapshot::FrameCopier>>,
+}
+
+/// Ajustes da profundidade que valem na hora (`lrctl depth policy`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Policy {
+    pub split: Option<bool>,
+    pub copy: Option<bool>,
+    pub snapshot: Option<bool>,
 }
 
 /// A imagem de profundidade do jogo que a cópia da hora dos efeitos lê.
@@ -380,6 +390,7 @@ impl Depth {
             frame_clear_attachments: AtomicU32::new(0),
             frame_clear_images: AtomicU32::new(0),
             copy_mode: !flag("LINUX_RESHADE_DEPTH_DIRECT"),
+            policy: Mutex::new(Policy::default()),
             split_enabled: !flag("LINUX_RESHADE_DEPTH_NO_SPLIT"),
             splits_done: AtomicU32::new(0),
             splits_skipped: AtomicU32::new(0),
@@ -396,6 +407,21 @@ impl Depth {
     /// Liga a observação (um efeito do plano precisa de profundidade). Barato e idempotente.
     pub fn need(&self) {
         self.enabled.store(true, Ordering::Relaxed);
+    }
+
+    /// Parte o passe numa limpeza dentro dele?
+    pub fn split_on(&self) -> bool {
+        self.policy.lock().unwrap().split.unwrap_or(self.split_enabled)
+    }
+
+    /// Os efeitos leem a cópia (e não a imagem do jogo)?
+    pub fn copy_on(&self) -> bool {
+        self.policy.lock().unwrap().copy.unwrap_or(self.copy_mode)
+    }
+
+    /// Alguma foto é feita? (`false` = os efeitos leem a imagem do jogo, como no diagnóstico `LINUX_RESHADE_DEPTH_NO_SNAPSHOT`.)
+    pub fn snapshot_on(&self) -> bool {
+        self.policy.lock().unwrap().snapshot.unwrap_or_else(|| !std::env::var_os("LINUX_RESHADE_DEPTH_NO_SNAPSHOT").is_some_and(|v| v != "0"))
     }
 
     /// A imagem (bruta) da foto atual, se há.

@@ -156,3 +156,13 @@ a seguir o ReShade nos pontos em que divergia de um jeito arriscado. Cada ponto 
 - Custo da cópia: ~8 MB lidos e ~8 MB escritos por quadro a 1080p (D32), na ordem de 0,05 a 0,15 ms numa RTX 3060, e só com algum efeito
   de profundidade ligado.
 - Os roteiros `smoke-depth-effect` (vkcube, validation layer) e `smoke-dynamic` (partição, consulta aberta, `DONT_CARE` e MSAA) passam.
+
+## Ajustes na hora, vários jogos, Xid (2026-11-06)
+- `lrctl depth policy [split|copy|snapshot=on|off|default ...] [--layer jogo]` muda a política da profundidade **no jogo aberto, sem reiniciar** (a
+  layer lê `depth-policy-<id>` a cada 20 quadros): `split` (partir o passe numa limpeza), `copy` (os efeitos leem a cópia; `off` = a imagem do jogo) e
+  `snapshot` (qualquer foto). Sem argumentos mostra o que vale em cada jogo. Serve para comparar estratégias ao vivo em vários jogos.
+- `scripts/dev.sh xid-watch` segue os Xid da NVIDIA ao vivo e, a cada um, grava em `~/.local/state/linux-reshade/xid-watch.log` o jogo (pelo pid), a
+  política em vigor, o último estado publicado pela layer e o fim do log dela. Para vários jogos ao mesmo tempo (cada um com `LINUX_RESHADE_LOG` no
+  mesmo arquivo: as linhas levam o pid).
+- Uma candidata que "não serve" por proporção diferente ou sem desenhos agora **pode ser escolhida** (em amarelo no painel: "pode não dar o
+  resultado esperado"); só a MSAA sem `SAMPLED` (impossível de amostrar) continua bloqueada.

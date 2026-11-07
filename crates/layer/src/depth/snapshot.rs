@@ -185,7 +185,7 @@ pub enum PresentCopy {
 /// # Safety
 /// `data.device` válido; chamado na thread do present, depois de esperar a fence do índice `index` (que protege o command buffer).
 pub(crate) unsafe fn copy_for_present(data: &DeviceData, family: u32, index: usize) -> PresentCopy {
-    if !data.depth.copy_mode || data.depth.copied_frame.load(std::sync::atomic::Ordering::Relaxed) {
+    if !data.depth.copy_on() || data.depth.copied_frame.load(std::sync::atomic::Ordering::Relaxed) {
         return PresentCopy::NotNeeded;
     }
     let Some(live) = *data.depth.live.lock().unwrap() else { return PresentCopy::Unavailable };

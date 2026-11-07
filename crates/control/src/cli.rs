@@ -33,6 +33,9 @@ usage: lrctl <command> [options]
   depth pick pass <N>             use the depth right after the Nth pass that draws it (from 1), by copy
   depth pick clear <N>            use the depth right before its Nth clear in the frame (like ReShade), by copy
   depth pick auto                 go back to the automatic choice
+  depth policy [key=on|off|default ...]
+                                  split (split the pass at a clear), copy (the depth copy; off = the game's image) and
+                                  snapshot (any copy) in the open game, right away; with no arguments it shows what is in effect
 
   config                          show where the effects, textures, presets and cache are
   config init [folder]            prepare the data folder (Shaders, Textures, Presets, config.ini);
@@ -106,6 +109,8 @@ pub enum Command {
     /// Escolhe a candidata de profundidade ou o passe de onde ela é copiada (o jogo precisa ter sido aberto com
     /// `LINUX_RESHADE_DEPTH=1`).
     DepthPick { pick: DepthPick, layer: Option<String> },
+    /// `lrctl depth policy [chave=on|off|default ...]`: ajustes da profundidade que valem na hora no jogo aberto.
+    DepthPolicy { changes: Vec<(String, Option<String>)>, layer: Option<String> },
     /// Edita um preset: o que vale para `game`, ou o arquivo `file`.
     Preset { action: PresetAction, game: Option<String>, file: Option<PathBuf> },
 }
@@ -205,6 +210,21 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
     match command.as_str() {
         "depth" => {
             let number = |n: &str| n.parse::<u32>().ok().filter(|n| *n > 0).ok_or_else(|| fmt("invalid number: {} (starts at 1)", &[&format!("{:?}", n)]));
+            if tail.first().map(String::as_str) == Some("policy") {
+                let mut changes = Vec::new();
+                for arg in &tail[1..] {
+                    let (key, value) = arg.split_once('=').ok_or_else(|| tr("usage: lrctl depth policy [split|copy|snapshot=on|off|default ...]  (--layer <game> optional)").to_string())?;
+                    if !["split", "copy", "snapshot"].contains(&key) {
+                        return Err(fmt("unknown policy key: {}", &[&key]));
+                    }
+                    changes.push((key.to_string(), match value {
+                        "on" | "off" => Some(value.to_string()),
+                        "default" => None,
+                        other => return Err(fmt("invalid value: {}", &[&other])),
+                    }));
+                }
+                return Ok(Command::DepthPolicy { changes, layer });
+            }
             let pick = match tail.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
                 ["pick", "candidate", n] => DepthPick::Candidate(number(n)?),
                 ["pick", "pass", n] => DepthPick::Pass(number(n)?),
@@ -448,6 +468,18 @@ mod tests {
         assert!(parse(&args(&["set", "Color"])).is_err(), "sem valor");
         assert!(parse(&args(&["get"])).is_err());
         assert!(parse(&args(&["get", "a", "b"])).is_err());
+    }
+
+    #[test]
+    fn depth_policy_changes_are_parsed() {
+        assert_eq!(
+            parse(&args(&["depth", "policy", "split=off", "copy=default"])),
+            Ok(Command::DepthPolicy { changes: vec![("split".into(), Some("off".into())), ("copy".into(), None)], layer: None })
+        );
+        assert_eq!(parse(&args(&["depth", "policy", "--layer", "7"])), Ok(Command::DepthPolicy { changes: vec![], layer: Some("7".into()) }));
+        assert!(parse(&args(&["depth", "policy", "nope=on"])).is_err());
+        assert!(parse(&args(&["depth", "policy", "split=maybe"])).is_err());
+        assert!(parse(&args(&["depth", "policy", "split"])).is_err());
     }
 
     #[test]

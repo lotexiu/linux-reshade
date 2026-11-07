@@ -594,7 +594,7 @@ unsafe extern "system" fn cmd_clear_attachments(cmd: vk::CommandBuffer, count: u
             };
             // Partir o passe só se pedido: o ReShade não copia dentro de um passe ativo (é inválido, e consultas ou renderização condicional
             // abertas no passe não sobrevivem ao fim dele). O "antes da limpeza N" explícito da pessoa vale como pedido.
-            let wanted = copy.is_some() && (data.depth.split_enabled || data.depth.pick.lock().unwrap().clear.is_some());
+            let wanted = copy.is_some() && (data.depth.split_on() || data.depth.pick.lock().unwrap().clear.is_some());
             // Só se parte com o passe válido de partir: nenhuma consulta, renderização condicional ou transform feedback aberta nele.
             let allow = wanted && scopes == 0;
             if wanted && !allow && image != 0 {
@@ -740,7 +740,7 @@ unsafe extern "system" fn cmd_begin_rendering(cmd: vk::CommandBuffer, p_info: *c
                     // Partir este passe numa limpeza (ver `split_rendering`) fecha a primeira metade com o `storeOp` do jogo: com
                     // `DONT_CARE` a profundidade (e o estêncil) ficaria indefinida e a segunda metade a leria com `LOAD`. Na imagem observada,
                     // o passe passa a guardar (o que a maioria dos drivers já faz de qualquer forma).
-                    if data.depth.split_enabled && image == data.depth.watched_image.load(Ordering::Relaxed) {
+                    if data.depth.split_on() && image == data.depth.watched_image.load(Ordering::Relaxed) {
                         let keeps = |op: vk::AttachmentStoreOp| !matches!(op, vk::AttachmentStoreOp::DONT_CARE | vk::AttachmentStoreOp::NONE);
                         let stencil_a = (!info.p_stencil_attachment.is_null()).then(|| *info.p_stencil_attachment);
                         if !keeps(a.store_op) || stencil_a.is_some_and(|s| !keeps(s.store_op)) {
@@ -1085,6 +1085,17 @@ fn poll_pick(data: &DeviceData) {
     let text = std::fs::read_to_string(ipc::state_dir().join(format!("depth-pick-{id}"))).unwrap_or_default();
     let number = |key: &str| text.lines().find_map(|l| l.strip_prefix(key)?.strip_prefix('=')?.trim().parse::<u32>().ok()).filter(|n| *n > 0);
     let pick = super::Pick { candidate: number("candidate"), pass: number("pass"), clear: number("clear") };
+    // Os ajustes de política (`lrctl depth policy`) valem na hora.
+    let policy_text = std::fs::read_to_string(ipc::state_dir().join(format!("depth-policy-{id}"))).unwrap_or_default();
+    let flag = |key: &str| policy_text.lines().find_map(|l| l.strip_prefix(key)?.strip_prefix('=').map(|v| v.trim() == "on").filter(|_| matches!(l.split_once('=').map(|(_, v)| v.trim()), Some("on" | "off"))));
+    let policy = super::Policy { split: flag("split"), copy: flag("copy"), snapshot: flag("snapshot") };
+    {
+        let mut current = data.depth.policy.lock().unwrap();
+        if *current != policy {
+            log!("política da profundidade: {:?}", policy);
+            *current = policy;
+        }
+    }
     let mut current = data.depth.pick.lock().unwrap();
     if *current != pick {
         log!("pedido para a profundidade: candidata {:?}, passe {:?}, limpeza {:?}", pick.candidate, pick.pass, pick.clear);
@@ -1148,9 +1159,10 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
                     let sig = picked.2;
                     picked.1 = candidates.iter().filter(|c| (c.width, c.height, c.format) == sig && sig.0 != 0).max_by_key(|c| c.draws).map_or(0, |c| c.image);
                 }
-                // Uma candidata que "não serve" (outra proporção, MSAA sem uso...) não alimenta os efeitos: o resultado seria lixo e
-                // já derrubou o jogo (mapa de sombras D16 escolhido à mão). O pedido fica guardado e a heurística decide.
-                if picked.1 != 0 && candidates.iter().any(|c| c.image == picked.1 && c.unusable.is_some()) {
+                // Só o que não dá para amostrar de jeito nenhum (MSAA sem `SAMPLED`) é recusado; as outras ("proporção diferente", "sem
+                // desenhos") a pessoa pode escolher: a heurística não as escolheria, e o resultado pode não ser o esperado (o painel avisa
+                // em amarelo). O pedido recusado fica guardado e a heurística decide.
+                if picked.1 != 0 && candidates.iter().any(|c| c.image == picked.1 && c.unusable.is_some_and(super::observe::is_blocking)) {
                     if data.depth.refused_pick.swap(picked.1, Ordering::Relaxed) != picked.1 {
                         log!("pedido ignorado: a candidata escolhida não serve para os efeitos");
                     }
@@ -1261,7 +1273,7 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
         // Uma imagem MSAA só serve resolvida: a foto depois de TODOS os passes (o último vale), sem a regra de limpeza.
         // Diagnóstico dos Xid 69: `LINUX_RESHADE_DEPTH_NO_SNAPSHOT=1` não parte passes nem copia a profundidade (os efeitos leem a imagem do
         // jogo, que pode estar velha ou limpa). Se os erros da GPU somem, a causa é a cópia dentro dos command buffers do jogo.
-        let no_snapshot = std::env::var_os("LINUX_RESHADE_DEPTH_NO_SNAPSHOT").is_some_and(|v| v != "0");
+        let no_snapshot = !data.depth.snapshot_on();
         let wanted_clear = if no_snapshot || pick.pass.is_some() || msaa { None } else { pick.clear.or_else(auto_clear) };
         let auto_pass = || {
             // Com histerese: depois de usar a foto de um passe, só volta à imagem original se o jogo ficar muito tempo sem
@@ -1285,7 +1297,7 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
         };
         let wanted_pass = if no_snapshot { None } else if msaa { Some(ALL_PASSES) } else if wanted_clear.is_some() { None } else { pick.pass.or_else(auto_pass) };
         // Modo cópia (o do ReShade): sempre há foto, e a cópia da hora dos efeitos a renova quando nenhuma regra copiou no quadro.
-        let copy_live = data.depth.copy_mode && !no_snapshot && !msaa && c.sampled && c.layout != 0;
+        let copy_live = data.depth.copy_on() && !no_snapshot && !msaa && c.sampled && c.layout != 0;
         *data.depth.live.lock().unwrap() = copy_live.then_some(super::Live { image: c.image, format: c.format, width: c.width, height: c.height });
         let snapshot = (wanted_pass.is_some() || wanted_clear.is_some() || copy_live).then_some(()).and_then(|()| {
             // A foto: precisa da imagem da foto, e a imagem original precisa ter TRANSFER_SRC (armado). MSAA: foto de uma amostra.

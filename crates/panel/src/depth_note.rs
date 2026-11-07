@@ -45,6 +45,8 @@ pub struct DepthChoice {
     pub automatic: bool,
     /// Por que não serve (proporção, sem desenhos...), se não serve: ainda dá para escolher, mas avisa.
     pub unusable: Option<String>,
+    /// Não dá para usar de jeito nenhum (não só "a heurística não a escolheria"): o painel não deixa escolher.
+    pub blocking: bool,
 }
 
 /// As candidatas do jogo aberto, na ordem da layer.
@@ -65,6 +67,7 @@ pub fn choices(layer: &LiveLayer) -> Vec<DepthChoice> {
                 number: i as u32 + 1,
                 label: format!("{}{orientation}{sample}", fmt("{}x{} {} · {} draws, {} passes", &[&d.width, &d.height, &depth_format_name(d.format), &d.draws, &d.passes])),
                 automatic: d.automatic,
+                blocking: d.unusable.as_deref().is_some_and(|u| u.starts_with("MSAA without SAMPLED")),
                 unusable: d.unusable.as_deref().map(control_core::i18n::tr_dyn),
             }
         })
@@ -107,6 +110,17 @@ mod tests {
         second.automatic = false;
         let list = choices(&layer(vec![first, second]));
         assert_eq!((list[0].automatic, list[1].automatic), (true, false));
+    }
+
+    #[test]
+    fn only_what_cannot_be_sampled_at_all_blocks_a_choice() {
+        let mut ratio = candidate(true, 3);
+        ratio.unusable = Some("different aspect ratio than the screen".into());
+        let mut msaa = candidate(false, 0);
+        msaa.unusable = Some("MSAA without SAMPLED usage (reopen the game with the observation armed)".into());
+        let list = choices(&layer(vec![ratio, msaa]));
+        assert_eq!((list[0].unusable.is_some(), list[0].blocking), (true, false), "proporção diferente: dá para escolher, com aviso");
+        assert_eq!((list[1].unusable.is_some(), list[1].blocking), (true, true), "MSAA sem SAMPLED: não dá");
     }
 
     #[test]

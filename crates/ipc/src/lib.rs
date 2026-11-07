@@ -290,6 +290,55 @@ pub fn depth_pick_in(dir: &std::path::Path, layer_id: &str) -> DepthPick {
     DepthPick::Auto
 }
 
+/// Os ajustes de política da profundidade de um jogo (`split`, `copy`, `snapshot` = `on`/`off`), em `depth-policy-<id da layer>`: a layer os
+/// lê de tempos em tempos e vale na hora, sem reiniciar o jogo. Chave ausente = o padrão da layer.
+pub const DEPTH_POLICY_KEYS: [&str; 3] = ["split", "copy", "snapshot"];
+
+fn depth_policy_file(dir: &std::path::Path, layer_id: &str) -> Option<PathBuf> {
+    (!layer_id.is_empty() && !layer_id.contains(['/', '\\', '\0'])).then(|| dir.join(format!("depth-policy-{layer_id}")))
+}
+
+/// Os ajustes escritos para a layer.
+pub fn depth_policy_in(dir: &std::path::Path, layer_id: &str) -> Vec<(String, String)> {
+    let Some(path) = depth_policy_file(dir, layer_id) else { return Vec::new() };
+    fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| l.split_once('='))
+        .filter(|(k, _)| DEPTH_POLICY_KEYS.contains(&k.trim()))
+        .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+        .collect()
+}
+
+pub fn depth_policy(layer_id: &str) -> Vec<(String, String)> {
+    depth_policy_in(&state_dir(), layer_id)
+}
+
+/// Muda um ajuste (`value` `None`: volta ao padrão da layer).
+pub fn set_depth_policy_in(dir: &std::path::Path, layer_id: &str, key: &str, value: Option<&str>) -> io::Result<()> {
+    let Some(path) = depth_policy_file(dir, layer_id) else { return Ok(()) };
+    if !DEPTH_POLICY_KEYS.contains(&key) {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("{key}")));
+    }
+    let mut entries = depth_policy_in(dir, layer_id);
+    entries.retain(|(k, _)| k != key);
+    if let Some(v) = value {
+        entries.push((key.to_string(), v.to_string()));
+    }
+    if entries.is_empty() {
+        return match fs::remove_file(&path) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        };
+    }
+    ensure_private_dir(dir)?;
+    fs::write(path, entries.iter().map(|(k, v)| format!("{k}={v}\n")).collect::<String>())
+}
+
+pub fn set_depth_policy(layer_id: &str, key: &str, value: Option<&str>) -> io::Result<()> {
+    set_depth_policy_in(&state_dir(), layer_id, key, value)
+}
+
 pub fn depth_pick(layer_id: &str) -> DepthPick {
     depth_pick_in(&state_dir(), layer_id)
 }
@@ -552,6 +601,23 @@ impl ParamSource for Reader {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn depth_policy_is_merged_per_key_and_removed_when_empty() {
+        use super::*;
+        let dir = std::env::temp_dir().join(format!("lr-policy-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        assert!(depth_policy_in(&dir, "layer-1-2").is_empty());
+        set_depth_policy_in(&dir, "layer-1-2", "split", Some("off")).unwrap();
+        set_depth_policy_in(&dir, "layer-1-2", "copy", Some("on")).unwrap();
+        assert_eq!(depth_policy_in(&dir, "layer-1-2"), [("split".to_string(), "off".to_string()), ("copy".to_string(), "on".to_string())]);
+        set_depth_policy_in(&dir, "layer-1-2", "split", None).unwrap();
+        assert_eq!(depth_policy_in(&dir, "layer-1-2"), [("copy".to_string(), "on".to_string())]);
+        assert!(set_depth_policy_in(&dir, "layer-1-2", "bogus", Some("on")).is_err());
+        set_depth_policy_in(&dir, "layer-1-2", "copy", None).unwrap();
+        assert!(depth_policy_in(&dir, "layer-1-2").is_empty() && !dir.join("depth-policy-layer-1-2").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn the_depth_pick_text_round_trips_and_rejects_garbage() {
         use super::*;

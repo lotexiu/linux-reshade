@@ -10,6 +10,7 @@ mod controls;
 mod depth_picker;
 mod disclosure;
 mod flatpak_view;
+mod icons;
 mod effect_row;
 mod games;
 mod macros;
@@ -155,6 +156,7 @@ fn main() -> glib::ExitCode {
         move |app| {
             let Some(state) = state.borrow_mut().take() else { return };
             apply_dark_theme();
+            icons::install();
             // Analisa os efeitos em segundo plano (compila cada um uma vez): a lista de adicionar mostra os incompatíveis.
             let _ = panel::start_analysis();
             // Quem abre o painel não precisa abrir um terminal: no AppImage a camada do Vulkan é instalada para o usuário (a biblioteca vai
@@ -266,6 +268,9 @@ async fn test_run(app: gtk::Application, ui: Rc<window::Ui>, options: Rc<Options
             ui.show_page(page);
             glib::timeout_future(Duration::from_millis(2500)).await;
             all.extend(audit::texts_of(&ui.window));
+        }
+        for (name, ok) in icons::available() {
+            println!("icon:{name}={}", if ok { "yes" } else { "NO" });
         }
         let settings = shortcuts_dialog::open(&ui.window);
         glib::timeout_future(Duration::from_millis(800)).await;

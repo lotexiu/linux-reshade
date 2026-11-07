@@ -232,6 +232,12 @@ impl FrameStats {
     }
 }
 
+/// O motivo de "não serve" que impede mesmo de usar a imagem (não dá para amostrá-la nem copiá-la). Os outros (proporção diferente, sem
+/// desenhos) só dizem que a heurística não a escolheria: a pessoa pode escolhê-la, sabendo que o resultado pode não ser o esperado.
+pub fn is_blocking(unusable: &str) -> bool {
+    unusable.starts_with("MSAA without SAMPLED")
+}
+
 /// A proporção da imagem se parece com a da tela? (A mesma regra do ReShade: razão largura/altura até 0,1 de
 /// diferença e razões de tamanho entre 0,5 e 1,85.) Sem tamanho conhecido, aceita.
 pub fn similar_aspect(width: u32, height: u32, frame_width: u32, frame_height: u32) -> bool {

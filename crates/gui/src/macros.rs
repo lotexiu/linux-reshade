@@ -188,6 +188,7 @@ fn known_row(k: &'static KnownMacro, value: Option<String>, weak: &Weak<MacroEdi
         MacroKind::Number { default, min, max, step, digits } => {
             let current = value.as_deref().and_then(|v| v.parse::<f64>().ok()).unwrap_or(default);
             let spin = gtk::SpinButton::with_range(min, max, step);
+            crate::icons::arrows(&spin);
             spin.set_digits(digits);
             spin.set_value(current);
             spin.set_width_chars(9);

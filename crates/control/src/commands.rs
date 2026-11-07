@@ -223,6 +223,7 @@ pub fn run(command: Command, state: &ipc::Writer) -> ExitCode {
         }
         Command::Config { init, dir } => config_command(init, dir),
         Command::DepthPick { pick, layer } => depth_pick(pick, layer),
+        Command::DepthPolicy { changes, layer } => depth_policy(changes, layer),
         Command::Preset { action, game, file } => crate::preset_cmd::run(action, game, file),
         Command::Effects => match Compiler::from_env() {
             Ok(compiler) => {
@@ -450,6 +451,35 @@ fn depth_pick(pick: DepthPick, layer: Option<String>) -> ExitCode {
             }),
             Err(e) => return fail(format!("{}: {e}", l.id)),
         }
+    }
+    ExitCode::SUCCESS
+}
+
+/// `lrctl depth policy ...`: muda (ou mostra) os ajustes da profundidade de cada jogo aberto; a layer os lê em instantes.
+fn depth_policy(changes: Vec<(String, Option<String>)>, layer: Option<String>) -> ExitCode {
+    let layers = match ipc::live_layers() {
+        Ok(l) => l,
+        Err(e) => return fail(fmt("could not list the layers: {}", &[&e])),
+    };
+    let targets: Vec<LiveLayer> = match layer {
+        Some(query) => match layers::find(&layers, &query) {
+            Ok(l) => vec![l.clone()],
+            Err(e) => return fail(e),
+        },
+        None => layers,
+    };
+    if targets.is_empty() {
+        return fail(tr("no game with the layer active"));
+    }
+    for l in targets {
+        for (key, value) in &changes {
+            if let Err(e) = ipc::set_depth_policy(&l.id, key, value.as_deref()) {
+                return fail(format!("{}: {e}", l.id));
+            }
+        }
+        let now = ipc::depth_policy(&l.id);
+        let shown: Vec<String> = ipc::DEPTH_POLICY_KEYS.iter().map(|k| format!("{k}={}", now.iter().find(|(n, _)| n == k).map_or("default", |(_, v)| v.as_str()))).collect();
+        println!("{}: {}", l.status.app, shown.join(" "));
     }
     ExitCode::SUCCESS
 }
