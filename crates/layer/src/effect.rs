@@ -900,6 +900,9 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
         let previous = fx.last_present.replace(now);
         let built = match &mut fx.fx {
             Fx::Ready(built) => built,
+            // Numa criação incremental a cadeia aposentada cedeu as texturas compartilhadas à thread de criação (que as altera e liga os efeitos
+            // novos a elas): desenhar com a cadeia velha agora usaria imagens que outra thread mexe. O quadro passa sem efeito até a nova ficar pronta.
+            Fx::Building(job) if job.incremental => return None,
             _ => match fx.retiring.as_mut() {
                 Some(built) => built,
                 None => return None,
