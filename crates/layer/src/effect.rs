@@ -105,6 +105,13 @@ pub unsafe fn reap_semaphores(device: &ash::Device, all: bool) {
     });
 }
 
+/// `LINUX_RESHADE_QUIET_SWAP=1`: enquanto a cadeia nova é criada a velha também não desenha (o quadro passa sem efeito). Teste da hipótese
+/// de que os Xid 69 ao trocar definições vêm de a cadeia velha rodar junto com a criação da nova.
+pub(crate) fn quiet_swap() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LINUX_RESHADE_QUIET_SWAP").is_some_and(|v| v != "0"))
+}
+
 /// Recursos que só existem depois do primeiro present com os efeitos ligados.
 struct Built {
     chain: Chain,
@@ -417,13 +424,6 @@ impl SwapchainFx {
     }
 
     /// `LINUX_RESHADE_SAFE_SWAP=1`: espera a GPU ficar ociosa antes de destruir uma cadeia de efeitos.
-/// `LINUX_RESHADE_QUIET_SWAP=1`: enquanto a cadeia nova é criada a velha também não desenha (o quadro passa sem efeito). Teste da hipótese
-/// de que os Xid 69 ao trocar definições vêm de a cadeia velha rodar junto com a criação da nova.
-fn quiet_swap() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("LINUX_RESHADE_QUIET_SWAP").is_some_and(|v| v != "0"))
-}
-
 fn safe_swap() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("LINUX_RESHADE_SAFE_SWAP").is_some_and(|v| v != "0"))
