@@ -1,0 +1,17 @@
+SUBJECT: Depth buffer selection: what worked in practice for us (sticky candidate, stable clear rule, copy with the current layout)
+CATEGORY: ReShade Add-ons > Discussion
+
+These are notes from a Vulkan layer on Linux that is not ReShade but reimplements the idea of generic_depth. They come from a handful of games (Unity and Unreal 3 through DXVK, Unity native Vulkan, Roblox) and are offered as ideas to discuss, not as claims that the add-on is wrong.
+
+[list=1]
+[*][b]Sticky candidate.[/b] The chosen depth buffer only changes after the challenger wins N consecutive frames (we use 120). Roblox has several same-sized depth buffers with similar draw counts and the winner flipped frame to frame.
+[*][b]A manual pick is remembered by image, not by list position.[/b] The list order changes between frames and scenes; "candidate 2" alternated between different images. We resolve the pick to the image at request time and let the image with the same size/format inherit it when the game recreates it.
+[*][b]Copy before a clear: the first relevant clear instead of the largest.[/b] In an Unreal 3 game under DXVK the number of clears per frame varies (16, 15, 39), so the index of the largest one is not stable, while "the first clear that erases at least 1/8 of the frame's largest erase and at least 32 draws" was always the same one. It is adopted after 8 consecutive frames agree and dropped after 30 frames if the frame no longer has that clear.
+[*][b]If the rule-selected copy did not happen in a frame, keep the previous copy[/b] instead of copying the live depth at effect time. The live depth can already contain what the rule is meant to avoid (a Unity game draws a large skewed quad into the depth buffer after the scene pass).
+[*][b]Copy at effect time with the layout of now.[/b] The barrier is recorded every frame from the tracked layout instead of being baked when the effects are created; a baked barrier was wrong whenever the game left the image in another layout (loading screens, menus).
+[*][b]vkCmdClearAttachments inside a dynamic rendering pass.[/b] The add-on notes that copying inside an active pass is invalid. We split the pass (vkCmdEndRendering, copy, vkCmdBeginRendering with LOAD), but only when that is valid: no query, conditional rendering or transform feedback opened inside the pass (they must end in the same render pass instance, and DXVK uses them), and the depth/stencil storeOp of the observed image forced to STORE so the first half keeps what the second half loads.
+[*][b]Reversed depth detected automatically[/b] from the pipelines' depth compare op (GREATER vs LESS) with the clear value as fallback, instead of a macro. Upside-down and logarithmic remain manual.
+[*][b]A candidate that "does not fit" can still be picked[/b] (we show it in yellow): different aspect ratio or no draws only mean the heuristic would not choose it. Only what cannot be sampled at all (MSAA without SAMPLED usage) is blocked.
+[/list]
+
+Every rule above was validated on few games; none of it replaces the add-on's behaviour where that behaviour already works.
