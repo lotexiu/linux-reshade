@@ -740,6 +740,9 @@ cmd_xid_watch() {
         strings -n 4 "$f" | grep -E "^(depth=|technique=|swapchain=|depthpasses=)" | cut -c1-230 | head -14 | sed 's/^/    /'
       done
       [ -f "$log" ] && { printf 'fim do log da layer (pid %s):\n' "$pid"; grep "pid=$pid " "$log" | grep -vE "vkQueuePresentKHR #|uniform sem fonte|bundle carregado" | cut -c1-230 | tail -14 | sed 's/^/    /'; }
+      # Jogos Flatpak (Sober) rodam num espaço de pids próprio: a layer deles escreve noutro log e se identifica com outro pid.
+      local flat=/tmp/linux-reshade-flatpak.log
+      [ -f "$flat" ] && [ "$flat" != "$log" ] && { printf 'fim do log da layer Flatpak (pid de dentro da caixa, pode ser outro jogo):\n'; grep -vE "vkQueuePresentKHR #|uniform sem fonte|bundle carregado|passes da profundidade" "$flat" | cut -c1-230 | tail -10 | sed 's/^/    /'; }
     } | tee -a "$out"
   done
 }
