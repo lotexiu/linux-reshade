@@ -66,6 +66,9 @@ pub struct Ui {
     flatpak_button: gtk::Button,
     /// A versão do modelo que a tela já mostra: se a leitura periódica não a mudou, não há o que redesenhar.
     applied_version: Cell<u64>,
+    /// O indicador "Compilando..." do cabeçalho e a pasta de cache que ele vigia.
+    activity: Rc<crate::activity::Activity>,
+    cache_dir: std::path::PathBuf,
     games_view: RefCell<GamesView>,
     notice: gtk::Label,
     /// Verdadeiro enquanto a janela atualiza os widgets a partir do modelo.
@@ -241,6 +244,8 @@ impl Ui {
         toggle.append(&gtk::Label::new(Some(tr("Effects on"))));
         toggle.append(&enabled);
         header.pack_end(&toggle);
+        let activity = crate::activity::Activity::new();
+        header.pack_end(&activity.root);
         let shortcuts_button = gtk::Button::from_icon_name("emblem-system-symbolic");
         shortcuts_button.set_tooltip_text(Some(tr("Settings: shortcuts, screenshots, folders, performance and cache")));
         header.pack_start(&shortcuts_button);
@@ -338,6 +343,8 @@ impl Ui {
             flatpak_view: flatpak_view.clone(),
             flatpak_button: flatpak_button.clone(),
             applied_version: Cell::new(u64::MAX),
+            activity,
+            cache_dir: config::Config::load().cache_dir,
             games_view: RefCell::new(games_view),
             notice,
             updating: Cell::new(false),
@@ -509,6 +516,7 @@ impl Ui {
         // Lê o estado de tempos em tempos: jogos que abrem e fecham, o atalho global, o `lrctl`, o arquivo editado à mão.
         glib::timeout_add_local(REFRESH, move || match weak.upgrade() {
             Some(ui) => {
+                ui.activity.set(&crate::activity::compiling(&ui.cache_dir));
                 let t0 = std::time::Instant::now();
                 ui.home.borrow_mut().refresh();
                 let t1 = std::time::Instant::now();

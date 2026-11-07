@@ -578,3 +578,6 @@ panel or game open: shortcut keys active	painel ou jogo aberto: teclas de atalho
 no panel or game open: shortcut keys released (F1, F2... go back to the other programs)	nenhum painel ou jogo aberto: teclas de atalho soltas (F1, F2... voltam para os outros programas)
 shortcut registration refused: it is asked again when the panel is opened	registro dos atalhos recusado: é pedido de novo quando o painel for aberto
 the shortcuts process ended	o processo dos atalhos terminou
+Compiling: {}	Compilando: {}
+Compiling: {} (+{})	Compilando: {} (+{})
+Effects are being compiled in the background; the change applies when they finish	Os efeitos estão sendo compilados em segundo plano; a mudança vale quando terminarem

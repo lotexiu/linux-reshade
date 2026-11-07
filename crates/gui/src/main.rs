@@ -4,6 +4,7 @@
 //! resultado (sai com código diferente de 0 se algo falhar); `--effect <Efeito>` o adiciona ao preset do jogo (e o tira ao sair);
 //! `--screenshot <arquivo.png>` grava a janela; `--hold <ms>` a mantém aberta antes de sair; `--wait <ms>` espera antes de agir.
 
+mod activity;
 mod add_effect;
 mod audit;
 mod controls;
