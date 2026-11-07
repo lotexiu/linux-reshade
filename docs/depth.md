@@ -173,3 +173,10 @@ passe (foto depois do passe N, antes do primeiro `DontCare`) existe para evitá-
 quadros em que a regra não copiou (o número de passes do Haste varia entre quadros): era a profundidade viva de agora, já com o quadrado. Agora, se uma
 regra de ponto (limpeza ou passe) está ativa e a foto já foi gravada, o quadro sem cópia da regra **mantém a foto anterior**; a cópia viva só preenche a
 primeira vez ou quando nenhuma regra vale.
+
+## Um trinco por fila (2026-11-07)
+Os Xid 69 de 07/11 só aconteciam com o preset pesado e o Proton Experimental (janela e tela cheia); com o GE-Proton 11-7 ou com o preset leve o jogo não
+travava. Uma `VkQueue` não pode ser usada por duas threads ao mesmo tempo, e a layer submete o trabalho dos efeitos (e o `vkQueueWaitIdle` da criação da
+cadeia) na fila do jogo de dentro do gancho do present, enquanto o jogo submete na mesma fila de outra thread; o DXVK sincroniza o próprio submit e o
+próprio present, não o nosso submit extra. Agora existe um trinco por fila (`queue_lock.rs`) que os submits do jogo (os ganchos `vkQueueSubmit` e
+`vkQueueSubmit2`) e os nossos (efeitos, criação da cadeia, captura de tela) passam a respeitar. O present em si não é trancado (ele pode bloquear).

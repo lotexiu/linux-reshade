@@ -16,6 +16,7 @@ mod log;
 mod params;
 mod present;
 mod proc_addr;
+mod queue_lock;
 mod screenshot;
 mod state;
 mod stats;

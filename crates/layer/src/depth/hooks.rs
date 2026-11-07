@@ -1055,7 +1055,7 @@ unsafe extern "system" fn queue_submit(queue: vk::Queue, count: u32, p_submits: 
                 }
             }
         }
-        (data.device.fp_v1_0().queue_submit)(queue, count, p_submits, fence)
+        crate::queue_lock::with(queue.as_raw(), || (data.device.fp_v1_0().queue_submit)(queue, count, p_submits, fence))
     }
 }
 
@@ -1071,7 +1071,7 @@ unsafe extern "system" fn queue_submit2(queue: vk::Queue, count: u32, p_submits:
                 }
             }
         }
-        next(queue, count, p_submits, fence)
+        crate::queue_lock::with(queue.as_raw(), || next(queue, count, p_submits, fence))
     }
 }
 

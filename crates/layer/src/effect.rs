@@ -841,7 +841,7 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
             fx.fx = match outcome {
                 Ok(mut built) => {
                     // A inicialização das texturas (só as dos efeitos novos) precisa da fila: aqui, na thread que a usa.
-                    match built.chain.finish_init(&data.device, queue) {
+                    match crate::queue_lock::with(queue.as_raw(), || built.chain.finish_init(&data.device, queue)) {
                         Ok(()) => {
                             log!("efeito criado para o swapchain {:#x} ({} imagens) em {} ms", swapchain.as_raw(), fx.images.len(), started.elapsed().as_millis());
                             log!("cadeia de {} etapa(s) criada", built.chain.len());
@@ -982,7 +982,7 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
                     // Sem cópia nunca gravada a foto está sem layout: não dá para os efeitos a lerem. A fence já foi resetada: um lote
                     // vazio a sinaliza de novo.
                     if !data.depth.snapshot_written.load(std::sync::atomic::Ordering::Relaxed) {
-                        let _ = data.device.queue_submit(queue, &[vk::SubmitInfo::default()], fence);
+                        let _ = crate::queue_lock::with(queue.as_raw(), || data.device.queue_submit(queue, &[vk::SubmitInfo::default()], fence));
                         return None;
                     }
                 }
@@ -994,7 +994,7 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
             .wait_dst_stage_mask(&stages)
             .command_buffers(&command_buffers)
             .signal_semaphores(&signal);
-        match data.device.queue_submit(queue, &[submit], fence) {
+        match crate::queue_lock::with(queue.as_raw(), || data.device.queue_submit(queue, &[submit], fence)) {
             Ok(()) => {
                 if timed && let Some(timer) = built.gpu.as_mut() {
                     timer.written[index] = true;
@@ -1004,7 +1004,7 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
             Err(e) => {
                 log!("vkQueueSubmit do efeito falhou: erro {}", e.as_raw());
                 // A fence já foi resetada; um lote vazio a sinaliza de novo para não travar o frame seguinte.
-                let _ = data.device.queue_submit(queue, &[vk::SubmitInfo::default()], fence);
+                let _ = crate::queue_lock::with(queue.as_raw(), || data.device.queue_submit(queue, &[vk::SubmitInfo::default()], fence));
                 None
             }
         }

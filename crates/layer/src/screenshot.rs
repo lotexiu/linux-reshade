@@ -137,7 +137,7 @@ pub unsafe fn capture(data: &DeviceData, queue: vk::Queue, family: u32, target: 
             let cbs = [cb];
             let signal = [made.semaphore];
             let submit = vk::SubmitInfo::default().wait_semaphores(waits).wait_dst_stage_mask(&stages).command_buffers(&cbs).signal_semaphores(&signal);
-            device.queue_submit(queue, &[submit], made.fence).map_err(|e| fail("submit", e))
+            crate::queue_lock::with(queue.as_raw(), || device.queue_submit(queue, &[submit], made.fence)).map_err(|e| fail("submit", e))
         })();
         match result {
             Ok(()) => Some(made),
