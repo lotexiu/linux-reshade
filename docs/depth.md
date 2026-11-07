@@ -202,3 +202,13 @@ presents vão para o log (extensões, filas e estruturas encadeadas) para compar
   o travamento do PC inteiro ao rodar com a validation layer (não repetir).
 - Aberto: bisseção no Experimental com `lrctl depth policy` (split/copy/snapshot/resignal) e com presets sem profundidade, para saber se é o caminho da
   profundidade ou o do present. Recomendação enquanto isso: GE-Proton.
+
+### Fechamento do dia (07/11): é o Proton Experimental, não a layer nem os shaders
+
+- No GE-Proton o A Hat in Time aguenta qualquer troca de definição (macros de profundidade e `DIFFUSE_GI_Q`, rápidas ou lentas), com o mesmo preset.
+  No Proton Experimental, qualquer troca de definição (que recria a cadeia) leva ao Xid 69 em 2 a 35 s; o preset completo sem trocas fica estável.
+- Os 4 conjuntos de shaders que a layer carregou nos travamentos rodam 600 quadros a 1920x1080 sem erro no harness (`LINUX_RESHADE_CHAIN_BUNDLES`),
+  com profundidade D24S8: não são os shaders. A captura de profundidade é idêntica nos dois Protons.
+- Descartado por teste: destruir a cadeia velha antes/depois (`LATE_FREE`, `SAFE_SWAP`), a cadeia velha desenhando junto (`QUIET_SWAP`), reaproveitar efeitos
+  entre cadeias, recriar tudo do zero (agora o padrão para mudança de macros), lsfg-vk, cache, threads de compilação.
+- Em aberto: o que o DXVK do Experimental faz que o do GE não. Recomendação: GE-Proton para usar a layer com troca de definições ao vivo.
