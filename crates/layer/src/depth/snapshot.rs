@@ -188,6 +188,13 @@ pub(crate) unsafe fn copy_for_present(data: &DeviceData, family: u32, index: usi
     if !data.depth.copy_on() || data.depth.copied_frame.load(std::sync::atomic::Ordering::Relaxed) {
         return PresentCopy::NotNeeded;
     }
+    // Uma regra de ponto (limpeza ou passe) está ativa e a foto já existe: se a regra não copiou neste quadro (o jogo teve menos passes ou
+    // limpezas), a foto do quadro anterior vale mais que a profundidade viva de agora, que já passou pelo que a regra quer evitar (a UI, outra
+    // câmera, o "quadrado" do Haste). A cópia viva só preenche a primeira vez ou quando nenhuma regra vale.
+    let rule_active = data.depth.snapshot_pass.load(std::sync::atomic::Ordering::Relaxed) != 0 || data.depth.snapshot_clear.load(std::sync::atomic::Ordering::Relaxed) != 0;
+    if rule_active && data.depth.snapshot_written.load(std::sync::atomic::Ordering::Relaxed) {
+        return PresentCopy::NotNeeded;
+    }
     let Some(live) = *data.depth.live.lock().unwrap() else { return PresentCopy::Unavailable };
     let layout = data.depth.image_layouts.lock().unwrap().get(&live.image).copied().unwrap_or(0);
     let Some((dst, format)) = data.depth.snapshot.lock().unwrap().as_ref().map(|s| (s.image, s.format)) else { return PresentCopy::Unavailable };

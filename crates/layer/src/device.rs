@@ -55,7 +55,10 @@ pub unsafe extern "system" fn create_device(
 
         let handle = *p_device;
         // Os pipelines dos efeitos ficam num cache em arquivo (a segunda cadeia igual monta muito mais rápido).
-        postfx::pipeline_cache::set_path(ipc::state_dir().join("pipeline-cache.bin"));
+        // Em disco (não em /dev/shm, que some a cada reinicialização): o cache de pipelines dos efeitos sobrevive e o primeiro minuto do jogo
+        // não compila tudo de novo. A gravação é atômica (arquivo temporário e `rename`), então vários jogos abertos não o corrompem.
+        let cache_dir = std::env::var_os("XDG_CACHE_HOME").map(std::path::PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache"))).map(|d| d.join("linux-reshade"));
+        postfx::pipeline_cache::set_path(cache_dir.map_or_else(|| ipc::state_dir().join("pipeline-cache.bin"), |d| d.join("pipeline-cache.bin")));
         let device = ash::Device::load_with(
             |name| std::mem::transmute(next_gdpa(handle, name.as_ptr())),
             handle,

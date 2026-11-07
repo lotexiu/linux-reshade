@@ -166,3 +166,10 @@ a seguir o ReShade nos pontos em que divergia de um jeito arriscado. Cada ponto 
   mesmo arquivo: as linhas levam o pid).
 - Uma candidata que "não serve" por proporção diferente ou sem desenhos agora **pode ser escolhida** (em amarelo no painel: "pode não dar o
   resultado esperado"); só a MSAA sem `SAMPLED` (impossível de amostrar) continua bloqueada.
+
+## O quadrado do Haste voltava (2026-11-07)
+O "quadrado" do Haste é um desenho torto e grande que cobre a cena e que entra na profundidade **depois** do passe da cena (ver "Haste" acima); a regra do
+passe (foto depois do passe N, antes do primeiro `DontCare`) existe para evitá-lo. Com o modo cópia a cópia da hora dos efeitos passou a entrar nos
+quadros em que a regra não copiou (o número de passes do Haste varia entre quadros): era a profundidade viva de agora, já com o quadrado. Agora, se uma
+regra de ponto (limpeza ou passe) está ativa e a foto já foi gravada, o quadro sem cópia da regra **mantém a foto anterior**; a cópia viva só preenche a
+primeira vez ou quando nenhuma regra vale.
