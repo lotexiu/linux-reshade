@@ -585,3 +585,4 @@ Analyze every effect in the background (otherwise only those used by a preset)	A
 The analysis compiles each effect once to tell which ones are compatible. With hundreds of effects that takes minutes of CPU; the ones outside presets are analyzed when you pick them.	A análise compila cada efeito uma vez para saber quais são compatíveis. Com centenas de efeitos isso leva minutos de CPU; os que não estão em presets são analisados quando você os escolhe.
 Skip in the background analysis	Pular na análise em segundo plano
 Effects in these folders are not analyzed ahead of time (a preset that uses them still compiles them).	Os efeitos destas pastas não são analisados antes da hora (um preset que os usa ainda os compila).
+{} game(s) with the layer are open: its effects go away until they are compiled again. Click again to clear anyway.	{} jogo(s) com a layer estão abertos: os efeitos deles somem até serem compilados de novo. Clique de novo para limpar mesmo assim.

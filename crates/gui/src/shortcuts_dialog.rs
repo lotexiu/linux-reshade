@@ -556,8 +556,21 @@ fn cache_page() -> gtk::Box {
         let button = gtk::Button::with_label(label);
         button.set_tooltip_text(Some(tip));
         let (compiler, status, refresh_usage) = (compiler.clone(), status.clone(), refresh_usage.clone());
+        let asked: std::cell::Cell<Option<std::time::Instant>> = std::cell::Cell::new(None);
         button.connect_clicked(move |_| {
             if let Ok(c) = &*compiler {
+                // Com um jogo aberto, apagar os compilados o deixa sem efeito até o daemon recompilar (e uma troca nessa hora é onde mais
+                // se mexe): pede um segundo clique em até 8 s.
+                let games = ipc::live_layers().map(|l| l.len()).unwrap_or(0);
+                if games > 0 && !matches!(what, Clear::Analyses) {
+                    let confirmed = asked.get().is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(8));
+                    if !confirmed {
+                        asked.set(Some(std::time::Instant::now()));
+                        status.set_text(&fmt("{} game(s) with the layer are open: its effects go away until they are compiled again. Click again to clear anyway.", &[&games]));
+                        return;
+                    }
+                    asked.set(None);
+                }
                 let n = maintenance::clear(c, what);
                 status.set_text(&fmt("{} items deleted.", &[&n]));
                 refresh_usage();

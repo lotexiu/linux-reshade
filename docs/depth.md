@@ -189,3 +189,16 @@ dos efeitos espera os semáforos do jogo e os sinaliza de novo, e o present cont
 presents vão para o log (extensões, filas e estruturas encadeadas) para comparar os dois Protons.
 
 **Resultado (2026-11-07):** com `resignal` o Slime Rancher 2 no Proton Experimental, preset `Padrão` de 9 efeitos, passou do título e do carregamento sem Xid (antes travava sempre em até 3 minutos). Foi o que resolveu o travamento nesse cenário.
+
+## 2026-11-07 (tarde): A Hat in Time trava com o Proton Experimental, não com o GE-Proton
+
+- Preset pesado de 9 efeitos (MartysMods, com profundidade) no A Hat in Time: Xid 69 (`c797`, offset `2158`, data `9e04c002`) 8 vezes em ~2 horas no
+  **Proton Experimental**, mesmo com o modo `resignal`. Com o **GE-Proton** o mesmo preset, as mesmas trocas de definição e a mesma sessão não travam.
+- Não é a troca de definições: um dos Xid veio 35 s depois da última reconstrução da cadeia, e vários vieram quando o jogo criava muitos
+  pipelines (área nova). Também não é o lsfg-vk (desligado), nem o cache (limpo), nem a compilação (8 threads, prioridade normal).
+- O pedido de swapchain e o present têm as mesmas estruturas encadeadas nos dois Protons (`swapchain_maintenance1`, fence de apresentação,
+  `present_id`) e as 53 extensões do dispositivo são iguais: a diferença está dentro do DXVK (3.1.1-97 do Experimental x 3.1-19 do GE).
+- Descartado: reconstrução incremental com a cadeia velha desenhando (corrigida), `LINUX_RESHADE_QUIET_SWAP=1` (cadeia velha parada na criação),
+  o travamento do PC inteiro ao rodar com a validation layer (não repetir).
+- Aberto: bisseção no Experimental com `lrctl depth policy` (split/copy/snapshot/resignal) e com presets sem profundidade, para saber se é o caminho da
+  profundidade ou o do present. Recomendação enquanto isso: GE-Proton.
