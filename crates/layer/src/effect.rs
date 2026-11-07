@@ -107,6 +107,12 @@ pub unsafe fn reap_semaphores(device: &ash::Device, all: bool) {
 
 /// `LINUX_RESHADE_QUIET_SWAP=1`: enquanto a cadeia nova é criada a velha também não desenha (o quadro passa sem efeito). Teste da hipótese
 /// de que os Xid 69 ao trocar definições vêm de a cadeia velha rodar junto com a criação da nova.
+/// `LINUX_RESHADE_HARD_SWAP=1`: qualquer mudança da cadeia (não só de macros) descarta tudo e recria do zero, como o ReShade (teste).
+fn hard_swap() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LINUX_RESHADE_HARD_SWAP").is_some_and(|v| v != "0"))
+}
+
 const LATE_FREE_PRESENTS: u32 = 300;
 
 /// `LINUX_RESHADE_LATE_FREE=1`: a cadeia antiga só é destruída 300 presents depois de aposentada (teste de recurso destruído cedo demais).
@@ -254,6 +260,12 @@ fn signature(steps: &[ResolvedStep]) -> Vec<(u64, usize)> {
     steps.iter().map(|s| (s.bundle.id, s.technique)).collect()
 }
 
+/// O que cada etapa é, sem a variante: o efeito (arquivo) e a técnica. Duas cadeias com os mesmos `kinds` e assinaturas diferentes diferem só
+/// nas macros com que os efeitos foram compilados.
+fn kinds(steps: &[ResolvedStep]) -> Vec<(String, usize)> {
+    steps.iter().map(|s| (s.bundle.manifest.source.clone(), s.technique)).collect()
+}
+
 /// Quanto esperar a execução anterior de uma imagem antes de desistir de aplicar o efeito neste frame.
 const FENCE_TIMEOUT_NS: u64 = 250_000_000;
 
@@ -395,8 +407,15 @@ impl SwapchainFx {
             if built.signature != new_signature {
                 log!("efeito do swapchain {:#x} descartado: o bundle mudou (a cadeia é outra)", self.handle);
                 crate::status::set_techniques(Vec::new());
-                // A cadeia velha segue desenhando até a nova ficar pronta.
-                self.retire(&data.device);
+                if !steps.is_empty() && (hard_swap() || kinds(&self.steps) == kinds(&steps)) {
+                    // Mesmos efeitos e técnicas, outras variantes: foi uma mudança de definições (macros). Como no ReShade, os efeitos saem de
+                    // vez e voltam quando a cadeia nova ficar pronta (um piscar), sem a velha e a nova coexistindo.
+                    log!("definições mudaram (mesmos efeitos, outras variantes): troca completa, sem a cadeia velha");
+                    unsafe { self.drop_everything(&data.device) };
+                } else {
+                    // A cadeia velha segue desenhando até a nova ficar pronta (ligar/desligar efeito não deve piscar).
+                    self.retire(&data.device);
+                }
             } else if let Some(built) = match &mut self.fx { Fx::Ready(b) => Some(b), _ => None } {
                 // A mesma cadeia: só os uniforms do plano podem ter mudado.
                 log!("plano: mesma cadeia, só os valores dos uniforms foram atualizados");
@@ -491,6 +510,21 @@ fn safe_swap() -> bool {
                 i += 1;
             }
         }
+    }
+
+    /// Destrói já a cadeia em uso, a aposentada e as guardadas (espera as fences de cada uma); o swapchain fica sem efeito até criar outra.
+    unsafe fn drop_everything(&mut self, device: &ash::Device) {
+        unsafe {
+            if Self::safe_swap() {
+                let _ = device.device_wait_idle();
+            }
+            self.drop_retiring(device);
+            self.flush_graveyard(device, true);
+            if matches!(self.fx, Fx::Ready(_)) {
+                Self::destroy_fx(&mut self.fx, device);
+            }
+        }
+        self.fx = Fx::Unbuilt;
     }
 
     unsafe fn drop_retiring(&mut self, device: &ash::Device) {
