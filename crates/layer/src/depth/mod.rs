@@ -397,7 +397,8 @@ impl Depth {
             copy_mode: !flag("LINUX_RESHADE_DEPTH_DIRECT"),
             policy: Mutex::new(Policy::default()),
             resignal_applied: AtomicBool::new(false),
-            resignal_default: flag("LINUX_RESHADE_RESIGNAL"),
+            // Padrão: ligado (`LINUX_RESHADE_RESIGNAL=0` ou `lrctl depth policy resignal=off` voltam a trocar os semáforos do present).
+            resignal_default: std::env::var("LINUX_RESHADE_RESIGNAL").map_or(true, |v| v != "0"),
             split_enabled: !flag("LINUX_RESHADE_DEPTH_NO_SPLIT"),
             splits_done: AtomicU32::new(0),
             splits_skipped: AtomicU32::new(0),

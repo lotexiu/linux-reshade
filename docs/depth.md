@@ -184,6 +184,8 @@ próprio present, não o nosso submit extra. Agora existe um trinco por fila (`q
 ## DXVK novo e o present (2026-11-07)
 O DXVK do Proton Experimental (3.1.1-97) cria o swapchain com `PRESENT_ID_2`/`PRESENT_WAIT_2` e usa `VK_EXT_swapchain_maintenance1` (fence de apresentação e modo
 de apresentação em cada present: estruturas `1000275001`/`1000275003`, mais `1000479001`); o GE-Proton 11-7 (DXVK 3.1-19) não. O preset pesado só travava no Experimental. A layer
-trocava os semáforos de espera do present pelo próprio. Modo alternativo `resignal` (`lrctl depth policy resignal=on`, ou `LINUX_RESHADE_RESIGNAL=1` ao abrir o jogo): o envio
+trocava os semáforos de espera do present pelo próprio. Modo `resignal` (padrão desde 2026-11-07; `LINUX_RESHADE_RESIGNAL=0` ao abrir o jogo ou `lrctl depth policy resignal=off` voltam ao antigo): o envio
 dos efeitos espera os semáforos do jogo e os sinaliza de novo, e o present continua esperando os que o jogo entregou. O `vkCreateDevice`, o pedido de swapchain e os primeiros
 presents vão para o log (extensões, filas e estruturas encadeadas) para comparar os dois Protons.
+
+**Resultado (2026-11-07):** com `resignal` o Slime Rancher 2 no Proton Experimental, preset `Padrão` de 9 efeitos, passou do título e do carregamento sem Xid (antes travava sempre em até 3 minutos). Foi o que resolveu o travamento nesse cenário.
