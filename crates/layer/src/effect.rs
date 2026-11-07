@@ -107,6 +107,14 @@ pub unsafe fn reap_semaphores(device: &ash::Device, all: bool) {
 
 /// `LINUX_RESHADE_QUIET_SWAP=1`: enquanto a cadeia nova é criada a velha também não desenha (o quadro passa sem efeito). Teste da hipótese
 /// de que os Xid 69 ao trocar definições vêm de a cadeia velha rodar junto com a criação da nova.
+const LATE_FREE_PRESENTS: u32 = 300;
+
+/// `LINUX_RESHADE_LATE_FREE=1`: a cadeia antiga só é destruída 300 presents depois de aposentada (teste de recurso destruído cedo demais).
+fn late_free() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LINUX_RESHADE_LATE_FREE").is_some_and(|v| v != "0"))
+}
+
 pub(crate) fn quiet_swap() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("LINUX_RESHADE_QUIET_SWAP").is_some_and(|v| v != "0"))
@@ -320,6 +328,9 @@ pub struct SwapchainFx {
     /// A cadeia anterior, que continua desenhando até a nova ficar pronta (sem isso o efeito some por alguns quadros a cada troca
     /// de ordem ou de efeito).
     retiring: Option<Built>,
+    /// Cadeias já sem uso que esperam alguns presents antes de ser destruídas (`LINUX_RESHADE_LATE_FREE`), para testar se um Xid vem de um recurso
+    /// destruído cedo demais: (cadeia, presents que faltam).
+    graveyard: Vec<(Built, u32)>,
     /// Época da escolha de efeito (ver `bundle::epoch`) que este swapchain já resolveu.
     seen_epoch: u64,
     /// Profundidade escolhida quando a cadeia falhou: se mudar, vale tentar de novo.
@@ -339,7 +350,7 @@ unsafe impl Send for SwapchainFx {}
 impl SwapchainFx {
     pub fn new(handle: u64, images: Vec<vk::Image>, format: vk::Format, extent: vk::Extent2D, unusable: Option<String>) -> Self {
         let state = unusable.clone().map_or(EffectState::Idle, EffectState::Unavailable);
-        let fx = Self { handle, images, format, extent, unusable, fx: Fx::Unbuilt, retiring: None, seen_epoch: u64::MAX, failed_depth: None, steps: Vec::new(), state, last_present: None };
+        let fx = Self { handle, images, format, extent, unusable, fx: Fx::Unbuilt, retiring: None, graveyard: Vec::new(), seen_epoch: u64::MAX, failed_depth: None, steps: Vec::new(), state, last_present: None };
         crate::status::update(handle, fx.status());
         fx
     }
@@ -437,6 +448,7 @@ fn safe_swap() -> bool {
     pub unsafe fn destroy(&mut self, device: &ash::Device) {
         unsafe {
             self.drop_retiring(device);
+            self.flush_graveyard(device, true);
             Self::destroy_fx(&mut self.fx, device);
         }
         self.fx = Fx::Failed("destroyed".into());
@@ -448,9 +460,35 @@ fn safe_swap() -> bool {
         if let Fx::Ready(_) = &self.fx {
             let old = std::mem::replace(&mut self.fx, Fx::Unbuilt);
             // Uma cadeia já aposentada que ainda não foi trocada sai de vez (só uma espera).
-            unsafe { self.drop_retiring(device) };
+            unsafe { self.bury_retiring(device) };
             if let Fx::Ready(built) = old {
                 self.retiring = Some(built);
+            }
+        }
+    }
+
+    /// Como `drop_retiring`, mas com `LINUX_RESHADE_LATE_FREE=1` a cadeia só é destruída uns 300 presents depois.
+    unsafe fn bury_retiring(&mut self, device: &ash::Device) {
+        if late_free() && let Some(built) = self.retiring.take() {
+            log!("cadeia aposentada guardada: será destruída em {LATE_FREE_PRESENTS} presents");
+            self.graveyard.push((built, LATE_FREE_PRESENTS));
+        } else {
+            unsafe { self.drop_retiring(device) };
+        }
+    }
+
+    /// Conta um present para as cadeias guardadas e destrói as que chegaram ao fim (todas, com `all`).
+    unsafe fn flush_graveyard(&mut self, device: &ash::Device, all: bool) {
+        let mut i = 0;
+        while i < self.graveyard.len() {
+            self.graveyard[i].1 = self.graveyard[i].1.saturating_sub(1);
+            if all || self.graveyard[i].1 == 0 {
+                let (built, _) = self.graveyard.remove(i);
+                let mut old = Fx::Ready(built);
+                unsafe { Self::destroy_fx(&mut old, device) };
+                log!("cadeia guardada destruída");
+            } else {
+                i += 1;
             }
         }
     }
@@ -904,7 +942,10 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
         }
         // A cadeia nova pronta (ou que falhou) substitui a aposentada.
         if matches!(fx.fx, Fx::Ready(_) | Fx::Failed(_)) && fx.retiring.is_some() {
-            fx.drop_retiring(&data.device);
+            fx.bury_retiring(&data.device);
+        }
+        if !fx.graveyard.is_empty() {
+            fx.flush_graveyard(&data.device, false);
         }
         let now = Instant::now();
         let previous = fx.last_present.replace(now);
