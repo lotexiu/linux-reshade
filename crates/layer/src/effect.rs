@@ -462,8 +462,10 @@ fn safe_swap() -> bool {
             if Self::safe_swap() {
                 let _ = unsafe { device.device_wait_idle() };
             }
+            log!("cadeia aposentada: destruindo os recursos dela (espera as fences)");
             let mut old = Fx::Ready(built);
             unsafe { Self::destroy_fx(&mut old, device) };
+            log!("cadeia aposentada destruída");
         }
     }
 

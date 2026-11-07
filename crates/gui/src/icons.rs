@@ -30,6 +30,8 @@ pub fn install() {
             }
         }
     }
+    let _ = control_core::install::ensure_icon();
+    gtk::Window::set_default_icon_name("linux-reshade");
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::IconTheme::for_display(&display).add_search_path(&base);
     }

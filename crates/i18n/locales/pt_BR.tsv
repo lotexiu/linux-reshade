@@ -581,3 +581,7 @@ the shortcuts process ended	o processo dos atalhos terminou
 Compiling: {}	Compilando: {}
 Compiling: {} (+{})	Compilando: {} (+{})
 Effects are being compiled in the background; the change applies when they finish	Os efeitos estão sendo compilados em segundo plano; a mudança vale quando terminarem
+Analyze every effect in the background (otherwise only those used by a preset)	Analisar todos os efeitos em segundo plano (senão, só os usados por algum preset)
+The analysis compiles each effect once to tell which ones are compatible. With hundreds of effects that takes minutes of CPU; the ones outside presets are analyzed when you pick them.	A análise compila cada efeito uma vez para saber quais são compatíveis. Com centenas de efeitos isso leva minutos de CPU; os que não estão em presets são analisados quando você os escolhe.
+Skip in the background analysis	Pular na análise em segundo plano
+Effects in these folders are not analyzed ahead of time (a preset that uses them still compiles them).	Os efeitos destas pastas não são analisados antes da hora (um preset que os usa ainda os compila).

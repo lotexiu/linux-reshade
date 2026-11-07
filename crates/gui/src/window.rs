@@ -245,10 +245,10 @@ impl Ui {
         toggle.append(&enabled);
         header.pack_end(&toggle);
         let activity = crate::activity::Activity::new();
-        header.pack_end(&activity.root);
         let shortcuts_button = gtk::Button::from_icon_name("emblem-system-symbolic");
         shortcuts_button.set_tooltip_text(Some(tr("Settings: shortcuts, screenshots, folders, performance and cache")));
         header.pack_start(&shortcuts_button);
+        header.pack_start(&activity.root);
 
         // A página "Adicionar efeito" e a lista do preset se alternam numa pilha (sem popover: ver `add_effect.rs`). Os callbacks da
         // página só guardam uma referência fraca da interface, que ainda não existe aqui.

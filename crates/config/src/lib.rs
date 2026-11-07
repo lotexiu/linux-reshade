@@ -133,6 +133,11 @@ pub struct Config {
     /// Passar o SPIR-V dos efeitos pelo `spirv-opt -O` depois de compilar (`[GENERAL] OptimizeShaders`, ligado de fábrica): a GPU roda
     /// uns 5 a 10% mais rápido. Sem o `spirv-opt` instalado não faz nada.
     pub optimize_shaders: bool,
+    /// Analisar em segundo plano TODOS os efeitos das pastas (`[GENERAL] AnalyzeAllEffects`, desligado de fábrica): sem isto só os que estão
+    /// em algum preset são analisados ao abrir (compilar centenas de efeitos que talvez nunca sejam usados custa minutos de CPU).
+    pub analyze_all: bool,
+    /// Pastas cujos efeitos a análise em segundo plano pula (`[GENERAL] AnalysisExclude`); continuam compilando quando um preset os usa.
+    pub analysis_exclude: Vec<PathBuf>,
 }
 
 /// Os atalhos que o `config.ini` guarda na seção `[INPUT]` (os nomes são os do `ReShade.ini`) e o que cada um faz.
@@ -242,7 +247,9 @@ impl Config {
             .unwrap_or_else(|| PathBuf::from("/tmp/linux-reshade-capturas"));
         let screenshot_before = ini.as_ref().and_then(|i| i.get("SCREENSHOT", "SaveBeforeShot")).is_none_or(|v| v != "0" && !v.eq_ignore_ascii_case("false"));
         let optimize_shaders = env("LINUX_RESHADE_NO_OPT").is_none() && ini.as_ref().and_then(|i| i.get("GENERAL", "OptimizeShaders")).is_none_or(|v| v != "0" && !v.eq_ignore_ascii_case("false"));
-        Self { data_dir, config_file: configured, effect_paths, texture_paths, presets_dir, global_macros, cache_dir, keys, screenshot_dir, screenshot_before, optimize_shaders }
+        let analyze_all = ini.as_ref().and_then(|i| i.get("GENERAL", "AnalyzeAllEffects")).is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+        let analysis_exclude = base.as_ref().map(|b| ini.as_ref().map(|i| i.get_list("GENERAL", "AnalysisExclude")).unwrap_or_default().iter().filter(|s| !s.trim().is_empty()).map(|s| SearchPath::parse(s, b, home).dir).collect()).unwrap_or_default();
+        Self { data_dir, config_file: configured, effect_paths, texture_paths, presets_dir, global_macros, cache_dir, keys, screenshot_dir, screenshot_before, optimize_shaders, analyze_all, analysis_exclude }
     }
 
     /// O atalho de `name` (de [`KEY_NAMES`]): o do `config.ini`, ou o de fábrica. Texto vazio: sem atalho.

@@ -6,7 +6,7 @@ use crate::compiler::{CompileError, Compiler};
 use fx_bundle::Manifest;
 use fx_bundle::images::source_of;
 use ini::Ini;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use i18n::tr;
 
 /// Uma característica de um efeito (o que o filtro da lista oferece).
@@ -221,6 +221,44 @@ pub fn ensure(compiler: &Compiler, name: &str) -> EffectInfo {
 /// Os nomes de efeito que ainda não têm análise válida.
 pub fn pending(compiler: &Compiler) -> Vec<String> {
     compiler.available().into_iter().map(|(name, _)| name).filter(|name| load(compiler, name).is_none()).collect()
+}
+
+/// Os nomes (sem `.fx`) dos efeitos que algum preset usa: os da pasta de presets e das pastas de cada jogo.
+pub fn used_effects(presets_dir: &Path) -> std::collections::HashSet<String> {
+    let mut used = std::collections::HashSet::new();
+    let mut files: Vec<PathBuf> = Vec::new();
+    for entry in std::fs::read_dir(presets_dir).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            files.extend(std::fs::read_dir(&path).into_iter().flatten().flatten().map(|e| e.path()));
+        } else {
+            files.push(path);
+        }
+    }
+    for file in files.iter().filter(|f| f.extension().is_some_and(|e| e.eq_ignore_ascii_case("ini")) && f.file_name().is_some_and(|n| n != "game.ini")) {
+        let Ok(preset) = preset::Preset::load(file) else { continue };
+        for id in preset.techniques() {
+            if let Some(name) = id.file {
+                used.insert(name.trim_end_matches(".fx").to_string());
+            }
+        }
+    }
+    used
+}
+
+/// O que a análise em segundo plano deve fazer agora: os efeitos sem análise que não estão nas pastas excluídas, os usados por algum preset
+/// primeiro. Sem `AnalyzeAllEffects`, só os usados por algum preset (os outros são analisados quando alguém os escolhe).
+pub fn pending_for(compiler: &Compiler, config: &config::Config) -> Vec<String> {
+    let used = config.presets_dir.as_deref().map(used_effects).unwrap_or_default();
+    let mut list: Vec<(bool, String)> = compiler
+        .available()
+        .into_iter()
+        .filter(|(name, _)| load(compiler, name).is_none())
+        .filter(|(name, path)| used.contains(name) || (config.analyze_all && !config.analysis_exclude.iter().any(|dir| path.starts_with(dir))))
+        .map(|(name, _)| (!used.contains(&name), name))
+        .collect();
+    list.sort();
+    list.into_iter().map(|(_, name)| name).collect()
 }
 
 /// Quantas análises existem em `dir` (para mostrar o andamento sem ler todas).

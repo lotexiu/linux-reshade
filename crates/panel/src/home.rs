@@ -1143,7 +1143,7 @@ pub fn start_analysis() -> Option<std::thread::JoinHandle<()>> {
         .name("analise-de-efeitos".into())
         .spawn(move || {
             loop {
-                for name in analysis::pending(&compiler) {
+                for name in analysis::pending_for(&compiler, &config::Config::load()) {
                     analysis::ensure(&compiler, &name);
                 }
                 // Efeitos novos nas pastas aparecem depois: olha de novo de vez em quando.

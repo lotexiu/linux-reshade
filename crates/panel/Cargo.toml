@@ -6,11 +6,10 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+config = { path = "../config" }
 control-core = { path = "../control-core" }
 fx-bundle = { path = "../fx-bundle" }
 ipc = { path = "../ipc" }
 preset = { path = "../preset" }
 shortcuts = { path = "../shortcuts" }
 
-[dev-dependencies]
-config = { path = "../config" }

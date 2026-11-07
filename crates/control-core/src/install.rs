@@ -84,6 +84,17 @@ fn desktop_entry_path() -> PathBuf {
     data_dir().join("applications").join(format!("{APP_ID}.desktop"))
 }
 
+/// O ícone do programa (o do ReShade; ver `packaging/ICON-NOTICE.md`), gravado na pasta de ícones do programa. Devolve o caminho.
+pub fn ensure_icon() -> Option<PathBuf> {
+    const SVG: &str = include_str!("../../../packaging/linux-reshade.svg");
+    let path = data_dir().join("linux-reshade").join("icons/hicolor/scalable/apps/linux-reshade.svg");
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(SVG) {
+        std::fs::create_dir_all(path.parent()?).ok()?;
+        std::fs::write(&path, SVG).ok()?;
+    }
+    Some(path)
+}
+
 /// Cria (ou atualiza) `~/.local/share/applications/dev.lotexiu.LinuxReshade.desktop`. O portal de atalhos só aceita que um programa sem `app id`
 /// (como o daemon de um AppImage, que não herda o escopo de nenhum programa) se identifique se existe um `.desktop` com o nome do `app id`;
 /// sem ele o registro dos atalhos falha com `An app id is required` e o KDE nem mostra a janela de confirmação. Não aparece no menu.
@@ -95,8 +106,9 @@ pub fn ensure_desktop_entry() {
     } else {
         return;
     };
+    let icon = ensure_icon().map_or_else(|| "linux-reshade".to_string(), |p| p.display().to_string());
     let desktop = format!(
-        "[Desktop Entry]\nType=Application\nName=linux-reshade\nComment={}\nExec={exec}\nIcon=linux-reshade\nTerminal=false\nNoDisplay=true\nStartupWMClass={APP_ID}\n",
+        "[Desktop Entry]\nType=Application\nName=linux-reshade\nComment={}\nExec={exec}\nIcon={icon}\nTerminal=false\nNoDisplay=true\nStartupWMClass={APP_ID}\n",
         tr("ReShade-compatible Vulkan layer for Linux")
     );
     let path = desktop_entry_path();
