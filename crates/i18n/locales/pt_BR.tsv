@@ -572,3 +572,5 @@ without SAMPLED	sem SAMPLED
 {}x{} {} · {} draws, {} passes	{}x{} {} · {} desenhos, {} passes
 ● applied in the game	● aplicada no jogo
 ＋ Add Flatpak game…	＋ Adicionar jogo Flatpak…
+{} shortcut(s) came back without a key; forgotten {} and registering again	{} atalho(s) voltaram sem tecla; {} esquecido(s) e registrando de novo
+ReShade-compatible Vulkan layer for Linux	Camada Vulkan compatível com o ReShade, para Linux

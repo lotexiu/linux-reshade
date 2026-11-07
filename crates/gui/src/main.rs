@@ -168,6 +168,7 @@ fn main() -> glib::ExitCode {
                         let _ = control_core::install::install_layer();
                     }
                 }
+                control_core::install::ensure_desktop_entry();
                 control_core::install::ensure_daemon_current();
             }
             let home = panel::Home::new(Compiler::from_env(), config::Config::load().presets_dir, state);

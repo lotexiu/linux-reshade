@@ -148,7 +148,7 @@ pub fn run(command: Command, state: &ipc::Writer) -> ExitCode {
             println!("{}", fmt("screenshots go to {}", &[&config.screenshot_dir.display()]));
             ExitCode::SUCCESS
         }
-        Command::Setup(true) => match control_core::install::install_layer() {
+        Command::Setup(true) => match { control_core::install::ensure_desktop_entry(); control_core::install::install_layer() } {
             Ok(lib) => {
                 // A pasta de dados (com os efeitos que vêm junto) também, se ainda não há.
                 if let Err(e) = control_core::install::first_run() {

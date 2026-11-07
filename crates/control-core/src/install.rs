@@ -77,6 +77,37 @@ pub fn manifest_path() -> PathBuf {
     data_dir().join("vulkan/implicit_layer.d").join(MANIFEST_NAME)
 }
 
+/// O identificador do programa (o mesmo do painel e do portal de atalhos).
+pub const APP_ID: &str = "dev.lotexiu.LinuxReshade";
+
+fn desktop_entry_path() -> PathBuf {
+    data_dir().join("applications").join(format!("{APP_ID}.desktop"))
+}
+
+/// Cria (ou atualiza) `~/.local/share/applications/dev.lotexiu.LinuxReshade.desktop`. O portal de atalhos só aceita que um programa sem `app id`
+/// (como o daemon de um AppImage, que não herda o escopo de nenhum programa) se identifique se existe um `.desktop` com o nome do `app id`;
+/// sem ele o registro dos atalhos falha com `An app id is required` e o KDE nem mostra a janela de confirmação. Não aparece no menu.
+pub fn ensure_desktop_entry() {
+    let exec = if let Some(appimage) = std::env::var_os("APPIMAGE").filter(|a| !a.is_empty()) {
+        format!("{:?}", appimage.to_string_lossy())
+    } else if let Some(lrpanel) = std::env::current_exe().ok().and_then(|e| Some(e.parent()?.join("lrpanel"))).filter(|p| p.is_file()) {
+        format!("{:?}", lrpanel.display().to_string())
+    } else {
+        return;
+    };
+    let desktop = format!(
+        "[Desktop Entry]\nType=Application\nName=linux-reshade\nComment={}\nExec={exec}\nIcon=linux-reshade\nTerminal=false\nNoDisplay=true\nStartupWMClass={APP_ID}\n",
+        tr("ReShade-compatible Vulkan layer for Linux")
+    );
+    let path = desktop_entry_path();
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(desktop.as_str()) {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&path, desktop);
+    }
+}
+
 /// A cópia da biblioteca que o manifesto anuncia.
 pub fn installed_library() -> PathBuf {
     data_dir().join("linux-reshade/lib").join(LAYER_LIB)

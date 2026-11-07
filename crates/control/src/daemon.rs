@@ -50,6 +50,7 @@ fn stop_keys() {
 /// `LINUX_RESHADE_KEYS_ALWAYS=1` volta a registrá-los sempre.
 pub fn run(state: &ipc::Writer) -> Result<(), Error> {
     // Um daemon só: o painel (AppImage) o inicia quando não há, e dois registrariam os atalhos em dobro.
+    control_core::install::ensure_desktop_entry();
     let Some(lock) = ipc::daemon_lock::acquire() else {
         control_core::logln!("{}", tr("the daemon is already running; this one exits"));
         return Ok(());
@@ -132,10 +133,24 @@ pub fn run_keys(state: &ipc::Writer) -> Result<(), Error> {
     if forgotten > 0 {
         control_core::logln!("{}", fmt("{} shortcut(s) with a new key or no key forgotten by the system", &[&forgotten]));
     }
+    control_core::install::ensure_desktop_entry();
     let mut backend = backend::select()?;
     control_core::logln!("{}", fmt("shortcuts backend: {}", &[&backend.name()]));
 
-    for bound in backend.bind(&dispatcher.global_shortcuts())? {
+    let mut bound_now = backend.bind(&dispatcher.global_shortcuts())?;
+    // O KDE só usa a tecla sugerida na primeira vez que vê o id: se o id já existia sem tecla (limpo, ou registrado por outro programa),
+    // o atalho volta SEM tecla e a tecla do painel não funciona. Um atalho que devia ter tecla e voltou sem nenhuma é esquecido e
+    // registrado de novo, uma vez.
+    let keyless: Vec<String> = bound_now.iter().filter(|b| b.trigger_description.trim().is_empty() && wanted.iter().any(|(id, _)| *id == b.id)).map(|b| b.id.clone()).collect();
+    if !keyless.is_empty() {
+        let ids: Vec<&str> = keyless.iter().map(String::as_str).collect();
+        let forgotten = shortcuts_portal::forget(&ids);
+        control_core::logln!("{}", fmt("{} shortcut(s) came back without a key; forgotten {} and registering again", &[&keyless.len(), &forgotten]));
+        if forgotten > 0 {
+            bound_now = backend.bind(&dispatcher.global_shortcuts())?;
+        }
+    }
+    for bound in bound_now {
         // A combinação em vigor pode ser diferente da sugerida: o usuário pode tê-la trocado.
         control_core::logln!("{}", fmt("shortcut {}: {}", &[&format!("{:?}", bound.id), &bound.trigger_description]));
     }

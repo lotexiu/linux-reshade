@@ -32,10 +32,24 @@ pub struct PortalBackend {
     signals: Option<SignalIterator<'static>>,
 }
 
+/// O identificador do programa para o portal (o mesmo do painel).
+pub const APP_ID: &str = "dev.lotexiu.LinuxReshade";
+
+/// O portal deduz o `app id` do escopo do processo: um programa lançado de um terminal, do VS Code ou do menu o herda, mas o daemon de um AppImage
+/// não tem nenhum e o portal recusa tudo (`NotAllowed: An app id is required`: nem a janela de confirmação do KDE aparece). O portal moderno deixa um
+/// programa sem `app id` se identificar com `org.freedesktop.host.portal.Registry.Register`, o que precisa vir antes de qualquer outra chamada.
+/// Em portais antigos, ou se o processo já tem um `app id`, a chamada falha e não faz mal.
+fn register_app_id(connection: &Connection) {
+    let Ok(registry) = Proxy::new(connection, DESTINATION, PORTAL_PATH, "org.freedesktop.host.portal.Registry") else { return };
+    let options: HashMap<&str, Value<'_>> = HashMap::new();
+    let _ = registry.call::<_, _, ()>("Register", &(APP_ID, options));
+}
+
 impl PortalBackend {
     /// Conecta ao barramento de sessão e confirma que o portal oferece `GlobalShortcuts`.
     pub fn connect() -> Result<Self, Error> {
         let connection = Connection::session().map_err(|e| Error::Unavailable(e.to_string()))?;
+        register_app_id(&connection);
         let proxy = Proxy::new(&connection, DESTINATION, PORTAL_PATH, INTERFACE)
             .map_err(|e| Error::Unavailable(e.to_string()))?;
         // Só a existência da propriedade interessa: confirma que o portal expõe a interface.
