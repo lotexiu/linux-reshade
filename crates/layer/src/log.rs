@@ -27,3 +27,17 @@ macro_rules! log {
     ($($arg:tt)*) => { $crate::log::write(format_args!($($arg)*)) };
 }
 pub(crate) use log;
+
+/// Os tipos (`sType`) das estruturas encadeadas em `p_next`, para o log (extensões que o jogo usa no present, no swapchain, no dispositivo).
+///
+/// # Safety
+/// `p_next` é nulo ou o começo de uma cadeia de estruturas Vulkan válida.
+pub unsafe fn chain_types(mut p_next: *const std::ffi::c_void) -> Vec<i32> {
+    let mut out = Vec::new();
+    while !p_next.is_null() && out.len() < 16 {
+        let base = p_next.cast::<ash::vk::BaseInStructure<'_>>();
+        out.push(unsafe { (*base).s_type }.as_raw());
+        p_next = unsafe { (*base).p_next }.cast();
+    }
+    out
+}

@@ -84,7 +84,12 @@ pub unsafe extern "system" fn create_device(
             },
         );
         crate::state::DEVICES_GENERATION.fetch_add(1, Ordering::AcqRel);
-        log!("vkCreateDevice ok");
+        {
+            let info = &*p_create_info;
+            let names: Vec<String> = (0..info.enabled_extension_count as usize).map(|i| std::ffi::CStr::from_ptr(*info.pp_enabled_extension_names.add(i)).to_string_lossy().into_owned()).collect();
+            let queues: Vec<String> = (0..info.queue_create_info_count as usize).map(|i| { let q = &*info.p_queue_create_infos.add(i); format!("família {} x{}", q.queue_family_index, q.queue_count) }).collect();
+            log!("vkCreateDevice ok: filas [{}]; extensões [{}]; estruturas encadeadas {:?}", queues.join(", "), names.join(" "), crate::log::chain_types(info.p_next));
+        }
         vk::Result::SUCCESS
     }
 }

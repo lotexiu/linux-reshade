@@ -28,6 +28,10 @@ pub unsafe extern "system" fn queue_present(
         if n == 1 || n % PRESENT_LOG_EVERY == 0 {
             log!("vkQueuePresentKHR #{n}");
         }
+        if n <= 2 {
+            let info = &*p_present_info;
+            log!("vkQueuePresentKHR #{n}: swapchains={} esperas={} fila={:#x} estruturas encadeadas {:?}", info.swapchain_count, info.wait_semaphore_count, queue.as_raw(), crate::log::chain_types(info.p_next));
+        }
         let enabled = effects_enabled(n);
         if data.last_effects.swap(enabled, Ordering::Relaxed) != enabled {
             log!("efeitos {} (present #{n})", if enabled { "LIGADOS" } else { "DESLIGADOS" });

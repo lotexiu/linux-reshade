@@ -55,6 +55,7 @@ pub unsafe extern "system" fn create_swapchain(
             info.image_usage |= EFFECT_USAGE;
         }
 
+        log!("vkCreateSwapchainKHR pedido: {}x{} uso={:#x} flags={:#x} imagens>={} modo={} formato={} estruturas encadeadas {:?}", info.image_extent.width, info.image_extent.height, info.image_usage.as_raw(), info.flags.as_raw(), info.min_image_count, info.present_mode.as_raw(), info.image_format.as_raw(), crate::log::chain_types(info.p_next));
         let result = (data.swapchain.create_swapchain_khr)(device, &info, p_allocator, p_swapchain);
         if result != vk::Result::SUCCESS {
             return result;
