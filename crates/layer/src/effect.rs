@@ -388,6 +388,7 @@ impl SwapchainFx {
                 self.retire(&data.device);
             } else if let Some(built) = match &mut self.fx { Fx::Ready(b) => Some(b), _ => None } {
                 // A mesma cadeia: só os uniforms do plano podem ter mudado.
+                log!("plano: mesma cadeia, só os valores dos uniforms foram atualizados");
                 for (runtime, &from) in built.params.iter_mut().zip(&built.origin) {
                     if let (StepSource::Plan(bytes), Some(StepParams::Plan(new))) = (&mut runtime.source, steps.get(from).map(|s| &s.params)) {
                         *bytes = new.clone();
