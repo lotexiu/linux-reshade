@@ -385,6 +385,21 @@ pub struct LiveLayer {
 }
 
 /// As layers vivas. Descarta (apaga) os arquivos de processos que morreram.
+/// O painel avisa que está aberto segurando um `flock` exclusivo em `panel-open` (o sistema o solta se ele morrer). O daemon liga os
+/// atalhos globais também enquanto o painel está aberto: é quando a pessoa os configura e o KDE pede a confirmação (sem jogo aberto).
+pub fn hold_panel_open() -> Option<File> {
+    let dir = state_dir();
+    fs::create_dir_all(&dir).ok()?;
+    let file = fs::OpenOptions::new().create(true).write(true).truncate(false).open(dir.join("panel-open")).ok()?;
+    flock(&file, FlockOperation::NonBlockingLockExclusive).ok()?;
+    Some(file)
+}
+
+pub fn panel_open() -> bool {
+    let Ok(file) = File::open(state_dir().join("panel-open")) else { return false };
+    flock(&file, FlockOperation::NonBlockingLockShared).is_err()
+}
+
 pub fn live_layers() -> io::Result<Vec<LiveLayer>> {
     live_layers_in(&state_dir(), YOUNG)
 }

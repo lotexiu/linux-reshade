@@ -81,7 +81,7 @@ pub fn run(state: &ipc::Writer) -> Result<(), Error> {
         let mut missing_since: Option<std::time::Instant> = None;
         loop {
             std::thread::sleep(std::time::Duration::from_secs(1));
-            let present = always || !ipc::live_layers().unwrap_or_default().is_empty();
+            let present = always || ipc::panel_open() || !ipc::live_layers().unwrap_or_default().is_empty();
             let mut slot = KEYS_CHILD.lock().unwrap_or_else(|e| e.into_inner());
             if slot.as_mut().is_some_and(|c| c.try_wait().ok().flatten().is_some()) {
                 control_core::logln!("o processo dos atalhos terminou");

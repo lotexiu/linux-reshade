@@ -171,6 +171,12 @@ fn main() -> glib::ExitCode {
                 control_core::install::ensure_desktop_entry();
                 control_core::install::ensure_daemon_current();
             }
+            // Enquanto o painel está aberto o daemon também liga os atalhos globais (é aqui que se configuram e que o KDE pede a confirmação).
+            if !options.is_test_run() {
+                if let Some(hold) = ipc::hold_panel_open() {
+                    std::mem::forget(hold);
+                }
+            }
             let home = panel::Home::new(Compiler::from_env(), config::Config::load().presets_dir, state);
             let ui = window::Ui::new(app, home);
             ui.window.present();

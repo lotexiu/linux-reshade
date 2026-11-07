@@ -20,6 +20,7 @@ mod status;
 pub use blob::{MAX_PARAM_BYTES, MAX_SELECTION_BYTES, PublishError};
 pub use channel::{ChannelReader, ChannelSelection, ChannelWriter, NO_EFFECT, PlanRead, channel_name, prune as prune_channels, prune_in as prune_channels_in};
 pub use plan::{MAX_PLAN_BYTES, Plan, PlanError, PlanStep};
+pub use status::{hold_panel_open, panel_open};
 pub use status::{DepthStatus, EffectState, LayerStatus, LiveLayer, PerfStats, StatusWriter, SwapchainStatus, TechniqueState, TechniqueStatus, live_layers};
 
 use blob::{Params, Selection, Snapshot};
