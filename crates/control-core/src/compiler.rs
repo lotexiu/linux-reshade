@@ -219,7 +219,7 @@ fn optimize_bundle(dir: &Path, tool: &Path) {
     let files: Vec<PathBuf> = entries.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e == "spv")).collect();
     let validator = Command::new("spirv-val").arg("--version").output().ok().filter(|o| o.status.success()).is_some();
     let next = std::sync::atomic::AtomicUsize::new(0);
-    let workers = std::thread::available_parallelism().map_or(2, |n| n.get()).min(8);
+    let workers = std::thread::available_parallelism().map_or(2, |n| n.get() / 2).clamp(1, 4);
     std::thread::scope(|scope| {
         for _ in 0..workers {
             scope.spawn(|| {

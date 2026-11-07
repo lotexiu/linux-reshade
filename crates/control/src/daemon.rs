@@ -50,6 +50,9 @@ fn stop_keys() {
 /// `LINUX_RESHADE_KEYS_ALWAYS=1` volta a registrá-los sempre.
 pub fn run(state: &ipc::Writer) -> Result<(), Error> {
     // Um daemon só: o painel (AppImage) o inicia quando não há, e dois registrariam os atalhos em dobro.
+    // A compilação dos efeitos (fx2spv, spirv-opt em várias threads) disputa a CPU com o jogo e o congelava por alguns segundos ao trocar uma
+    // definição: o daemon e tudo o que ele inicia rodam com a prioridade mais baixa (o filho herda).
+    let _ = rustix::process::setpriority_process(None, 19);
     control_core::install::ensure_desktop_entry();
     let Some(lock) = ipc::daemon_lock::acquire() else {
         control_core::logln!("{}", tr("the daemon is already running; this one exits"));
