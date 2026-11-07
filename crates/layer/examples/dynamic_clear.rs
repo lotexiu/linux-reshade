@@ -203,6 +203,9 @@ unsafe fn run() {
         let viewport = vk::Viewport { x: 0.0, y: 0.0, width: SIZE.width as f32, height: SIZE.height as f32, min_depth: 0.0, max_depth: 1.0 };
         let all = vk::PipelineStageFlags::ALL_COMMANDS;
 
+        // `DYN_QUERY=1`: uma consulta de oclusão aberta atravessa as limpezas (partir o passe ali seria inválido: a layer não deve partir).
+        let query = std::env::var_os("DYN_QUERY").is_some_and(|v| v != "0");
+        let query_pool = if query { Some(device.create_query_pool(&vk::QueryPoolCreateInfo::default().query_type(vk::QueryType::OCCLUSION).query_count(1), None).expect("pool de consultas")) } else { None };
         for frame in 0..FRAMES {
             let (index, _) = swapchain_fn.acquire_next_image(swapchain, u64::MAX, acquire, vk::Fence::null()).expect("acquire");
             let color = images[index as usize];
@@ -236,14 +239,20 @@ unsafe fn run() {
                 .image_view(depth_view)
                 .image_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
                 .load_op(vk::AttachmentLoadOp::CLEAR)
-                .store_op(vk::AttachmentStoreOp::STORE)
+                .store_op(if std::env::var_os("DYN_DONTCARE").is_some_and(|v| v != "0") { vk::AttachmentStoreOp::DONT_CARE } else { vk::AttachmentStoreOp::STORE })
                 .clear_value(vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 0.0, stencil: 0 } });
+            if let Some(query_pool) = query_pool {
+                device.cmd_reset_query_pool(cb, query_pool, 0, 1);
+            }
             device.cmd_begin_rendering(cb, &vk::RenderingInfo::default().render_area(area).layer_count(1).color_attachments(&color_attachment).depth_attachment(&depth_attachment));
             device.cmd_bind_pipeline(cb, vk::PipelineBindPoint::GRAPHICS, pipeline);
             device.cmd_set_viewport(cb, 0, &[viewport]);
             device.cmd_set_scissor(cb, 0, &[area]);
             let clear_depth = [vk::ClearAttachment { aspect_mask: vk::ImageAspectFlags::DEPTH, color_attachment: 0, clear_value: vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 0.0, stencil: 0 } } }];
             let rect = [vk::ClearRect { rect: area, base_array_layer: 0, layer_count: 1 }];
+            if let Some(query_pool) = query_pool {
+                device.cmd_begin_query(cb, query_pool, 0, vk::QueryControlFlags::empty());
+            }
             // Três segmentos separados por limpezas de profundidade dentro do passe: 40, 3 e 1 desenhos (a regra automática exige pelo menos 32).
             for _ in 0..40 {
                 device.cmd_draw(cb, 3, 1, 0, 0);
@@ -254,6 +263,9 @@ unsafe fn run() {
             }
             device.cmd_clear_attachments(cb, &clear_depth, &rect);
             device.cmd_draw(cb, 3, 1, 0, 0);
+            if let Some(query_pool) = query_pool {
+                device.cmd_end_query(cb, query_pool, 0);
+            }
             device.cmd_end_rendering(cb);
             device.cmd_pipeline_barrier(cb, all, all, vk::DependencyFlags::empty(), &[], &[], &[barrier(color, vk::ImageAspectFlags::COLOR, vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, vk::ImageLayout::PRESENT_SRC_KHR)]);
             device.end_command_buffer(cb).unwrap();
@@ -270,6 +282,9 @@ unsafe fn run() {
             device.reset_fences(&[fence]).unwrap();
         }
         device.device_wait_idle().unwrap();
+        if let Some(query_pool) = query_pool {
+            device.destroy_query_pool(query_pool, None);
+        }
         println!("dynamic_clear: {FRAMES} quadros");
 
         device.destroy_fence(fence, None);

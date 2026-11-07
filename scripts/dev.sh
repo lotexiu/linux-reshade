@@ -568,12 +568,22 @@ cmd_smoke_dynamic() {
   cmd_install
   cargo build --release -p linux-reshade-layer --example dynamic_clear >/dev/null 2>&1 || { warn "não compilei o exemplo"; exit 1; }
   local tmp out; tmp="$(mktemp -d)"
-  out="$(LINUX_RESHADE=1 LINUX_RESHADE_DEPTH=1 LINUX_RESHADE_DEPTH_SPLIT=1 LINUX_RESHADE_STATE_DIR="$tmp" LINUX_RESHADE_LOG="$tmp/log.txt" VK_LOADER_LAYERS_ENABLE='*validation*' timeout 120 "$ROOT/target/release/examples/dynamic_clear" 2>&1)"
+  out="$(LINUX_RESHADE=1 LINUX_RESHADE_DEPTH=1 LINUX_RESHADE_STATE_DIR="$tmp" LINUX_RESHADE_LOG="$tmp/log.txt" VK_LOADER_LAYERS_ENABLE='*validation*' timeout 120 "$ROOT/target/release/examples/dynamic_clear" 2>&1)"
   local ok=1
   check() { if eval "$2"; then printf '  ok     %s\n' "$1"; else printf '  FALHOU %s\n' "$1"; ok=0; fi; }
   check "o app terminou os quadros" 'grep -q "dynamic_clear: 150 quadros" <<<"$out"'
   check "a foto da profundidade foi gravada antes da limpeza 2 (a que apaga mais desenhos)" 'grep -q "foto da profundidade gravada antes da limpeza 2" "$tmp/log.txt"'
   check "a validation layer não reclamou de nada" '! grep -q "VUID" <<<"$out"'
+  # Com uma consulta de oclusão aberta atravessando as limpezas, partir o passe seria inválido: a layer não parte (e avisa); o
+  # `storeOp` DONT_CARE da profundidade vira STORE para a primeira metade guardar o que a segunda lê.
+  local tq outq; tq="$(mktemp -d)"
+  outq="$(DYN_QUERY=1 LINUX_RESHADE=1 LINUX_RESHADE_DEPTH=1 LINUX_RESHADE_STATE_DIR="$tq" LINUX_RESHADE_LOG="$tq/log.txt" VK_LOADER_LAYERS_ENABLE='*validation*' timeout 120 "$ROOT/target/release/examples/dynamic_clear" 2>&1)"
+  check "consulta aberta: o app terminou os quadros" 'grep -q "dynamic_clear: 150 quadros" <<<"$outq"'
+  check "consulta aberta: a layer não partiu o passe e avisou" 'grep -q "passe não partido" "$tq/log.txt" && ! grep -q "foto da profundidade gravada antes da limpeza" "$tq/log.txt"'
+  check "consulta aberta: a validation layer não reclamou de nada" '! grep -q "VUID" <<<"$outq"'
+  local td outd; td="$(mktemp -d)"
+  outd="$(DYN_DONTCARE=1 LINUX_RESHADE=1 LINUX_RESHADE_DEPTH=1 LINUX_RESHADE_STATE_DIR="$td" LINUX_RESHADE_LOG="$td/log.txt" VK_LOADER_LAYERS_ENABLE='*validation*' timeout 120 "$ROOT/target/release/examples/dynamic_clear" 2>&1)"
+  check "storeOp DONT_CARE: o passe foi partido e a validation layer não reclamou" 'grep -q "foto da profundidade gravada antes da limpeza 2" "$td/log.txt" && ! grep -q "VUID" <<<"$outd"'
   # A mesma cena com MSAA de 4 amostras (cor e profundidade): a layer resolve a profundidade numa imagem de uma amostra.
   local tmp2 out2; tmp2="$(mktemp -d)"
   out2="$(DYN_MSAA=4 LINUX_RESHADE=1 LINUX_RESHADE_DEPTH=1 LINUX_RESHADE_STATE_DIR="$tmp2" LINUX_RESHADE_LOG="$tmp2/log.txt" VK_LOADER_LAYERS_ENABLE='*validation*' timeout 120 "$ROOT/target/release/examples/dynamic_clear" 2>&1)"

@@ -98,6 +98,9 @@ pub(crate) struct CmdState {
     pub screen_current: Option<screen::ScreenPass>,
     /// O passe de renderização dinâmica em gravação sobre a imagem de profundidade observada (para poder parti-lo).
     pub rendering: Option<RenderingCopy>,
+    /// Consultas, renderização condicional e transform feedback abertos desde que o passe de renderização dinâmica começou: partir o passe
+    /// com um deles aberto é inválido (têm de acabar na mesma instância de passe).
+    pub open_scopes: u32,
     pub screen_passes: Vec<screen::ScreenPass>,
 }
 
@@ -114,6 +117,12 @@ pub(crate) struct NextFns {
     pub cmd_draw_indirect_count: Option<vk::PFN_vkCmdDrawIndirectCount>,
     pub cmd_draw_indexed_indirect_count: Option<vk::PFN_vkCmdDrawIndexedIndirectCount>,
     pub cmd_pipeline_barrier2: Option<vk::PFN_vkCmdPipelineBarrier2>,
+    pub cmd_begin_conditional_rendering: Option<vk::PFN_vkCmdBeginConditionalRenderingEXT>,
+    pub cmd_end_conditional_rendering: Option<vk::PFN_vkCmdEndConditionalRenderingEXT>,
+    pub cmd_begin_transform_feedback: Option<vk::PFN_vkCmdBeginTransformFeedbackEXT>,
+    pub cmd_end_transform_feedback: Option<vk::PFN_vkCmdEndTransformFeedbackEXT>,
+    pub cmd_begin_query_indexed: Option<vk::PFN_vkCmdBeginQueryIndexedEXT>,
+    pub cmd_end_query_indexed: Option<vk::PFN_vkCmdEndQueryIndexedEXT>,
 }
 
 /// A profundidade da cena que os efeitos podem usar agora.
@@ -259,9 +268,13 @@ pub struct Depth {
     /// limpeza ou do passe quando há regra para isso e, senão, na hora dos efeitos, com o layout de agora. `LINUX_RESHADE_DEPTH_DIRECT=1`
     /// volta a amostrar a imagem original (para comparar).
     pub(crate) copy_mode: bool,
-    /// Partir um passe de renderização numa limpeza dentro dele (`vkCmdClearAttachments`) para copiar antes: o ReShade não faz isso (é
-    /// inválido copiar dentro de um passe ativo). Só com `LINUX_RESHADE_DEPTH_SPLIT=1` ou um pedido explícito "antes da limpeza N".
+    /// Partir um passe de renderização numa limpeza dentro dele (`vkCmdClearAttachments`) para copiar antes. O ReShade não copia ali (é
+    /// inválido copiar dentro de um passe ativo); nós partimos o passe, mas só quando é válido: sem consulta, renderização condicional ou
+    /// transform feedback abertos no passe, e guardando a profundidade ao fim da primeira metade. `LINUX_RESHADE_DEPTH_NO_SPLIT=1` desliga.
     pub(crate) split_enabled: bool,
+    /// Diagnóstico: partições feitas e puladas (por escopo aberto) desde o início.
+    pub(crate) splits_done: AtomicU32,
+    pub(crate) splits_skipped: AtomicU32,
     /// Já houve uma cópia da profundidade neste quadro (no ponto de uma limpeza ou passe): a da hora dos efeitos fica desnecessária.
     pub(crate) copied_frame: AtomicBool,
     /// A imagem do jogo que a cópia da hora dos efeitos lê.
@@ -310,6 +323,12 @@ impl Depth {
                 cmd_draw_indirect_count: load(gdpa, device, &[c"vkCmdDrawIndirectCount", c"vkCmdDrawIndirectCountKHR"]),
                 cmd_draw_indexed_indirect_count: load(gdpa, device, &[c"vkCmdDrawIndexedIndirectCount", c"vkCmdDrawIndexedIndirectCountKHR"]),
                 cmd_pipeline_barrier2: load(gdpa, device, &[c"vkCmdPipelineBarrier2", c"vkCmdPipelineBarrier2KHR"]),
+                cmd_begin_conditional_rendering: load(gdpa, device, &[c"vkCmdBeginConditionalRenderingEXT"]),
+                cmd_end_conditional_rendering: load(gdpa, device, &[c"vkCmdEndConditionalRenderingEXT"]),
+                cmd_begin_transform_feedback: load(gdpa, device, &[c"vkCmdBeginTransformFeedbackEXT"]),
+                cmd_end_transform_feedback: load(gdpa, device, &[c"vkCmdEndTransformFeedbackEXT"]),
+                cmd_begin_query_indexed: load(gdpa, device, &[c"vkCmdBeginQueryIndexedEXT"]),
+                cmd_end_query_indexed: load(gdpa, device, &[c"vkCmdEndQueryIndexedEXT"]),
             }
         };
         Self {
@@ -361,7 +380,9 @@ impl Depth {
             frame_clear_attachments: AtomicU32::new(0),
             frame_clear_images: AtomicU32::new(0),
             copy_mode: !flag("LINUX_RESHADE_DEPTH_DIRECT"),
-            split_enabled: flag("LINUX_RESHADE_DEPTH_SPLIT"),
+            split_enabled: !flag("LINUX_RESHADE_DEPTH_NO_SPLIT"),
+            splits_done: AtomicU32::new(0),
+            splits_skipped: AtomicU32::new(0),
             copied_frame: AtomicBool::new(false),
             live: Mutex::new(None),
             frame_copier: Mutex::new(None),

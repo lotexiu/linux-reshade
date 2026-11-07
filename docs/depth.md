@@ -146,10 +146,13 @@ a seguir o ReShade nos pontos em que divergia de um jeito arriscado. Cada ponto 
   própria layer gravou. É a "cópia na hora dos efeitos" do ReShade. `LINUX_RESHADE_DEPTH_DIRECT=1` volta a amostrar a original.
 - **A cópia da hora dos efeitos só acontece se nenhuma regra copiou no quadro** (limpeza, passe), como o `copied_during_frame` do ReShade.
   Isso também elimina a foto velha: se a limpeza escolhida não existe num quadro, a foto vem da profundidade viva.
-- **Não se parte mais o passe de renderização numa `vkCmdClearAttachments`.** O ReShade não copia dentro de um passe ativo (é inválido, e uma
-  consulta ou renderização condicional aberta no passe não sobrevive ao `vkCmdEndRendering`; o DXVK usa as duas). Fica atrás de
-  `LINUX_RESHADE_DEPTH_SPLIT=1`, ou de um pedido explícito "Antes da limpeza N" no painel. As cópias antes de `loadOp = CLEAR` e de
-  `vkCmdClearDepthStencilImage` (fora de passe) continuam.
+- **A partição do passe numa `vkCmdClearAttachments` continua (é o que corrigiu o A Hat in Time), mas só quando é válida.** O ReShade não
+  copia dentro de um passe ativo (é inválido). A layer parte o passe (`vkCmdEndRendering`, cópia, `vkCmdBeginRendering` com `LOAD`) só se:
+  nenhuma consulta, renderização condicional ou transform feedback foi aberta no passe (têm de acabar na mesma instância; o DXVK usa os
+  três: a layer agora conta `vkCmdBeginQuery`/`EndQuery` e os `EXT`), e a profundidade (e o estêncil) são guardadas ao fim da primeira
+  metade (um `storeOp` `DONT_CARE`/`NONE` do jogo vira `STORE` na imagem observada). Se não é válido, o passe não é partido, a layer avisa
+  no log (`passe não partido: ...`) e a cópia da hora dos efeitos cobre. O `lrctl layers` mostra `passes partidos/pulados`.
+  `LINUX_RESHADE_DEPTH_NO_SPLIT=1` desliga a partição (para comparar).
 - Custo da cópia: ~8 MB lidos e ~8 MB escritos por quadro a 1080p (D32), na ordem de 0,05 a 0,15 ms numa RTX 3060, e só com algum efeito
   de profundidade ligado.
-- Os roteiros `smoke-depth-effect` (vkcube, validation layer) e `smoke-dynamic` (partição e MSAA, `LINUX_RESHADE_DEPTH_SPLIT=1`) passam.
+- Os roteiros `smoke-depth-effect` (vkcube, validation layer) e `smoke-dynamic` (partição, consulta aberta, `DONT_CARE` e MSAA) passam.

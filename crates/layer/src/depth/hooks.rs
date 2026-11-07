@@ -84,6 +84,14 @@ pub fn intercept_name(name: &[u8]) -> vk::PFN_vkVoidFunction {
         b"vkCmdCopyImage" => erase(cmd_copy_image as vk::PFN_vkCmdCopyImage),
         b"vkCmdResolveImage" => erase(cmd_resolve_image as vk::PFN_vkCmdResolveImage),
         b"vkCmdClearColorImage" => erase(cmd_clear_color_image as vk::PFN_vkCmdClearColorImage),
+        b"vkCmdBeginQuery" => erase(cmd_begin_query as vk::PFN_vkCmdBeginQuery),
+        b"vkCmdEndQuery" => erase(cmd_end_query as vk::PFN_vkCmdEndQuery),
+        b"vkCmdBeginQueryIndexedEXT" => erase(cmd_begin_query_indexed as vk::PFN_vkCmdBeginQueryIndexedEXT),
+        b"vkCmdEndQueryIndexedEXT" => erase(cmd_end_query_indexed as vk::PFN_vkCmdEndQueryIndexedEXT),
+        b"vkCmdBeginConditionalRenderingEXT" => erase(cmd_begin_conditional_rendering as vk::PFN_vkCmdBeginConditionalRenderingEXT),
+        b"vkCmdEndConditionalRenderingEXT" => erase(cmd_end_conditional_rendering as vk::PFN_vkCmdEndConditionalRenderingEXT),
+        b"vkCmdBeginTransformFeedbackEXT" => erase(cmd_begin_transform_feedback as vk::PFN_vkCmdBeginTransformFeedbackEXT),
+        b"vkCmdEndTransformFeedbackEXT" => erase(cmd_end_transform_feedback as vk::PFN_vkCmdEndTransformFeedbackEXT),
         b"vkQueueSubmit" => erase(queue_submit as vk::PFN_vkQueueSubmit),
         b"vkQueueSubmit2" | b"vkQueueSubmit2KHR" => erase(queue_submit2 as vk::PFN_vkQueueSubmit2),
         _ => None,
@@ -580,14 +588,22 @@ unsafe extern "system" fn cmd_clear_attachments(cmd: vk::CommandBuffer, count: u
         if data.depth.is_on() && !p_attachments.is_null() && std::slice::from_raw_parts(p_attachments, count as usize).iter().any(|a| a.aspect_mask.intersects(vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL)) {
             data.depth.frame_clear_attachments.fetch_add(1, Ordering::Relaxed);
             // A limpeza é dentro do passe em gravação: se é sobre a imagem observada, é uma limpeza dela.
-            let (image, copy) = match data.depth.cmds.lock(cmd.as_raw()).get(&cmd.as_raw()) {
-                Some(state) => (state.current.map_or(0, |p| p.image), state.rendering.clone()),
-                None => (0, None),
+            let (image, copy, scopes) = match data.depth.cmds.lock(cmd.as_raw()).get(&cmd.as_raw()) {
+                Some(state) => (state.current.map_or(0, |p| p.image), state.rendering.clone(), state.open_scopes),
+                None => (0, None, 0),
             };
             // Partir o passe só se pedido: o ReShade não copia dentro de um passe ativo (é inválido, e consultas ou renderização condicional
             // abertas no passe não sobrevivem ao fim dele). O "antes da limpeza N" explícito da pessoa vale como pedido.
-            let allow = copy.is_some() && (data.depth.split_enabled || data.depth.pick.lock().unwrap().clear.is_some());
+            let wanted = copy.is_some() && (data.depth.split_enabled || data.depth.pick.lock().unwrap().clear.is_some());
+            // Só se parte com o passe válido de partir: nenhuma consulta, renderização condicional ou transform feedback aberta nele.
+            let allow = wanted && scopes == 0;
+            if wanted && !allow && image != 0 {
+                if data.depth.splits_skipped.fetch_add(1, Ordering::Relaxed) == 0 {
+                    log!("passe não partido: há consulta, renderização condicional ou transform feedback aberto nele ({scopes}); a cópia da hora dos efeitos cobre");
+                }
+            }
             if image != 0 && register_clear_event(&data, image, allow) && allow && let Some(copy) = copy {
+                data.depth.splits_done.fetch_add(1, Ordering::Relaxed);
                 split_rendering(&data, cmd, &copy);
             }
         }
@@ -616,12 +632,99 @@ unsafe extern "system" fn cmd_clear_depth_stencil_image(
     }
 }
 
+/// Conta um escopo que precisa terminar na mesma instância de passe (consulta, renderização condicional, transform feedback).
+fn scope_changed(data: &DeviceData, cmd: vk::CommandBuffer, opened: bool) {
+    if !data.depth.is_on() {
+        return;
+    }
+    if let Some(state) = data.depth.cmds.lock(cmd.as_raw()).get_mut(&cmd.as_raw()) {
+        state.open_scopes = if opened { state.open_scopes + 1 } else { state.open_scopes.saturating_sub(1) };
+    }
+}
+
+unsafe extern "system" fn cmd_begin_query(cmd: vk::CommandBuffer, pool: vk::QueryPool, query: u32, flags: vk::QueryControlFlags) {
+    unsafe {
+        let Some(data) = data_of(cmd.as_raw()) else { return };
+        scope_changed(&data, cmd, true);
+        (data.device.fp_v1_0().cmd_begin_query)(cmd, pool, query, flags);
+    }
+}
+
+unsafe extern "system" fn cmd_end_query(cmd: vk::CommandBuffer, pool: vk::QueryPool, query: u32) {
+    unsafe {
+        let Some(data) = data_of(cmd.as_raw()) else { return };
+        scope_changed(&data, cmd, false);
+        (data.device.fp_v1_0().cmd_end_query)(cmd, pool, query);
+    }
+}
+
+unsafe extern "system" fn cmd_begin_query_indexed(cmd: vk::CommandBuffer, pool: vk::QueryPool, query: u32, flags: vk::QueryControlFlags, index: u32) {
+    unsafe {
+        let Some(data) = data_of(cmd.as_raw()) else { return };
+        let Some(next) = data.depth.next.cmd_begin_query_indexed else { return };
+        scope_changed(&data, cmd, true);
+        next(cmd, pool, query, flags, index);
+    }
+}
+
+unsafe extern "system" fn cmd_end_query_indexed(cmd: vk::CommandBuffer, pool: vk::QueryPool, query: u32, index: u32) {
+    unsafe {
+        let Some(data) = data_of(cmd.as_raw()) else { return };
+        let Some(next) = data.depth.next.cmd_end_query_indexed else { return };
+        scope_changed(&data, cmd, false);
+        next(cmd, pool, query, index);
+    }
+}
+
+unsafe extern "system" fn cmd_begin_conditional_rendering(cmd: vk::CommandBuffer, p_begin: *const vk::ConditionalRenderingBeginInfoEXT<'_>) {
+    unsafe {
+        let Some(data) = data_of(cmd.as_raw()) else { return };
+        let Some(next) = data.depth.next.cmd_begin_conditional_rendering else { return };
+        scope_changed(&data, cmd, true);
+        next(cmd, p_begin);
+    }
+}
+
+unsafe extern "system" fn cmd_end_conditional_rendering(cmd: vk::CommandBuffer) {
+    unsafe {
+        let Some(data) = data_of(cmd.as_raw()) else { return };
+        let Some(next) = data.depth.next.cmd_end_conditional_rendering else { return };
+        scope_changed(&data, cmd, false);
+        next(cmd);
+    }
+}
+
+unsafe extern "system" fn cmd_begin_transform_feedback(cmd: vk::CommandBuffer, first: u32, count: u32, p_buffers: *const vk::Buffer, p_offsets: *const vk::DeviceSize) {
+    unsafe {
+        let Some(data) = data_of(cmd.as_raw()) else { return };
+        let Some(next) = data.depth.next.cmd_begin_transform_feedback else { return };
+        scope_changed(&data, cmd, true);
+        next(cmd, first, count, p_buffers, p_offsets);
+    }
+}
+
+unsafe extern "system" fn cmd_end_transform_feedback(cmd: vk::CommandBuffer, first: u32, count: u32, p_buffers: *const vk::Buffer, p_offsets: *const vk::DeviceSize) {
+    unsafe {
+        let Some(data) = data_of(cmd.as_raw()) else { return };
+        let Some(next) = data.depth.next.cmd_end_transform_feedback else { return };
+        scope_changed(&data, cmd, false);
+        next(cmd, first, count, p_buffers, p_offsets);
+    }
+}
+
 unsafe extern "system" fn cmd_begin_rendering(cmd: vk::CommandBuffer, p_info: *const vk::RenderingInfo<'_>) {
     unsafe {
         let Some(data) = data_of(cmd.as_raw()) else { return };
         let Some(next) = data.depth.next.cmd_begin_rendering else { return };
+        // O que o passe novo vai passar adiante (corrigido, se for o caso: ver `fixed` abaixo).
+        let mut fixed: Option<(vk::RenderingAttachmentInfo<'_>, Option<vk::RenderingAttachmentInfo<'_>>)> = None;
+        let mut fixed_info;
+        let mut p_info = p_info;
         if data.depth.is_on() && !p_info.is_null() {
             let info = &*p_info;
+            if let Some(state) = data.depth.cmds.lock(cmd.as_raw()).get_mut(&cmd.as_raw()) {
+                state.open_scopes = 0;
+            }
             if !info.p_color_attachments.is_null() {
                 let colors = std::slice::from_raw_parts(info.p_color_attachments, info.color_attachment_count as usize);
                 if let Some(a) = colors.iter().find(|a| data.depth.screen.is_view(a.image_view.as_raw()))
@@ -634,6 +737,32 @@ unsafe extern "system" fn cmd_begin_rendering(cmd: vk::CommandBuffer, p_info: *c
                 let a = &*info.p_depth_attachment;
                 let image = data.depth.views.lock().unwrap().get(&a.image_view.as_raw()).copied();
                 if let Some(image) = image {
+                    // Partir este passe numa limpeza (ver `split_rendering`) fecha a primeira metade com o `storeOp` do jogo: com
+                    // `DONT_CARE` a profundidade (e o estêncil) ficaria indefinida e a segunda metade a leria com `LOAD`. Na imagem observada,
+                    // o passe passa a guardar (o que a maioria dos drivers já faz de qualquer forma).
+                    if data.depth.split_enabled && image == data.depth.watched_image.load(Ordering::Relaxed) {
+                        let keeps = |op: vk::AttachmentStoreOp| !matches!(op, vk::AttachmentStoreOp::DONT_CARE | vk::AttachmentStoreOp::NONE);
+                        let stencil_a = (!info.p_stencil_attachment.is_null()).then(|| *info.p_stencil_attachment);
+                        if !keeps(a.store_op) || stencil_a.is_some_and(|s| !keeps(s.store_op)) {
+                            let mut d = *a;
+                            d.store_op = vk::AttachmentStoreOp::STORE;
+                            let s = stencil_a.map(|mut s| {
+                                s.store_op = vk::AttachmentStoreOp::STORE;
+                                s
+                            });
+                            fixed = Some((d, s));
+                        }
+                    }
+                    if let Some((d, s)) = &fixed {
+                        fixed_info = *info;
+                        fixed_info.p_depth_attachment = d;
+                        if let Some(s) = s {
+                            fixed_info.p_stencil_attachment = s;
+                        }
+                        p_info = &fixed_info;
+                    }
+                    let info = &*p_info;
+                    let a = &*info.p_depth_attachment;
                     let load = load_op(a.load_op);
                     let record = PassRecord {
                         image,
@@ -1200,7 +1329,7 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
             let mut diag = data.depth.diag.lock().unwrap();
             if data.depth.diag_frames.fetch_add(1, Ordering::Relaxed) % 90 == 0 || diag.is_empty() {
                 *diag = format!(
-                    "trocas da imagem: {}, reconstruções da cadeia: {}; um quadro: {} desenhos ({} em passes com profundidade), limpezas de profundidade fora de passe: {} de anexos e {} de imagens; limpeza escolhida: {} de {} [desenhos antes de cada uma: {}]; última mudança que reconstruiu: {}; presents sem efeito/com efeito: {}/{}",
+                    "trocas da imagem: {}, reconstruções da cadeia: {}; um quadro: {} desenhos ({} em passes com profundidade), limpezas de profundidade fora de passe: {} de anexos e {} de imagens; limpeza escolhida: {} de {} [desenhos antes de cada uma: {}]; última mudança que reconstruiu: {}; presents sem efeito/com efeito: {}/{}; passes partidos/pulados: {}/{}",
                     data.depth.image_changes.load(Ordering::Relaxed),
                     data.depth.chain_rebuilds.load(Ordering::Relaxed),
                     frame_draws,
@@ -1213,6 +1342,8 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
                     data.depth.last_key_change.lock().unwrap(),
                     data.depth.fx_presents[0].load(Ordering::Relaxed),
                     data.depth.fx_presents[1].load(Ordering::Relaxed),
+                    data.depth.splits_done.load(Ordering::Relaxed),
+                    data.depth.splits_skipped.load(Ordering::Relaxed),
                 );
             }
             passes_summary = format!("{} | {passes_summary}", *diag);
