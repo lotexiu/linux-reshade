@@ -1115,9 +1115,6 @@ const AUTO_CLEAR_SWITCH_FRAMES: u32 = 8;
 /// Quantos quadros seguidos sem um passe que recomeça a imagem fazem a regra automática largar a foto.
 const AUTO_SCENE_FORGET_FRAMES: u32 = 600;
 
-/// O mesmo quando o número da limpeza escolhida passou do que o quadro tem: não há mais o que copiar.
-const AUTO_CLEAR_MISSING_FRAMES: u32 = 30;
-
 /// Fim de um quadro (chamado no present): escolhe a candidata e publica a lista para o app de controle.
 pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
     if !data.depth.is_on() {
@@ -1246,10 +1243,7 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
             } else if best == 0 {
                 // Sem limpezas neste quadro: só esquece a escolha depois de muito tempo.
                 state.3 += 1;
-                // A limpeza escolhida nem existe mais neste jogo (o quadro tem menos limpezas que o número guardado): a foto não é
-                // mais gravada e a cena de antes ficaria congelada na tela; larga a escolha logo.
-                let missing = state.1 as usize > clear_count;
-                if state.3 >= if missing { AUTO_CLEAR_MISSING_FRAMES } else { AUTO_SCENE_FORGET_FRAMES } {
+                if state.3 >= AUTO_SCENE_FORGET_FRAMES {
                     *state = (c.image, 0, 0, 0);
                 }
             } else if best == state.1 {
@@ -1265,7 +1259,11 @@ pub fn end_frame(data: &DeviceData, frame: (u32, u32)) {
                 state.2 = best;
                 state.3 = 1;
             }
-            (state.1 > 0).then_some(state.1)
+            // O quadro pode ter menos limpezas que o número escolhido (o Rocket League alterna entre 2 e 3, por exemplo): o pedido vale pelo que o
+            // último quadro teve (a última limpeza que existe), e a foto continua sendo gravada todo quadro. Antes a regra não copiava nesses quadros,
+            // a profundidade ficava congelada na foto antiga por 30 quadros e depois a escolha era largada e refeita (a profundidade ao vivo,
+            // errada, aparecia nos 8 quadros seguintes).
+            (state.1 > 0).then_some(if clear_count > 0 { state.1.min(clear_count as u32) } else { state.1 })
         };
         // Um pedido da pessoa (passe ou limpeza) manda; senão a regra da limpeza; senão a do passe (jogos sem limpezas que se
         // possa partir, como os de passes de renderização clássicos).

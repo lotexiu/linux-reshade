@@ -212,3 +212,12 @@ presents vão para o log (extensões, filas e estruturas encadeadas) para compar
 - Descartado por teste: destruir a cadeia velha antes/depois (`LATE_FREE`, `SAFE_SWAP`), a cadeia velha desenhando junto (`QUIET_SWAP`), reaproveitar efeitos
   entre cadeias, recriar tudo do zero (agora o padrão para mudança de macros), lsfg-vk, cache, threads de compilação.
 - Em aberto: o que o DXVK do Experimental faz que o do GE não. Recomendação: GE-Proton para usar a layer com troca de definições ao vivo.
+
+## 2026-11-07 (noite): Rocket League, profundidade congelada em quadro antigo (ghosting) com a escolha automática
+
+- Log: o jogo alterna entre 2 e 3 limpezas de profundidade por quadro (`desenhos antes de cada: [0, 306, 2]`); a regra automática escolhia a limpeza 2.
+  Nos quadros com menos limpezas que o número escolhido a regra não copiava nada e a foto do quadro anterior ficava na tela (congelada); depois de 30 quadros
+  a escolha era largada e só voltava depois de 8 quadros (`limpeza automática = 2` a cada ~8 s no log), com a profundidade viva (errada) nesse meio tempo.
+- Correção: o pedido vale `min(escolhida, limpezas do último quadro)` (a última limpeza que existe), então a foto é gravada em todo quadro; a regra não larga
+  mais a escolha por falta de limpeza (só depois de 600 quadros sem nenhuma). Fora isso nada mudou (Haste continua com a regra de ponto).
+- "Antes da limpeza 1" (manual) tem um quadro de atraso por natureza: copia a profundidade que sobrou do quadro anterior.
