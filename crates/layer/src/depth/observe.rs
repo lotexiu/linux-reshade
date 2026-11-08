@@ -256,9 +256,20 @@ pub fn scene_clear(events: &[(u32, bool)]) -> Option<u32> {
     // pelo menos 32). A de mais desenhos não serve: depois da cena vêm outras camadas, e o número de limpezas pequenas no meio
     // varia muito de um quadro para o outro (no A Hat in Time, 16, 15 ou 39 por quadro), então o índice da maior não é estável,
     // o da primeira relevante é (a limpeza 2 em todos os quadros).
-    let max = events.iter().filter(|(_, splittable)| *splittable).map(|(draws, _)| *draws).max()?;
+    if let Some(max) = events.iter().filter(|(_, splittable)| *splittable).map(|(draws, _)| *draws).max() {
+        let threshold = (max / 8).max(32);
+        if let Some(index) = events.iter().position(|(draws, splittable)| *splittable && *draws >= threshold) {
+            return u32::try_from(index + 1).ok();
+        }
+    }
+    // Nenhuma limpeza relevante dá para partir (no Rocket League a da cena é feita dentro de um passe com consulta aberta, e o passe não pode
+    // ser partido): a escolha cai na última limpeza que dá para partir ANTES da relevante (em geral a do começo do quadro, a profundidade que
+    // sobrou do quadro anterior: um quadro de atraso, mas estável). Antes ficava sem regra e os efeitos recebiam a profundidade ao vivo, já
+    // sobreposta pela interface, ou uma foto congelada.
+    let max = events.iter().map(|(draws, _)| *draws).max()?;
     let threshold = (max / 8).max(32);
-    let index = events.iter().position(|(draws, splittable)| *splittable && *draws >= threshold)?;
+    let relevant = events.iter().position(|(draws, _)| *draws >= threshold)?;
+    let index = events[..relevant].iter().rposition(|(_, splittable)| *splittable)?;
     u32::try_from(index + 1).ok()
 }
 
@@ -289,6 +300,11 @@ mod tests {
         assert_eq!(scene_clear(&frame(&long)), Some(2));
         // ATLYSS: 4, 1399 e 1 desenhos: a segunda.
         assert_eq!(scene_clear(&frame(&[4, 1399, 1])), Some(2));
+        // Rocket League em jogo: a limpeza da cena (276 desenhos) não dá para partir; vale a do começo do quadro.
+        assert_eq!(scene_clear(&[(0, true), (276, false)]), Some(1));
+        assert_eq!(scene_clear(&[(0, true), (276, false), (2, true)]), Some(1));
+        // Sem nenhuma limpeza que dê para partir antes da relevante, nada a copiar.
+        assert_eq!(scene_clear(&[(276, false), (3, true)]), None);
         // Uma única limpeza relevante, e uma que não dá para partir é ignorada.
         assert_eq!(scene_clear(&frame(&[500])), Some(1));
         assert_eq!(scene_clear(&[(900, false), (300, true)]), Some(2));

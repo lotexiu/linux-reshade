@@ -221,3 +221,7 @@ presents vão para o log (extensões, filas e estruturas encadeadas) para compar
 - Correção: o pedido vale `min(escolhida, limpezas do último quadro)` (a última limpeza que existe), então a foto é gravada em todo quadro; a regra não larga
   mais a escolha por falta de limpeza (só depois de 600 quadros sem nenhuma). Fora isso nada mudou (Haste continua com a regra de ponto).
 - "Antes da limpeza 1" (manual) tem um quadro de atraso por natureza: copia a profundidade que sobrou do quadro anterior.
+- Rocket League, causa do ghosting (log de 08/11): a limpeza da cena é um `vkCmdClearAttachments` dentro de um passe com consulta aberta (`passe não partido: ... (1)`),
+  que não pode ser partido; a regra automática ignorava limpezas que não dá para partir e ficava sem escolha por minutos no jogo (só no menu, onde a limpeza é fora de passe,
+  ela pegava), caindo na profundidade viva (já sobreposta pela interface). Agora, se nenhuma limpeza relevante dá para partir, vale a última que dá antes dela
+  (a do começo do quadro: a profundidade do quadro anterior, estável, com um quadro de atraso), o mesmo que "Antes da limpeza 1" manual.
