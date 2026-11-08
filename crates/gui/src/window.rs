@@ -695,7 +695,7 @@ impl Ui {
             }
 
             self.depth_button.set_visible(!s.depth_choices.is_empty());
-            self.depth_view.set(&s.depth_choices, &s.depth_clears, s.depth_pick, self.stack.visible_child_name().as_deref() == Some("depth"));
+            self.depth_view.set(&s.depth_choices, &s.depth_clears, &s.depth_passes, s.depth_pick, self.stack.visible_child_name().as_deref() == Some("depth"));
 
             // A página "Adicionar efeito" (só monta a lista enquanto está na tela).
             self.add_view.set(&s.effects, &s.folders, &s.infos, s.analysis, self.stack.visible_child_name().as_deref() == Some("add"));
@@ -897,6 +897,7 @@ impl Ui {
             panel::DepthChoice { number: 2, label: "1120x1120 D24_UNORM_S8 · 10 draws, 1 passes, normal".into(), automatic: false, unusable: Some("different aspect ratio than the screen".into()), blocking: false },
         ];
         let clears = vec![panel::DepthClear { draws_before: 0, splittable: true }, panel::DepthClear { draws_before: 276, splittable: false }];
+        let passes = vec![panel::DepthPass { draws: 311, load: "Clear".into(), store: "Store".into() }, panel::DepthPass { draws: 233, load: "Load".into(), store: "Store".into() }];
         let picks = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
         self.depth_view.connect_changed({
             let picks = picks.clone();
@@ -907,15 +908,15 @@ impl Ui {
         if self.stack.visible_child_name().as_deref() != Some("depth") {
             problems.push("a página Depth Buffer não abriu".to_string());
         }
-        self.depth_view.set(&choices, &clears, ipc::DepthPick::Auto, true);
+        self.depth_view.set(&choices, &clears, &passes, ipc::DepthPick::Auto, true);
         step(300).await;
         // Automático (1) + pontos: automático, 2 limpezas, passe (4) + 2 imagens = 7
         if self.depth_view.rows_built() < 6 {
             problems.push(format!("a lista da profundidade tem só {} opções", self.depth_view.rows_built()));
         }
-        self.depth_view.set(&choices, &clears, ipc::DepthPick::Clear(1), true);
+        self.depth_view.set(&choices, &clears, &passes, ipc::DepthPick::Clear(1), true);
         step(300).await;
-        self.depth_view.set(&choices, &clears, ipc::DepthPick::Candidate(2), true);
+        self.depth_view.set(&choices, &clears, &passes, ipc::DepthPick::Candidate(2), true);
         step(300).await;
         if !picks.borrow().is_empty() {
             problems.push("refazer a lista da profundidade foi tratado como uma escolha da pessoa".to_string());
@@ -925,7 +926,7 @@ impl Ui {
         }
         self.show_page("main");
         step(300).await;
-        self.depth_view.set(&[], &[], ipc::DepthPick::Auto, true);
+        self.depth_view.set(&[], &[], &[], ipc::DepthPick::Auto, true);
 
         let new = crate::gtk_warnings().saturating_sub(warnings_before);
         if new > 0 {

@@ -75,6 +75,37 @@ pub fn parse_clears(summary: &str) -> Vec<DepthClear> {
         .collect()
 }
 
+/// Um passe de renderização que desenha na profundidade em uso: quantos desenhos faz e o que faz com ela ao começar e ao terminar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DepthPass {
+    pub draws: u32,
+    pub load: String,
+    pub store: String,
+}
+
+/// Os passes do último quadro, lidos do fim do resumo da layer (`1:311d/0i Clear->Store 2:233d/0i Load->Store`). O resumo é cortado em 700
+/// caracteres: um jogo com muitos passes fica com a lista incompleta, e quem usa deve tratar isso (a quantidade certa vem da candidata).
+pub fn passes(layer: &LiveLayer) -> Vec<DepthPass> {
+    parse_passes(&layer.status.depth_passes)
+}
+
+pub fn parse_passes(summary: &str) -> Vec<DepthPass> {
+    let Some(tail) = summary.rsplit(" | ").next() else { return Vec::new() };
+    let mut out = Vec::new();
+    let mut tokens = tail.split_whitespace();
+    while let (Some(head), Some(ops)) = (tokens.next(), tokens.next()) {
+        let Some((index, rest)) = head.split_once(':') else { break };
+        let Ok(index) = index.parse::<usize>() else { break };
+        let Some(draws) = rest.split_once('d').and_then(|(d, _)| d.parse::<u32>().ok()) else { break };
+        let Some((load, store)) = ops.split_once("->") else { break };
+        if index != out.len() + 1 {
+            break;
+        }
+        out.push(DepthPass { draws, load: load.to_string(), store: store.to_string() });
+    }
+    out
+}
+
 /// As candidatas do jogo aberto, na ordem da layer.
 pub fn choices(layer: &LiveLayer) -> Vec<DepthChoice> {
     layer
@@ -103,6 +134,16 @@ pub fn choices(layer: &LiveLayer) -> Vec<DepthChoice> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_passes_come_from_the_end_of_the_summary() {
+        let summary = "limpeza escolhida: 0 de 0 [desenhos antes de cada uma: ]; x | tela: 1:pass 99d DontCare 2:barreira->1000001002 | 1:311d/0i Clear->Store 2:233d/0i Load->Store";
+        let passes = parse_passes(summary);
+        assert_eq!(passes.len(), 2);
+        assert_eq!((passes[0].draws, passes[0].load.as_str(), passes[0].store.as_str()), (311, "Clear", "Store"));
+        assert_eq!(passes[1].draws, 233);
+        assert!(parse_passes("sem passes").is_empty());
+    }
 
     #[test]
     fn the_clears_come_from_the_layers_summary() {

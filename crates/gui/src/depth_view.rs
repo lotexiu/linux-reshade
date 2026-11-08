@@ -7,7 +7,7 @@ use control_core::i18n::{fmt, tr};
 use gtk::prelude::*;
 use gtk4 as gtk;
 use ipc::DepthPick;
-use panel::{DepthChoice, DepthClear};
+use panel::{DepthChoice, DepthClear, DepthPass};
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
@@ -20,7 +20,7 @@ pub struct DepthView {
     signature: RefCell<String>,
     rows: Cell<usize>,
     /// O que muda a todo quadro (os números dos textos): atualizado no lugar, sem refazer a lista (refazer tira o clique do botão de opção).
-    live: RefCell<Vec<Box<dyn Fn(&[DepthChoice], &[DepthClear])>>>,
+    live: RefCell<Vec<Box<dyn Fn(&[DepthChoice], &[DepthClear], &[DepthPass])>>>,
 }
 
 impl DepthView {
@@ -66,7 +66,7 @@ impl DepthView {
     }
 
     /// Mostra as candidatas e o pedido atual. Só refaz a lista se algo mudou e a página está na tela.
-    pub fn set(self: &Rc<Self>, choices: &[DepthChoice], clears: &[DepthClear], pick: DepthPick, shown: bool) {
+    pub fn set(self: &Rc<Self>, choices: &[DepthChoice], clears: &[DepthClear], passes: &[DepthPass], pick: DepthPick, shown: bool) {
         if !shown {
             return;
         }
@@ -74,21 +74,22 @@ impl DepthView {
         // quadro e são atualizados no lugar.
         let structure: Vec<_> = choices.iter().map(|c| (c.number, c.automatic, c.unusable.clone(), c.blocking)).collect();
         let points: Vec<bool> = clears.iter().map(|c| c.splittable).collect();
-        let signature = format!("{structure:?}|{points:?}|{pick:?}");
+        let kinds: Vec<(&str, &str)> = passes.iter().map(|p| (p.load.as_str(), p.store.as_str())).collect();
+        let signature = format!("{structure:?}|{points:?}|{kinds:?}|{pick:?}");
         if *self.signature.borrow() == signature {
             for update in self.live.borrow().iter() {
-                update(choices, clears);
+                update(choices, clears, passes);
             }
             return;
         }
         *self.signature.borrow_mut() = signature;
-        self.build(choices, clears, pick);
+        self.build(choices, clears, passes, pick);
         for update in self.live.borrow().iter() {
-            update(choices, clears);
+            update(choices, clears, passes);
         }
     }
 
-    fn build(self: &Rc<Self>, choices: &[DepthChoice], clears: &[DepthClear], pick: DepthPick) {
+    fn build(self: &Rc<Self>, choices: &[DepthChoice], clears: &[DepthClear], passes: &[DepthPass], pick: DepthPick) {
         self.building.set(true);
         while let Some(child) = self.list.first_child() {
             self.list.remove(&child);
@@ -103,7 +104,7 @@ impl DepthView {
         self.list.append(&first.0);
         rows += 1;
         if automatic_active {
-            self.list.append(&capture_points(clears, pick, &weak, &mut rows, &self.live));
+            self.list.append(&capture_points(clears, passes, pick, &weak, &mut rows, &self.live));
         }
 
         // Cada imagem de profundidade que a layer achou.
@@ -128,7 +129,7 @@ impl DepthView {
             self.list.append(&row.0);
             rows += 1;
             let (button, number) = (row.1.clone(), c.number);
-            self.live.borrow_mut().push(Box::new(move |choices, _| {
+            self.live.borrow_mut().push(Box::new(move |choices, _, _| {
                 if let Some(c) = choices.iter().find(|c| c.number == number)
                     && button.label().as_deref() != Some(c.label.as_str())
                 {
@@ -186,9 +187,9 @@ fn option(title: &str, subtitle: Option<&str>, active: bool, group: Option<&gtk:
 }
 
 /// Os pontos de captura sob o automático: automático, antes de cada limpeza (lista do jogo) e depois de um passe.
-type Live = RefCell<Vec<Box<dyn Fn(&[DepthChoice], &[DepthClear])>>>;
+type Live = RefCell<Vec<Box<dyn Fn(&[DepthChoice], &[DepthClear], &[DepthPass])>>>;
 
-fn capture_points(clears: &[DepthClear], pick: DepthPick, weak: &Weak<DepthView>, rows: &mut usize, live: &Live) -> gtk::Box {
+fn capture_points(clears: &[DepthClear], passes: &[DepthPass], pick: DepthPick, weak: &Weak<DepthView>, rows: &mut usize, live: &Live) -> gtk::Box {
     let section = gtk::Box::new(gtk::Orientation::Vertical, 4);
     section.set_margin_start(28);
     section.set_margin_bottom(6);
@@ -223,8 +224,12 @@ fn capture_points(clears: &[DepthClear], pick: DepthPick, weak: &Weak<DepthView>
     note.add_css_class("caption");
     section.append(&note);
     if clears.is_empty() {
-        section.append(&numbered(tr("Clear number"), matches!(pick, DepthPick::Clear(_)), match pick { DepthPick::Clear(n) => n, _ => 1 }, &group, weak, DepthPick::Clear));
-        *rows += 1;
+        let none = gtk::Label::new(Some(tr("No depth clear was seen in this game's frames, so this option does not apply here (see \"After a pass\" below).")));
+        none.set_wrap(true);
+        none.set_xalign(0.0);
+        none.add_css_class("dim-label");
+        none.add_css_class("caption");
+        section.append(&none);
     }
     for (i, clear) in clears.iter().enumerate() {
         let n = i as u32 + 1;
@@ -238,7 +243,7 @@ fn capture_points(clears: &[DepthClear], pick: DepthPick, weak: &Weak<DepthView>
         section.append(&row.0);
         *rows += 1;
         if let Some(label) = row.2 {
-            live.borrow_mut().push(Box::new(move |_, clears| {
+            live.borrow_mut().push(Box::new(move |_, clears, _| {
                 if let Some(clear) = clears.get(i) {
                     let text = clear_text(i, clear);
                     if label.text() != text {
@@ -255,9 +260,32 @@ fn capture_points(clears: &[DepthClear], pick: DepthPick, weak: &Weak<DepthView>
     after.set_margin_top(6);
     after.set_tooltip_text(Some(tr("Advanced: copies the depth right after the Nth render pass that draws to it. The number of passes changes from game to game; try small numbers first.")));
     section.append(&after);
-    section.append(&numbered(tr("Pass number"), matches!(pick, DepthPick::Pass(_)), match pick { DepthPick::Pass(n) => n, _ => 1 }, &group, weak, DepthPick::Pass));
+    for (i, pass) in passes.iter().enumerate() {
+        let n = i as u32 + 1;
+        let row = option(&fmt("Pass {}", &[&n]), Some(&pass_text(pass)), pick == DepthPick::Pass(n), Some(&group), None, DepthPick::Pass(n), weak);
+        section.append(&row.0);
+        *rows += 1;
+        if let Some(label) = row.2 {
+            live.borrow_mut().push(Box::new(move |_, _, passes| {
+                if let Some(pass) = passes.get(i) {
+                    let text = pass_text(pass);
+                    if label.text() != text {
+                        label.set_text(&text);
+                    }
+                }
+            }));
+        }
+    }
+    // Um número livre cobre os jogos com mais passes do que o resumo da layer traz.
+    let other = if passes.is_empty() { tr("Pass number") } else { tr("Another pass number") };
+    section.append(&numbered(other, matches!(pick, DepthPick::Pass(n) if n as usize > passes.len()), match pick { DepthPick::Pass(n) => n, _ => passes.len() as u32 + 1 }, &group, weak, DepthPick::Pass));
     *rows += 1;
     section
+}
+
+/// O texto de um passe: quantos desenhos faz na profundidade e o que faz com ela ao começar e ao terminar.
+fn pass_text(pass: &DepthPass) -> String {
+    fmt("{} draws · starts with {}, ends with {}", &[&pass.draws, &pass.load, &pass.store])
 }
 
 /// O texto de uma limpeza: onde ela fica no quadro e, se a layer não consegue copiar ali, por quê (visível, não só na dica).
