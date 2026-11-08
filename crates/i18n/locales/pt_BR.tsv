@@ -608,3 +608,4 @@ The game clears here inside a pass with an open query, which the layer cannot sp
 After a pass	Depois de um passe
 Advanced: copies the depth right after the Nth render pass that draws to it. The number of passes changes from game to game; try small numbers first.	Avançado: copia a profundidade logo depois do N-ésimo passe de renderização que desenha nela. O número de passes muda de jogo para jogo; comece por números pequenos.
 Pass number	Número do passe
+Unavailable: the game erases the depth inside a pass that has an open query, and the layer cannot split such a pass.	Indisponível: o jogo apaga a profundidade dentro de um passe que tem uma consulta aberta, e a layer não consegue partir um passe assim.

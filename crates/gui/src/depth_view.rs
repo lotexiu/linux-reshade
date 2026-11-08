@@ -19,6 +19,8 @@ pub struct DepthView {
     building: Cell<bool>,
     signature: RefCell<String>,
     rows: Cell<usize>,
+    /// O que muda a todo quadro (os números dos textos): atualizado no lugar, sem refazer a lista (refazer tira o clique do botão de opção).
+    live: RefCell<Vec<Box<dyn Fn(&[DepthChoice], &[DepthClear])>>>,
 }
 
 impl DepthView {
@@ -51,7 +53,7 @@ impl DepthView {
         root.append(&top);
         root.append(&intro);
         root.append(&scroller);
-        Rc::new(Self { root, list, on_change: RefCell::new(None), building: Cell::new(false), signature: RefCell::new(String::new()), rows: Cell::new(0) })
+        Rc::new(Self { root, list, on_change: RefCell::new(None), building: Cell::new(false), signature: RefCell::new(String::new()), rows: Cell::new(0), live: RefCell::new(Vec::new()) })
     }
 
     pub fn connect_changed(&self, f: impl Fn(DepthPick) + 'static) {
@@ -65,12 +67,25 @@ impl DepthView {
 
     /// Mostra as candidatas e o pedido atual. Só refaz a lista se algo mudou e a página está na tela.
     pub fn set(self: &Rc<Self>, choices: &[DepthChoice], clears: &[DepthClear], pick: DepthPick, shown: bool) {
-        let signature = format!("{choices:?}|{clears:?}|{pick:?}");
-        if !shown || *self.signature.borrow() == signature {
+        if !shown {
+            return;
+        }
+        // Só a estrutura decide refazer a lista (quais opções existem, quais servem, o pedido atual); os números dos textos mudam a todo
+        // quadro e são atualizados no lugar.
+        let structure: Vec<_> = choices.iter().map(|c| (c.number, c.automatic, c.unusable.clone(), c.blocking)).collect();
+        let points: Vec<bool> = clears.iter().map(|c| c.splittable).collect();
+        let signature = format!("{structure:?}|{points:?}|{pick:?}");
+        if *self.signature.borrow() == signature {
+            for update in self.live.borrow().iter() {
+                update(choices, clears);
+            }
             return;
         }
         *self.signature.borrow_mut() = signature;
         self.build(choices, clears, pick);
+        for update in self.live.borrow().iter() {
+            update(choices, clears);
+        }
     }
 
     fn build(self: &Rc<Self>, choices: &[DepthChoice], clears: &[DepthClear], pick: DepthPick) {
@@ -78,6 +93,7 @@ impl DepthView {
         while let Some(child) = self.list.first_child() {
             self.list.remove(&child);
         }
+        self.live.borrow_mut().clear();
         let weak = Rc::downgrade(self);
         let mut rows = 0;
 
@@ -87,7 +103,7 @@ impl DepthView {
         self.list.append(&first.0);
         rows += 1;
         if automatic_active {
-            self.list.append(&capture_points(clears, pick, &weak, &mut rows));
+            self.list.append(&capture_points(clears, pick, &weak, &mut rows, &self.live));
         }
 
         // Cada imagem de profundidade que a layer achou.
@@ -111,6 +127,14 @@ impl DepthView {
             }
             self.list.append(&row.0);
             rows += 1;
+            let (button, number) = (row.1.clone(), c.number);
+            self.live.borrow_mut().push(Box::new(move |choices, _| {
+                if let Some(c) = choices.iter().find(|c| c.number == number)
+                    && button.label().as_deref() != Some(c.label.as_str())
+                {
+                    button.set_label(Some(&c.label));
+                }
+            }));
         }
         self.rows.set(rows);
         self.building.set(false);
@@ -128,7 +152,7 @@ impl DepthView {
 }
 
 /// Uma opção: o botão de opção, com uma linha pequena embaixo. Devolve a caixa e o botão (para agrupar os seguintes).
-fn option(title: &str, subtitle: Option<&str>, active: bool, group: Option<&gtk::CheckButton>, tooltip: Option<&str>, pick: DepthPick, weak: &Weak<DepthView>) -> (gtk::Box, gtk::CheckButton) {
+fn option(title: &str, subtitle: Option<&str>, active: bool, group: Option<&gtk::CheckButton>, tooltip: Option<&str>, pick: DepthPick, weak: &Weak<DepthView>) -> (gtk::Box, gtk::CheckButton, Option<gtk::Label>) {
     let button = gtk::CheckButton::with_label(title);
     if let Some(g) = group {
         button.set_group(Some(g));
@@ -147,6 +171,7 @@ fn option(title: &str, subtitle: Option<&str>, active: bool, group: Option<&gtk:
     });
     let row = gtk::Box::new(gtk::Orientation::Vertical, 0);
     row.append(&button);
+    let mut caption = None;
     if let Some(text) = subtitle {
         let label = gtk::Label::new(Some(text));
         label.set_wrap(true);
@@ -155,12 +180,15 @@ fn option(title: &str, subtitle: Option<&str>, active: bool, group: Option<&gtk:
         label.add_css_class("dim-label");
         label.add_css_class("caption");
         row.append(&label);
+        caption = Some(label);
     }
-    (row, button)
+    (row, button, caption)
 }
 
 /// Os pontos de captura sob o automático: automático, antes de cada limpeza (lista do jogo) e depois de um passe.
-fn capture_points(clears: &[DepthClear], pick: DepthPick, weak: &Weak<DepthView>, rows: &mut usize) -> gtk::Box {
+type Live = RefCell<Vec<Box<dyn Fn(&[DepthChoice], &[DepthClear])>>>;
+
+fn capture_points(clears: &[DepthClear], pick: DepthPick, weak: &Weak<DepthView>, rows: &mut usize, live: &Live) -> gtk::Box {
     let section = gtk::Box::new(gtk::Orientation::Vertical, 4);
     section.set_margin_start(28);
     section.set_margin_bottom(6);
@@ -170,7 +198,7 @@ fn capture_points(clears: &[DepthClear], pick: DepthPick, weak: &Weak<DepthView>
     section.append(&heading);
 
     // Cada ponto é um botão de opção de um grupo próprio (o do automático acima é outro).
-    let (auto_point, group) = option(
+    let (auto_point, group, _) = option(
         tr("Automatic"),
         Some(tr("The layer chooses the moment of the frame where the scene is complete (before the interface).")),
         pick == DepthPick::Auto,
@@ -201,7 +229,7 @@ fn capture_points(clears: &[DepthClear], pick: DepthPick, weak: &Weak<DepthView>
     for (i, clear) in clears.iter().enumerate() {
         let n = i as u32 + 1;
         let title = fmt("Clear {}", &[&n]);
-        let subtitle = if clear.draws_before == 0 && i == 0 { tr("Start of the frame: the depth the previous frame left.").to_string() } else { fmt("After {} more draws", &[&clear.draws_before]) };
+        let subtitle = clear_text(i, clear);
         let tip = if clear.splittable { None } else { Some(tr("The game clears here inside a pass with an open query, which the layer cannot split: it cannot copy at this point.")) };
         let row = option(&title, Some(&subtitle), pick == DepthPick::Clear(n), Some(&group), tip, DepthPick::Clear(n), weak);
         if !clear.splittable {
@@ -209,6 +237,16 @@ fn capture_points(clears: &[DepthClear], pick: DepthPick, weak: &Weak<DepthView>
         }
         section.append(&row.0);
         *rows += 1;
+        if let Some(label) = row.2 {
+            live.borrow_mut().push(Box::new(move |_, clears| {
+                if let Some(clear) = clears.get(i) {
+                    let text = clear_text(i, clear);
+                    if label.text() != text {
+                        label.set_text(&text);
+                    }
+                }
+            }));
+        }
     }
 
     let after = gtk::Label::new(Some(tr("After a pass")));
@@ -220,6 +258,16 @@ fn capture_points(clears: &[DepthClear], pick: DepthPick, weak: &Weak<DepthView>
     section.append(&numbered(tr("Pass number"), matches!(pick, DepthPick::Pass(_)), match pick { DepthPick::Pass(n) => n, _ => 1 }, &group, weak, DepthPick::Pass));
     *rows += 1;
     section
+}
+
+/// O texto de uma limpeza: onde ela fica no quadro e, se a layer não consegue copiar ali, por quê (visível, não só na dica).
+fn clear_text(index: usize, clear: &DepthClear) -> String {
+    let place = if clear.draws_before == 0 && index == 0 { tr("Start of the frame: the depth the previous frame left.").to_string() } else { fmt("After {} more draws", &[&clear.draws_before]) };
+    if clear.splittable {
+        place
+    } else {
+        format!("{place} {}", tr("Unavailable: the game erases the depth inside a pass that has an open query, and the layer cannot split such a pass."))
+    }
 }
 
 /// Uma opção com um número e o botão "Use".
