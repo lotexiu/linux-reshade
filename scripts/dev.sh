@@ -579,7 +579,9 @@ cmd_smoke_dynamic() {
   local tq outq; tq="$(mktemp -d)"
   outq="$(DYN_QUERY=1 LINUX_RESHADE=1 LINUX_RESHADE_DEPTH=1 LINUX_RESHADE_STATE_DIR="$tq" LINUX_RESHADE_LOG="$tq/log.txt" VK_LOADER_LAYERS_ENABLE='*validation*' timeout 120 "$ROOT/target/release/examples/dynamic_clear" 2>&1)"
   check "consulta aberta: o app terminou os quadros" 'grep -q "dynamic_clear: 150 quadros" <<<"$outq"'
-  check "consulta aberta: a layer não partiu o passe e avisou" 'grep -q "passe não partido" "$tq/log.txt" && ! grep -q "foto da profundidade gravada antes da limpeza" "$tq/log.txt"'
+  # A limpeza da cena (a 2, com 40 desenhos) fica num passe com consulta aberta e não é partida; a regra automática cai na última limpeza
+  # que dá para partir antes dela (a 1, fora do passe): a foto sai dali, nunca de dentro do passe com a consulta.
+  check "consulta aberta: a layer não partiu o passe e avisou" 'grep -q "passe não partido" "$tq/log.txt" && grep -q "foto da profundidade gravada antes da limpeza 1" "$tq/log.txt" && ! grep -q "antes da limpeza 2" "$tq/log.txt"'
   check "consulta aberta: a validation layer não reclamou de nada" '! grep -q "VUID" <<<"$outq"'
   local td outd; td="$(mktemp -d)"
   outd="$(DYN_DONTCARE=1 LINUX_RESHADE=1 LINUX_RESHADE_DEPTH=1 LINUX_RESHADE_STATE_DIR="$td" LINUX_RESHADE_LOG="$td/log.txt" VK_LOADER_LAYERS_ENABLE='*validation*' timeout 120 "$ROOT/target/release/examples/dynamic_clear" 2>&1)"
