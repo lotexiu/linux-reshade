@@ -49,6 +49,32 @@ pub struct DepthChoice {
     pub blocking: bool,
 }
 
+/// Uma limpeza da profundidade no quadro do jogo: quantos desenhos vieram antes dela (desde a anterior) e se a layer consegue copiar ali.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DepthClear {
+    pub draws_before: u32,
+    pub splittable: bool,
+}
+
+/// As limpezas do último quadro, lidas do resumo que a layer publica (`desenhos antes de cada uma: 0 276!`; o `!` marca a que não dá para
+/// partir). Vazio se o resumo ainda não as traz.
+pub fn clears(layer: &LiveLayer) -> Vec<DepthClear> {
+    parse_clears(&layer.status.depth_passes)
+}
+
+pub fn parse_clears(summary: &str) -> Vec<DepthClear> {
+    const KEY: &str = "desenhos antes de cada uma:";
+    let Some(start) = summary.find(KEY) else { return Vec::new() };
+    let rest = &summary[start + KEY.len()..];
+    let list = rest.split(']').next().unwrap_or("");
+    list.split_whitespace()
+        .filter_map(|token| {
+            let splittable = !token.ends_with('!');
+            Some(DepthClear { draws_before: token.trim_end_matches('!').parse().ok()?, splittable })
+        })
+        .collect()
+}
+
 /// As candidatas do jogo aberto, na ordem da layer.
 pub fn choices(layer: &LiveLayer) -> Vec<DepthChoice> {
     layer
@@ -77,6 +103,16 @@ pub fn choices(layer: &LiveLayer) -> Vec<DepthChoice> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_clears_come_from_the_layers_summary() {
+        let summary = "trocas da imagem: 3; limpeza escolhida: 2 de 3 [desenhos antes de cada uma: 0 322 2]; última mudança";
+        assert_eq!(parse_clears(summary).iter().map(|c| (c.draws_before, c.splittable)).collect::<Vec<_>>(), vec![(0, true), (322, true), (2, true)]);
+        let in_pass = "limpeza escolhida: 1 de 2 [desenhos antes de cada uma: 0 276!]; x";
+        assert_eq!(parse_clears(in_pass).iter().map(|c| (c.draws_before, c.splittable)).collect::<Vec<_>>(), vec![(0, true), (276, false)]);
+        assert!(parse_clears("").is_empty());
+    }
+
     use ipc::{DepthStatus, LayerStatus};
 
     fn layer(depth: Vec<DepthStatus>) -> LiveLayer {

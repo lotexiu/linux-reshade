@@ -586,3 +586,25 @@ The analysis compiles each effect once to tell which ones are compatible. With h
 Skip in the background analysis	Pular na análise em segundo plano
 Effects in these folders are not analyzed ahead of time (a preset that uses them still compiles them).	Os efeitos destas pastas não são analisados antes da hora (um preset que os usa ainda os compila).
 {} game(s) with the layer are open: its effects go away until they are compiled again. Click again to clear anyway.	{} jogo(s) com a layer estão abertos: os efeitos deles somem até serem compilados de novo. Clique de novo para limpar mesmo assim.
+Preprocessor Definitions…	Definições do pré-processador…
+Depth Buffer…	Buffer de profundidade…
+Chooses which depth image the effects use in this game, and when in the frame it is copied (until the game is closed)	Escolhe qual imagem de profundidade os efeitos usam neste jogo e em que momento do quadro ela é copiada (até o jogo ser fechado)
+Depth Buffer	Buffer de profundidade
+Effects such as ambient occlusion, fog and depth of field read the game's depth image. Automatic usually works. Pick another image or a capture point only if those effects look wrong. The choice lasts while the game is open.	Efeitos como oclusão ambiente, névoa e profundidade de campo leem a imagem de profundidade do jogo. O automático costuma funcionar. Escolha outra imagem ou um ponto de captura só se esses efeitos parecerem errados. A escolha vale enquanto o jogo estiver aberto.
+Recommended. The layer picks the depth image and the moment of the frame to copy it.	Recomendado. A layer escolhe a imagem de profundidade e o momento do quadro em que copiá-la.
+The one the automatic choice would pick.	A que a escolha automática usaria.
+Unusable: {}	Não serve: {}
+May not give the expected result: {}	Pode não dar o resultado esperado: {}
+Capture point	Ponto de captura
+The layer chooses the moment of the frame where the scene is complete (before the interface).	A layer escolhe o momento do quadro em que a cena está completa (antes da interface).
+Before a depth clear	Antes de uma limpeza da profundidade
+Copies the depth right before the game erases it. Use it when the effects see an empty or wrong depth.	Copia a profundidade logo antes de o jogo apagá-la. Use quando os efeitos veem uma profundidade vazia ou errada.
+Copies the depth right before the game erases it. The first clear (start of the frame) is steady but one frame behind; later ones are more current.	Copia a profundidade logo antes de o jogo apagá-la. A primeira limpeza (começo do quadro) é estável mas um quadro atrás; as seguintes são mais atuais.
+Clear number	Número da limpeza
+Clear {}	Limpeza {}
+Start of the frame: the depth the previous frame left.	Começo do quadro: a profundidade que o quadro anterior deixou.
+After {} more draws	Depois de mais {} desenhos
+The game clears here inside a pass with an open query, which the layer cannot split: it cannot copy at this point.	O jogo limpa aqui dentro de um passe com uma consulta aberta, que a layer não consegue partir: não dá para copiar neste ponto.
+After a pass	Depois de um passe
+Advanced: copies the depth right after the Nth render pass that draws to it. The number of passes changes from game to game; try small numbers first.	Avançado: copia a profundidade logo depois do N-ésimo passe de renderização que desenha nela. O número de passes muda de jogo para jogo; comece por números pequenos.
+Pass number	Número do passe

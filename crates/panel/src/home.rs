@@ -116,6 +116,8 @@ pub struct HomeSnapshot {
     pub depth_note: Option<crate::DepthNote>,
     /// As candidatas de profundidade do jogo aberto e o que a pessoa pediu (vazio: nada a escolher).
     pub depth_choices: Vec<crate::DepthChoice>,
+    /// As limpezas de profundidade do último quadro do jogo aberto (para o painel listar os pontos de captura possíveis).
+    pub depth_clears: Vec<crate::DepthClear>,
     pub depth_pick: ipc::DepthPick,
     /// A última mensagem para o usuário; some na próxima ação.
     pub notice: Option<String>,
@@ -309,11 +311,13 @@ impl Home {
     fn update_depth_note(&mut self) {
         self.snapshot.depth_note = None;
         self.snapshot.depth_choices.clear();
+        self.snapshot.depth_clears.clear();
         self.snapshot.depth_pick = ipc::DepthPick::Auto;
         if let Some(id) = &self.game
             && let Some(layer) = self.snapshot.layers.iter().find(|l| l.status.game_id() == id)
         {
             self.snapshot.depth_choices = crate::depth_note::choices(layer);
+            self.snapshot.depth_clears = crate::depth_note::clears(layer);
             self.snapshot.depth_pick = ipc::depth_pick(&layer.id);
         }
         let Some(id) = self.game.clone() else { return };

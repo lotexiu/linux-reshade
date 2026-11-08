@@ -7,7 +7,7 @@ use crate::effect_row::{EffectRow, RowCtx};
 use crate::flatpak_view::FlatpakView;
 use crate::games::GamesView;
 use gtk4 as gtk;
-use crate::depth_picker::DepthPicker;
+use crate::depth_view::DepthView;
 use control_core::i18n::{fmt, tr};
 use crate::macros::MacroEditor;
 use gtk::glib;
@@ -43,7 +43,8 @@ pub struct Ui {
     preset_names: RefCell<Vec<String>>,
     preset_note: gtk::Label,
     depth_note: gtk::Label,
-    depth_picker: Rc<DepthPicker>,
+    depth_view: Rc<DepthView>,
+    depth_button: gtk::Button,
     new_preset: gtk::MenuButton,
     macros: Rc<MacroEditor>,
     new_name: gtk::Entry,
@@ -143,10 +144,12 @@ impl Ui {
         let new_preset = gtk::MenuButton::new();
         new_preset.set_label(tr("New"));
         new_preset.set_tooltip_text(Some(tr("New preset for this game (copy of the current one)")));
-        let macros = MacroEditor::new(tr("Definitions…"), tr("Preprocessor definitions of the preset, for all effects (as in ReShade). Changing them recompiles the affected effects."));
+        let macros = MacroEditor::new(tr("Preprocessor Definitions…"), tr("Preprocessor definitions of the preset, for all effects (as in ReShade). Changing them recompiles the affected effects."));
         let delete_preset = gtk::Button::from_icon_name("user-trash-symbolic");
         delete_preset.set_tooltip_text(Some(tr("Delete this preset")));
-        let depth_picker = DepthPicker::new();
+        let depth_button = gtk::Button::with_label(tr("Depth Buffer…"));
+        depth_button.set_tooltip_text(Some(tr("Chooses which depth image the effects use in this game, and when in the frame it is copied (until the game is closed)")));
+        depth_button.set_visible(false);
         let depth_note = gtk::Label::new(None);
         depth_note.set_halign(gtk::Align::Start);
         depth_note.set_xalign(0.0);
@@ -226,12 +229,13 @@ impl Ui {
         page.append(&line(tr("Game"), &[game.upcast_ref(), flatpak_button.upcast_ref()]));
         page.append(&line(tr("Preset"), &[preset.upcast_ref(), new_preset.upcast_ref(), delete_preset.upcast_ref()]));
         page.append(&preset_note);
+        // Definições do pré-processador e profundidade na mesma linha, com a profundidade em uso à direita dos botões.
+        macros.button.set_size_request(230, -1);
         let depth_line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        depth_line.append(&macros.button);
+        depth_line.append(&depth_button);
         depth_line.append(&depth_note);
-        depth_line.append(&depth_picker.button);
         page.append(&depth_line);
-        macros.button.set_halign(gtk::Align::Start);
-        page.append(&line(tr("Macros"), &[macros.button.upcast_ref()]));
         let tools = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         tools.append(&search);
         tools.append(&add_button);
@@ -281,6 +285,15 @@ impl Ui {
                 }
             },
         );
+        let depth_view = DepthView::new({
+            let ui_ref = ui_ref.clone();
+            move || {
+                let ui = ui_ref.borrow().upgrade();
+                if let Some(ui) = ui {
+                    ui.show_page("main");
+                }
+            }
+        });
         let flatpak_view = FlatpakView::new({
             let ui_ref = ui_ref.clone();
             move || {
@@ -295,6 +308,7 @@ impl Ui {
         stack.add_named(&page, Some("main"));
         stack.add_named(&add_view.root, Some("add"));
         stack.add_named(&flatpak_view.root, Some("flatpak"));
+        stack.add_named(&depth_view.root, Some("depth"));
 
         let window = gtk::ApplicationWindow::builder().application(app).title("linux-reshade").default_width(600).default_height(780).child(&stack).build();
         window.set_titlebar(Some(&header));
@@ -306,7 +320,7 @@ impl Ui {
                 let ui = ui_ref.borrow().upgrade();
                 if keyval == gtk::gdk::Key::Escape
                     && let Some(ui) = ui
-                    && matches!(ui.stack.visible_child_name().as_deref(), Some("add" | "flatpak"))
+                    && matches!(ui.stack.visible_child_name().as_deref(), Some("add" | "flatpak" | "depth"))
                 {
                     ui.show_page("main");
                     return glib::Propagation::Stop;
@@ -332,7 +346,8 @@ impl Ui {
             preset_names: RefCell::new(Vec::new()),
             preset_note,
             depth_note: depth_note.clone(),
-            depth_picker: depth_picker.clone(),
+            depth_view: depth_view.clone(),
+            depth_button: depth_button.clone(),
             new_preset: new_preset.clone(),
             macros: macros.clone(),
             new_name: name_entry.clone(),
@@ -403,6 +418,10 @@ impl Ui {
         if name == "flatpak" {
             self.flatpak_view.reload();
             self.flatpak_view.focus_search();
+        }
+        if name == "depth" {
+            let ui = self.clone();
+            glib::idle_add_local_once(move || ui.apply()); // monta a lista já, sem esperar a próxima atualização
         }
         if name == "add" {
             self.add_view.focus_search();
@@ -477,8 +496,16 @@ impl Ui {
             move |_| create.emit_clicked()
         });
 
+        self.depth_button.connect_clicked({
+            let weak = weak.clone();
+            move |_| {
+                if let Some(ui) = weak.upgrade() {
+                    ui.show_page("depth");
+                }
+            }
+        });
         // A profundidade escolhida pela pessoa: grava o pedido que a layer lê.
-        self.depth_picker.connect_changed({
+        self.depth_view.connect_changed({
             let weak = weak.clone();
             move |pick| {
                 if let Some(ui) = weak.upgrade()
@@ -667,7 +694,8 @@ impl Ui {
                 None => self.depth_note.set_visible(false),
             }
 
-            self.depth_picker.set(&s.depth_choices, s.depth_pick);
+            self.depth_button.set_visible(!s.depth_choices.is_empty());
+            self.depth_view.set(&s.depth_choices, &s.depth_clears, s.depth_pick, self.stack.visible_child_name().as_deref() == Some("depth"));
 
             // A página "Adicionar efeito" (só monta a lista enquanto está na tela).
             self.add_view.set(&s.effects, &s.folders, &s.infos, s.analysis, self.stack.visible_child_name().as_deref() == Some("add"));
@@ -862,6 +890,42 @@ impl Ui {
         }
         self.show_page("main");
         step(300).await;
+
+        // A página "Depth Buffer" com dados de mentira (o roteiro não tem um jogo aberto): as opções, os pontos de captura e voltar.
+        let choices = vec![
+            panel::DepthChoice { number: 1, label: "1920x1080 D24_UNORM_S8 · 411 draws, 12 passes, normal".into(), automatic: true, unusable: None, blocking: false },
+            panel::DepthChoice { number: 2, label: "1120x1120 D24_UNORM_S8 · 10 draws, 1 passes, normal".into(), automatic: false, unusable: Some("different aspect ratio than the screen".into()), blocking: false },
+        ];
+        let clears = vec![panel::DepthClear { draws_before: 0, splittable: true }, panel::DepthClear { draws_before: 276, splittable: false }];
+        let picks = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        self.depth_view.connect_changed({
+            let picks = picks.clone();
+            move |p| picks.borrow_mut().push(p)
+        });
+        self.show_page("depth");
+        step(400).await;
+        if self.stack.visible_child_name().as_deref() != Some("depth") {
+            problems.push("a página Depth Buffer não abriu".to_string());
+        }
+        self.depth_view.set(&choices, &clears, ipc::DepthPick::Auto, true);
+        step(300).await;
+        // Automático (1) + pontos: automático, 2 limpezas, passe (4) + 2 imagens = 7
+        if self.depth_view.rows_built() < 6 {
+            problems.push(format!("a lista da profundidade tem só {} opções", self.depth_view.rows_built()));
+        }
+        self.depth_view.set(&choices, &clears, ipc::DepthPick::Clear(1), true);
+        step(300).await;
+        self.depth_view.set(&choices, &clears, ipc::DepthPick::Candidate(2), true);
+        step(300).await;
+        if !picks.borrow().is_empty() {
+            problems.push("refazer a lista da profundidade foi tratado como uma escolha da pessoa".to_string());
+        }
+        if self.stack.visible_child_name().as_deref() != Some("depth") {
+            problems.push("refazer a lista da profundidade tirou a página".to_string());
+        }
+        self.show_page("main");
+        step(300).await;
+        self.depth_view.set(&[], &[], ipc::DepthPick::Auto, true);
 
         let new = crate::gtk_warnings().saturating_sub(warnings_before);
         if new > 0 {

@@ -8,7 +8,7 @@ mod activity;
 mod add_effect;
 mod audit;
 mod controls;
-mod depth_picker;
+mod depth_view;
 mod disclosure;
 mod flatpak_view;
 mod icons;
