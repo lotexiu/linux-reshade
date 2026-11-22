@@ -159,7 +159,7 @@ impl ControlsView {
                         scale.set_hexpand(true);
                         scale.set_draw_value(false);
                         let spin = gtk::SpinButton::new(Some(&adjustment), *step, digits);
-                        crate::icons::arrows(&spin);
+                        crate::shared::icons::arrows(&spin);
                         spin.set_numeric(true);
                         spin.set_width_chars(8);
                         spin.set_valign(gtk::Align::Center);
@@ -216,7 +216,7 @@ impl ControlsView {
                 let spins: Vec<gtk::SpinButton> = (0..n)
                     .map(|_| {
                         let s = gtk::SpinButton::with_range(min.unwrap_or(-1.0e9), max.unwrap_or(1.0e9), *step);
-                        crate::icons::arrows(&s);
+                        crate::shared::icons::arrows(&s);
                         s.set_digits(digits(*step));
                         s.set_hexpand(true);
                         s
@@ -245,7 +245,7 @@ fn notify_change<W>(
     let (name, updating, on_change) = (name.to_string(), updating.clone(), on_change.clone());
     // Arrastar um slider emite dezenas de mudanças por segundo, e cada uma grava o preset e avisa a layer: no máximo uma a cada 80 ms,
     // a última sempre vale (os valores são lidos na hora de rodar, não na de pedir).
-    let throttle = crate::rx::Throttle::new(80);
+    let throttle = crate::shared::rx::Throttle::new(80);
     let collect: Rc<dyn Fn() -> Vec<f64>> = Rc::from(collect);
     move |_| {
         if !updating.get() {

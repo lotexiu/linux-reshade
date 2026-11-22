@@ -2,14 +2,14 @@
 //! técnicas em ordem de execução, cada uma com caixa de seleção, setas, remover e os parâmetros do efeito.
 //! Nenhuma regra de negócio mora aqui; tudo o que se decide está em `panel::Home`.
 
-use crate::add_effect::AddEffectView;
-use crate::effect_row::{EffectRow, RowCtx};
-use crate::flatpak_view::FlatpakView;
-use crate::games::GamesView;
+use crate::features::effects::add_effect::AddEffectView;
+use crate::features::effects::effect_row::{EffectRow, RowCtx};
+use crate::features::flatpak::flatpak_view::FlatpakView;
+use crate::features::games::open_games::GamesView;
 use gtk4 as gtk;
-use crate::depth_view::DepthView;
+use crate::features::depth::depth_view::DepthView;
 use control_core::i18n::{fmt, tr};
-use crate::macros::MacroEditor;
+use crate::shared::macros::MacroEditor;
 use gtk::glib;
 use gtk::prelude::*;
 use panel::{EffectGroup, Home};
@@ -68,7 +68,7 @@ pub struct Ui {
     /// A versão do modelo que a tela já mostra: se a leitura periódica não a mudou, não há o que redesenhar.
     applied_version: Cell<u64>,
     /// O indicador "Compilando..." do cabeçalho e a pasta de cache que ele vigia.
-    activity: Rc<crate::activity::Activity>,
+    activity: Rc<crate::shared::activity::Activity>,
     cache_dir: std::path::PathBuf,
     games_view: RefCell<GamesView>,
     notice: gtk::Label,
@@ -201,7 +201,7 @@ impl Ui {
         games_title.add_css_class("heading");
         let games_expander = gtk::Expander::new(None);
         // À direita de "Open games": o que está sendo compilado em segundo plano.
-        let activity = crate::activity::Activity::new();
+        let activity = crate::shared::activity::Activity::new();
         let games_head = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         games_head.set_hexpand(true);
         games_title.set_hexpand(true);
@@ -341,7 +341,7 @@ impl Ui {
         {
             let window = window.clone();
             shortcuts_button.connect_clicked(move |_| {
-                crate::shortcuts_dialog::open(&window);
+                crate::features::settings::open(&window);
             });
         }
 
@@ -559,7 +559,7 @@ impl Ui {
         // Lê o estado de tempos em tempos: jogos que abrem e fecham, o atalho global, o `lrctl`, o arquivo editado à mão.
         glib::timeout_add_local(REFRESH, move || match weak.upgrade() {
             Some(ui) => {
-                ui.activity.set(&crate::activity::compiling(&ui.cache_dir));
+                ui.activity.set(&crate::shared::activity::compiling(&ui.cache_dir));
                 let t0 = std::time::Instant::now();
                 ui.home.borrow_mut().refresh();
                 let t1 = std::time::Instant::now();
@@ -579,7 +579,7 @@ impl Ui {
     /// Apaga o preset em uso, depois de perguntar (a menos que a pessoa tenha pedido para não perguntar mais).
     fn ask_delete_preset(self: &Rc<Self>) {
         let Some(name) = self.home.borrow().snapshot().active_preset.clone() else { return };
-        if !crate::settings::confirm_delete_preset() {
+        if !crate::features::settings::prefs::confirm_delete_preset() {
             self.act(|h| h.delete_preset(&name));
             return;
         }
@@ -610,7 +610,7 @@ impl Ui {
             let (weak, dialog, never) = (Rc::downgrade(self), dialog.clone(), never.clone());
             move |_| {
                 if never.is_active() {
-                    crate::settings::set_confirm_delete_preset(false);
+                    crate::features::settings::prefs::set_confirm_delete_preset(false);
                 }
                 dialog.close();
                 if let Some(ui) = weak.upgrade() {

@@ -305,7 +305,7 @@ fn numbered(label: &str, active: bool, current: u32, group: &gtk::CheckButton, w
     option.set_group(Some(group));
     option.set_active(active);
     let spin = gtk::SpinButton::with_range(1.0, 400.0, 1.0);
-    crate::icons::arrows(&spin);
+    crate::shared::icons::arrows(&spin);
     spin.set_value(f64::from(current));
     let apply = {
         let (weak, spin) = (weak.clone(), spin.clone());

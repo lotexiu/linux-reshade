@@ -9,8 +9,8 @@ const UP: &str = "linux-reshade-arrow-up-symbolic";
 const DOWN: &str = "linux-reshade-arrow-down-symbolic";
 
 const ICONS: [(&str, &str); 2] = [
-    ("linux-reshade-arrow-up-symbolic.svg", include_str!("../../../packaging/icons/linux-reshade-arrow-up-symbolic.svg")),
-    ("linux-reshade-arrow-down-symbolic.svg", include_str!("../../../packaging/icons/linux-reshade-arrow-down-symbolic.svg")),
+    ("linux-reshade-arrow-up-symbolic.svg", include_str!("../../../../packaging/icons/linux-reshade-arrow-up-symbolic.svg")),
+    ("linux-reshade-arrow-down-symbolic.svg", include_str!("../../../../packaging/icons/linux-reshade-arrow-down-symbolic.svg")),
 ];
 
 fn base() -> Option<std::path::PathBuf> {

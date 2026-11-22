@@ -2,8 +2,8 @@
 //! parâmetros. Não conhece a janela: tudo o que a pessoa faz sai por [`RowCtx`] (o que a linha pode pedir) e o que muda no modelo
 //! entra por [`EffectRow::update`], que mexe só no que mudou (a linha não é refeita a cada atualização).
 
-use crate::controls::ControlsView;
-use crate::macros::MacroEditor;
+use crate::features::effects::controls::ControlsView;
+use crate::shared::macros::MacroEditor;
 use gtk::prelude::*;
 use gtk4 as gtk;
 use panel::{EffectGroup, Home};
@@ -331,7 +331,7 @@ impl EffectRow {
                         let window = button.root().and_downcast::<gtk::Window>();
                         let Some(window) = window else { return };
                         let (ctx, id) = (ctx.clone(), id.clone());
-                        crate::shortcuts_dialog::capture_key(&window, &fmt("Shortcut for {}", &[&title]), move |text| {
+                        crate::shared::capture_key::capture_key(&window, &fmt("Shortcut for {}", &[&title]), move |text| {
                             let id = id.clone();
                             (ctx.act)(Box::new(move |h| h.set_technique_key(&id, &text)));
                         });

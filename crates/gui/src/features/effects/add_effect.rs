@@ -7,7 +7,7 @@
 //! O componente não conhece a janela: recebe os dados por [`AddEffectView::set`] e avisa o que a pessoa fez pelos dois callbacks
 //! que ganha em [`AddEffectView::new`] (escolheu um efeito; pediu para voltar).
 
-use crate::disclosure::Disclosure;
+use crate::shared::disclosure::Disclosure;
 use control_core::analysis::{EffectInfo, Feature};
 use gtk::glib;
 use gtk::prelude::*;

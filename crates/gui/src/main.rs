@@ -4,20 +4,8 @@
 //! resultado (sai com código diferente de 0 se algo falhar); `--effect <Efeito>` o adiciona ao preset do jogo (e o tira ao sair);
 //! `--screenshot <arquivo.png>` grava a janela; `--hold <ms>` a mantém aberta antes de sair; `--wait <ms>` espera antes de agir.
 
-mod activity;
-mod add_effect;
-mod audit;
-mod controls;
-mod depth_view;
-mod disclosure;
-mod flatpak_view;
-mod icons;
-mod effect_row;
-mod games;
-mod macros;
-mod rx;
-mod settings;
-mod shortcuts_dialog;
+mod features;
+mod shared;
 mod window;
 
 static GTK_WARNINGS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -157,7 +145,7 @@ fn main() -> glib::ExitCode {
         move |app| {
             let Some(state) = state.borrow_mut().take() else { return };
             apply_dark_theme();
-            icons::install();
+            shared::icons::install();
             // Analisa os efeitos em segundo plano (compila cada um uma vez): a lista de adicionar mostra os incompatíveis.
             let _ = panel::start_analysis();
             // Quem abre o painel não precisa abrir um terminal: no AppImage a camada do Vulkan é instalada para o usuário (a biblioteca vai
@@ -207,7 +195,7 @@ fn main() -> glib::ExitCode {
                         child.destroy();
                     }
                     old.window.destroy();
-                    shortcuts_dialog::open_at(&new.window, 0);
+                    features::settings::open_at(&new.window, 0);
                 }
             });
             app.add_action(&relocalize);
@@ -260,13 +248,13 @@ async fn test_run(app: gtk::Application, ui: Rc<window::Ui>, options: Rc<Options
         }
     }
     if let Some(code) = &options.switch_language {
-        let before = audit::texts_of(&ui.window);
+        let before = shared::audit::texts_of(&ui.window);
         // O caminho de verdade: as Configurações (uma janela filha) pedem a troca. Ela só chega à janela principal se a filha sabe de que programa é.
-        let settings = shortcuts_dialog::open(&ui.window);
+        let settings = features::settings::open(&ui.window);
         let Some(language) = control_core::i18n::languages().iter().position(|l| l.code == *code) else {
             return fail(format!("idioma desconhecido: {code}"));
         };
-        match audit::first_dropdown(settings.upcast_ref()) {
+        match shared::audit::first_dropdown(settings.upcast_ref()) {
             // Escolhe o idioma na lista das Configurações, como a pessoa: é esse clique que refaz a janela principal.
             Some(dropdown) => dropdown.set_selected(language as u32),
             None => return fail("a lista de idiomas não está na página Geral das Configurações".to_string()),
@@ -274,7 +262,7 @@ async fn test_run(app: gtk::Application, ui: Rc<window::Ui>, options: Rc<Options
         glib::timeout_future(Duration::from_millis(1500)).await;
         let windows: Vec<gtk::Window> = app.windows();
         let mains = windows.iter().filter(|w| w.is::<gtk::ApplicationWindow>()).count();
-        let after = windows.iter().find(|w| w.is::<gtk::ApplicationWindow>()).map(|w| audit::texts_of(w)).unwrap_or_default();
+        let after = windows.iter().find(|w| w.is::<gtk::ApplicationWindow>()).map(|w| shared::audit::texts_of(w)).unwrap_or_default();
         // Texto que ainda está em inglês na janela nova mas tem tradução: ficou preso (um modelo compartilhado guardou o texto, por exemplo).
         let stuck: Vec<&String> = after.iter().filter(|t| control_core::i18n::tr_dyn(t) != **t).collect();
         let settings_windows = windows.iter().filter(|w| !w.is::<gtk::ApplicationWindow>()).count();
@@ -293,14 +281,14 @@ async fn test_run(app: gtk::Application, ui: Rc<window::Ui>, options: Rc<Options
         for page in ["main", "add", "flatpak", "main"] {
             ui.show_page(page);
             glib::timeout_future(Duration::from_millis(2500)).await;
-            all.extend(audit::texts_of(&ui.window));
+            all.extend(shared::audit::texts_of(&ui.window));
         }
-        for (name, ok) in icons::available() {
+        for (name, ok) in shared::icons::available() {
             println!("icon:{name}={}", if ok { "yes" } else { "NO" });
         }
-        let settings = shortcuts_dialog::open(&ui.window);
+        let settings = features::settings::open(&ui.window);
         glib::timeout_future(Duration::from_millis(800)).await;
-        all.extend(audit::texts_of(&settings));
+        all.extend(shared::audit::texts_of(&settings));
         settings.close();
         for text in all {
             println!("{}", text.replace('\n', "\\n"));
@@ -330,7 +318,7 @@ async fn test_run(app: gtk::Application, ui: Rc<window::Ui>, options: Rc<Options
         ui.macros_popup();
         glib::timeout_future(Duration::from_millis(500)).await;
     }
-    let dialog = options.open_shortcuts.then(|| shortcuts_dialog::open(&ui.window));
+    let dialog = options.open_shortcuts.then(|| features::settings::open(&ui.window));
     if dialog.is_some() {
         glib::timeout_future(Duration::from_millis(500)).await;
     }
