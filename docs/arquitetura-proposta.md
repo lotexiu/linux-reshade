@@ -3,16 +3,20 @@
 Pedido de 22/11/2026: deixar o projeto mais intuitivo e fácil de manter (pastas, módulos, menos repetição, legibilidade). Esta página junta o que foi
 pesquisado, o que se mediu no código e uma sequência de passos pequenos. **Nada foi migrado ainda.**
 
-## 1. O que a pesquisa diz (resumo)
-- **Workspace plano.** Para projetos de 10 mil a 1 milhão de linhas (este tem ~32 mil em Rust), a recomendação de quem mantém o rust-analyzer é uma pasta `crates/` plana, com um
-  crate por pasta e **nomes com prefixo** (o namespace do Cargo é plano; pastas aninhadas criam uma segunda hierarquia que sai de sincronia). Fonte:
-  [Large Rust Workspaces (matklad)](https://matklad.github.io/2021/08/22/large-rust-workspaces.html); as diretrizes de Rust da Microsoft dizem o mesmo
-  ([Project Guidelines](https://microsoft.github.io/rust-guidelines/guidelines/project/)). Já fazemos o plano; falta o prefixo e a coerência dos nomes.
-- **Layers do Vulkan** (vkBasalt, MangoHud) são uma biblioteca `.so` mais um manifesto JSON, ativados por variável de ambiente, sem daemon; a configuração é lida do disco.
-  Nosso desenho (layer + daemon + painel por memória compartilhada) é mais rico, então a separação entre o que roda **dentro do jogo** e o que roda **fora** precisa ficar óbvia.
-- **Apps GTK em Rust** não têm uma regra oficial de separar lógica e interface (só o padrão `mod imp` por tipo e as pastas `data/`, `po/` dos modelos do GNOME Builder). A regra que já
-  seguimos (modelo independente de toolkit no crate `panel`, uma página/componente por arquivo) é a que vale manter.
-- Limite: não achei uma fonte autorizada para o desenho interno de um *post-processing layer*; as decisões abaixo vêm do código daqui, não de um padrão externo.
+## 1. O que quase todo projeto segue (Angular, React, Next.js)
+Em vez de procurar projetos parecidos com o nosso (não existe), a pesquisa foi no que as estruturas mais comuns têm em comum. Resumo, com as fontes:
+- **Por funcionalidade (feature-first).** Cada funcionalidade tem a sua pasta, com tudo o que ela precisa (telas, serviços, modelos). Angular ("organize por feature") e
+  [Bulletproof React](https://cdn.jsdelivr.net/npm/bulletproof-react666@0.1.0/docs/project-structure.md) fazem assim; as funcionalidades não importam umas às outras.
+- **`core` e `shared`.** O `core` guarda o que é do aplicativo inteiro (serviços únicos, infraestrutura); o `shared` guarda o que várias funcionalidades reusam (componentes e utilitários),
+  **sem regra de negócio**. ([guias de estrutura do Angular](https://itnext.io/choosing-a-highly-scalable-folder-structure-in-angular-d987de65ec7))
+- **Dependência em um só sentido:** `shared` → `features` → `app`. Quem fica embaixo não conhece quem fica em cima; costuma-se impor com uma regra de lint.
+- **LIFT (Angular):** *Locate* (achar o código rápido), *Identify* (o nome diz o que é), manter a estrutura **Flat** (rasa) e **DRY**.
+- **Colocação (Next.js):** o que só uma parte usa mora ao lado dela (testes, auxiliares), e pastas privadas/grupos organizam sem mudar o comportamento. A própria documentação diz que não há
+  uma estrutura única certa: **escolha uma e seja consistente**. ([projeto do Next.js](https://nextjs.org/docs/app/getting-started/project-structure))
+- **Monorepo:** `apps/` (o que se entrega) e `packages/` (bibliotecas compartilhadas), a convenção de Turborepo/Nx, a mesma do seu `ts-monorepo`.
+- Para Rust em especial, a pasta `crates/` plana com nomes de pacote com prefixo é o que se recomenda para esse tamanho
+  ([Large Rust Workspaces](https://matklad.github.io/2021/08/22/large-rust-workspaces.html)).
+Limite: boa parte disso vem de guias e artigos, não de um documento oficial único. O que se repete em todos é o que importa: **funcionalidade, `core`/`shared`, dependência de um sentido, nome que diz o que é**.
 
 ## 2. O que se mediu aqui (e por que parece "diferente")
 | Achado | Dado |
@@ -25,44 +29,46 @@ pesquisado, o que se mediu no código e uma sequência de passos pequenos. **Nad
 | Ferramentas de desenvolvimento | `scripts/dev.sh`: 837 linhas e 32 comandos num arquivo só |
 | Raiz e docs | `ROADMAP.md`, `DEPENDENCIAS.md`, `README.md` na raiz; 18 arquivos soltos em `docs/` sem índice; dois roteiros (`ROADMAP.md` histórico e `docs/ROADMAP.md` de próximos passos); `build/`, `dev/`, `dist/` |
 
-## 3. Princípios
-1. **Dentro do jogo x fora do jogo** (layer, postfx, vk-layer, ipc) separados do resto, por nome e por regra de dependência.
-2. **Núcleo sem toolkit.** Nada de GTK fora de `gui`. O que a interface precisa vem de `panel` (e, no futuro, de uma API local: ver o item da interface web em `docs/ROADMAP.md`).
-3. **Um arquivo, uma responsabilidade** (já é a regra da interface: um componente por arquivo), e **um lugar para cada coisa repetida**.
-4. **Passos pequenos**, cada um com os testes passando e um commit; dá para parar em qualquer ponto.
+## 3. Mapa: o que cada convenção vira aqui
+| Convenção | Aqui |
+|---|---|
+| `apps/` x `packages/` | `apps/` = o que se entrega (`lrctl`, `lrpanel`, a layer); `crates/` = bibliotecas compartilhadas |
+| `shared` (sem regra de negócio) | base: `lr-ini`, `lr-paths`, `lr-i18n`, `lr-image`, e os widgets reusáveis da interface |
+| `core` (regra de negócio, sem interface) | `lr-compile`, `lr-plan`, `lr-system`, `lr-config`, `lr-bundle`, `lr-preset`, `lr-ipc`, `lr-shortcuts*` |
+| `features/<nome>` | dentro de cada app: efeitos, presets, jogos, profundidade, atalhos, configurações, overlay, Flatpak |
+| `app` (monta tudo) | a janela principal e o `main` de cada app |
+| dependência `shared → core → features → app` | regra conferida por um teste (um script que lê o `cargo metadata` e falha se um crate de baixo depender de um de cima) |
+| LIFT (nome diz o que é, estrutura rasa) | um arquivo, uma responsabilidade; `view.rs`, `note.rs`, `plan.rs`: o nome é o papel |
 
-## 4. Desenho proposto (pastas planas, nomes com prefixo `lr-`)
+## 4. Desenho proposto
 ```
-crates/
-  # base (sem dependência interna, ou só entre si)
-  lr-ini  lr-paths  lr-i18n  lr-image
-  # formatos e protocolo
-  lr-bundle (fx-bundle)  lr-preset  lr-ipc
-  # dentro do jogo
-  lr-vk (vk-layer)  lr-postfx  lr-layer (cdylib)
-  # núcleo (sem interface, sem CLI)
-  lr-config  lr-compile  lr-plan  lr-system  lr-shortcuts  lr-shortcuts-portal
-  # modelo da tela e aplicativos
-  lr-panel (modelo)  lr-cli (lrctl + daemon)  lr-gtk (lrpanel)
+apps/
+  lrctl/     CLI + daemon (bin lrctl)           src/{app, features/{...}}
+  lrpanel/   interface GTK (bin lrpanel)         src/{app, features/{effects,presets,games,depth,settings,overlay,flatpak}, shared/widgets}
+  layer/     cdylib que roda dentro do jogo      src/{...}  (depth/, effect/ ... já são funcionalidades)
+crates/      (planas, prefixo lr-)
+  lr-ini  lr-paths  lr-i18n  lr-image                       base (shared)
+  lr-config  lr-preset  lr-bundle  lr-ipc                    formatos e protocolo
+  lr-vk  lr-postfx                                           para a layer
+  lr-compile  lr-plan  lr-system  lr-shortcuts  lr-shortcuts-portal   núcleo
+  lr-panel                                                   modelo da tela (sem toolkit)
 ```
-- `lr-paths` junta de uma vez as pastas XDG e a de estado (hoje espalhadas), e os pequenos auxiliares repetidos.
-- `control-core` se divide em: `lr-compile` (compilador, análise, manutenção do cache, patches), `lr-plan` (plano dos jogos, vigia, parâmetros, seleção) e `lr-system`
-  (instalação, localização, Flatpak, lista de layers, capturas). O CLI deixa de depender de `panel` (o que ele usa de lá vai para `lr-plan`).
-- Os binários mantêm os nomes `lrctl` e `lrpanel`; só os pacotes e as pastas mudam.
-- Arquivos grandes viram pastas de módulos (uma responsabilidade cada):
-  - `lr-gtk`: `window/` (cabeçalho, jogos, linha da profundidade...) e `settings/` com **uma página por arquivo** (geral, atalhos, capturas, pastas, desempenho, overlay, cache, sistema, sobre, log);
-  - `lr-layer`: `effect/` (ciclo de vida da cadeia, troca, estatísticas de FPS, fontes do runtime) e `depth/hooks/` por família de função (passes, limpezas, consultas, cópias);
+- `lr-paths` junta as pastas XDG e a de estado (hoje espalhadas em `config`, `install`, `ipc` e no daemon) e os pequenos auxiliares repetidos.
+- `control-core` se divide em `lr-compile` (compilador, análise, manutenção do cache, patches), `lr-plan` (plano dos jogos, vigia, parâmetros, seleção) e `lr-system`
+  (instalação, localização, Flatpak, lista de layers, capturas). O CLI deixa de depender de `panel`.
+- **Cada app por funcionalidade** (o equivalente de `features/`):
+  - `lrpanel`: `features/settings/` com **uma página por arquivo** (geral, atalhos, capturas, pastas, desempenho, overlay, cache, sistema, sobre, log), `features/depth/`, `features/effects/`... e `shared/widgets/` para o que se repete (`page_box`, `hint`, linha de pasta);
+  - `layer`: `effect/` (ciclo de vida da cadeia, troca, estatísticas de FPS, fontes) e `depth/` já é uma funcionalidade, com `hooks/` por família de função (passes, limpezas, consultas, cópias);
   - `lr-panel`: `home/` por assunto (jogo e preset, efeitos, profundidade, mensagens).
-- Ferramentas: `scripts/dev.sh` vira um despachante fino sobre `scripts/lib/*.sh` (um arquivo por assunto: smoke, fx, xid, appimage); os testes continuam os mesmos.
-- Documentação: `docs/README.md` como índice, e três pastas: `usuario/` (instalação, idiomas, presets, efeitos embutidos), `arquitetura/` (ipc, bundle-format, depth, interface) e `projeto/` (roteiros, levantamentos,
-  upstream). Um só roteiro (os "próximos passos" entram no `ROADMAP.md`, e o histórico dos marcos vira `docs/projeto/historico.md`).
+- Ferramentas: `scripts/dev.sh` vira um despachante fino sobre `scripts/lib/*.sh` (um arquivo por assunto: smoke, fx, xid, appimage).
+- Documentação: `docs/README.md` como índice e três pastas: `usuario/`, `arquitetura/`, `projeto/`; um só roteiro (os "próximos passos" entram no `ROADMAP.md`; o histórico dos marcos vira `docs/projeto/historico.md`).
 
 ## 5. Sequência (cada passo: testes passando + um commit)
 0. **Documentação e raiz** (sem código): índice, juntar os dois roteiros, mover os arquivos de `docs/`. Risco baixo.
 1. **Consolidar o que se repete:** `lr-paths` e os auxiliares. Risco baixo (testes cobrem).
-2. **Quebrar os arquivos enormes** em módulos, sem mudar comportamento. Risco baixo a médio (mecânico).
+2. **Quebrar os arquivos enormes** em módulos por funcionalidade (`features/`, `shared/`), sem mudar comportamento. Risco baixo a médio (mecânico).
 3. **Dividir `control-core`** em três crates e tirar a dependência `control → panel`. Risco médio (muitos `use`), mas o compilador acusa tudo.
-4. **Renomear** pastas e pacotes para o prefixo `lr-` (e ajustar `scripts/appimage.sh`, docs e CI). Risco médio, totalmente mecânico.
+4. **Mover os aplicativos para `apps/` e renomear os pacotes para o prefixo `lr-`** (e ajustar `scripts/appimage.sh` e docs); acrescentar o teste das regras de dependência. Risco médio, mecânico.
 5. **Modularizar `scripts/dev.sh`.** Risco baixo.
 
 ## 6. O que NÃO muda
@@ -70,5 +76,5 @@ O formato do bundle, o protocolo de memória compartilhada, o comportamento da l
 
 ## 7. Decisões que ficam com você
 - Ir pelos passos 0 a 2 agora (baixo risco) e deixar 3 a 5 para depois do teste em jogo do overlay?
-- O prefixo `lr-` serve, ou prefere outro (`linux-reshade-` por extenso nas pastas)?
+- A divisão `apps/` + `crates/` com prefixo `lr-` serve? (É a convenção dos monorepos; o seu `ts-monorepo` usa `packages/`, e eu poderia usar `packages/` no lugar de `crates/` para ficar igual.)
 - Manter os comentários e a documentação em português (como está) ou migrar para inglês? (Não mexo se não pedir.)
