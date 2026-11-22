@@ -424,7 +424,7 @@ fn describe_selection(selection: SelectionRead) {
     }
 }
 
-/// `lrctl depth pick ...`: escreve o pedido que a layer do jogo lê (ver `depth.md`).
+/// `lrctl depth pick ...`: escreve o pedido que a layer do jogo lê (ver `docs/arquitetura/depth.md`).
 fn depth_pick(pick: DepthPick, layer: Option<String>) -> ExitCode {
     let layers = match ipc::live_layers() {
         Ok(l) => l,

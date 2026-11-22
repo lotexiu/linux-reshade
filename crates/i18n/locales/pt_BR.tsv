@@ -349,7 +349,7 @@ invalid value: {}	valor inválido: {}
 invalid: {}	inválido: {}
 layer installed: {}\nmanifest: {}	camada instalada: {}\nmanifesto: {}
 layer removed	camada removida
-linux-reshade {}\nReShade-compatible Vulkan layer for Linux.\n\nData folder: {}\nconfig.ini: {}\nPresets: {}\nCompiled effects cache: {}\nScreenshots: {}\nShared state (memory): {}\n\nReShade options and what is missing: docs/reshade-opcoes.md	linux-reshade {}\nCamada Vulkan compatível com o ReShade, para Linux.\n\nPasta de dados: {}\nconfig.ini: {}\nPresets: {}\nCache dos efeitos compilados: {}\nCapturas de tela: {}\nEstado compartilhado (memória): {}\n\nOpções do ReShade e o que falta: docs/reshade-opcoes.md
+linux-reshade {}\nReShade-compatible Vulkan layer for Linux.\n\nData folder: {}\nconfig.ini: {}\nPresets: {}\nCompiled effects cache: {}\nScreenshots: {}\nShared state (memory): {}\n\nReShade options and what is missing: docs/usuario/reshade-opcoes.md	linux-reshade {}\nCamada Vulkan compatível com o ReShade, para Linux.\n\nPasta de dados: {}\nconfig.ini: {}\nPresets: {}\nCache dos efeitos compilados: {}\nCapturas de tela: {}\nEstado compartilhado (memória): {}\n\nOpções do ReShade e o que falta: docs/usuario/reshade-opcoes.md
 linux-reshade: capture the game screen	linux-reshade: capturar a tela do jogo
 linux-reshade: next preset of the game	linux-reshade: próximo preset do jogo
 linux-reshade: previous preset of the game	linux-reshade: preset anterior do jogo

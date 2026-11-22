@@ -1,4 +1,4 @@
-//! Tipos do `manifest.json` (ver `docs/bundle-format.md`). Campos desconhecidos são ignorados, para
+//! Tipos do `manifest.json` (ver `docs/arquitetura/bundle-format.md`). Campos desconhecidos são ignorados, para
 //! um runtime mais velho ainda ler um bundle com campos novos; já um valor desconhecido num campo
 //! enumerado (por exemplo um novo modo de blend) é erro, porque o runtime não saberia aplicá-lo.
 

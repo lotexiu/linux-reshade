@@ -1,4 +1,4 @@
-//! Observação da profundidade do jogo (etapa D1 do `docs/depth.md`): só olha, não muda nada no que o jogo desenha.
+//! Observação da profundidade do jogo (etapa D1 do `docs/arquitetura/depth.md`): só olha, não muda nada no que o jogo desenha.
 //!
 //! A layer acompanha as imagens de profundidade, os passes de renderização que as usam e os desenhos feitos em
 //! cada passe, junta o que os command buffers enviados à fila fizeram num quadro (como o ReShade faz em

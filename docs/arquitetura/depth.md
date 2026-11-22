@@ -1,7 +1,7 @@
 # Depth buffer (marco 5): desenho
 
 Pedido do dono: o depth buffer é o diferencial do projeto; 38 dos 150 efeitos da pasta dele pedem depth. Pesquisa
-(docs/reshade-feedback.md): no ReShade a detecção é o ponto que mais frustra (não acha, pega a interface em vez da
+(docs/projeto/reshade-feedback.md): no ReShade a detecção é o ponto que mais frustra (não acha, pega a interface em vez da
 cena, MSAA atrapalha). No vkBasalt o depth é experimental e "pode dar muitos problemas". Por isso o desenho abaixo
 torna a escolha do buffer **visível e ajustável por jogo**. Teste de referência: Haste (Unity, Vulkan nativo, tela
 inicial em 3D, abre rápido) e o `vkcube` (tem depth).
@@ -73,7 +73,7 @@ o que muda de jogo para jogo: motivo a mais para observar antes de copiar.
 Custo estimado de uma cópia (não medido): profundidade D32 a 1920x1080 são ~8,3 MB lidos e ~8,3 MB escritos, uns
 0,05 ms numa GPU de ~360 GB/s, mais a espera entre passes; a 1280x720 (FSR do Haste), menos da metade. Para um jogo de
 200 fps (5 ms por quadro), do que se espera algo em torno de 1 a 4 por cento no pior caso. Amostrar a original custa zero
-de banda extra. A medição de verdade fica para a medição de custo por técnica (timestamp queries; ver interface.md).
+de banda extra. A medição de verdade fica para a medição de custo por técnica (timestamp queries; ver docs/arquitetura/interface.md).
 
 ## Haste (Unity, Vulkan nativo): o que se mediu (2026-10-10)
 

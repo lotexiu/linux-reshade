@@ -31,7 +31,7 @@ a roda do mouse sobre um controle rola a lista (não mexe no controle).
 - **Cor dos incompatíveis**: manter a do tema, não forçar vermelho (feito).
 - **Custo de cada efeito**: o `ZXPose.fx` derrubou um jogo de 200 para 166 fps. Idea: medir o tempo de GPU de cada
   técnica (consultas de timestamp na layer) e mostrar na lista, como a aba Statistics do ReShade. Também ajuda a achar
-  os efeitos caros por mau uso (ver a pesquisa em reshade-feedback.md).
+  os efeitos caros por mau uso (ver a pesquisa em docs/projeto/reshade-feedback.md).
 - **Efeitos que pegam a interface do jogo** (desfoque, motion blur...): é limitação do ReShade original também, mas
   talvez dê para fazer melhor. Caminho possível, depois do depth buffer: a mesma interceptação das passagens de
   renderização que o depth precisa serve para achar o ponto "a cena 3D acabou e a interface vai começar" e aplicar os

@@ -10,7 +10,7 @@ HLSL) e licença BSD de 3 cláusulas; presets em `.ini` que se compartilham; int
 presets, ligar efeitos e ajustar parâmetros com sliders e interruptores
 ([visão geral](https://stepmodifications.org/wiki/Guide:ReShade), [TechSpot](https://www.techspot.com/downloads/7206-reshade.html)).
 Nosso lado: formato de preset igual, FX compilado, interface parecida. O que falta está em
-[docs/CONTINUAR.md](CONTINUAR.md).
+[CONTINUAR.md](CONTINUAR.md).
 
 ## Reclamações recorrentes
 - **Versões novas quebram jogos e shaders**: regressões entre versões, jogos que travam ao carregar um shader,
@@ -28,7 +28,7 @@ Nosso lado: formato de preset igual, FX compilado, interface parecida. O que fal
   ([Star Citizen](https://reshade.me/forum/troubleshooting/9484-reshade-performance-hit-in-star-citizen),
   [FPS pela metade](https://reshade.me/forum/troubleshooting/2570-reshade-nearly-halving-framerate)).
   *Para nós:* cada etapa da cadeia copia o frame inteiro; **medir o custo na GPU real fica pendente** (já está em
-  CONTINUAR.md) e vale antes de pôr cadeias longas em jogos pesados.
+  docs/projeto/CONTINUAR.md) e vale antes de pôr cadeias longas em jogos pesados.
 - **Detecção de depth buffer frágil**: "No depth buffers found" depois de atualizar, pega o buffer da interface em
   vez da cena 3D, falha com resoluções fora do padrão, MSAA atrapalha, opções de inverter/logarítmico que não
   resolvem ([não acha o depth](https://reshade.me/forum/troubleshooting/9964-reshade-cant-find-the-depth-buffer---what-should-i-do),

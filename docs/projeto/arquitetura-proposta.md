@@ -27,7 +27,7 @@ Limite: boa parte disso vem de guias e artigos, não de um documento oficial ún
 | Arquivos enormes | `layer/depth/hooks.rs` 1.469 · `layer/effect.rs` 1.240 · `panel/home.rs` 1.179 · `postfx/effect/mod.rs` 1.133 · `gui/window.rs` 1.101 · `control-core/compiler.rs` 1.071 · `gui/shortcuts_dialog.rs` 1.023 |
 | Pequenas repetições | `modified(`, `one_line(`, `expand(`, resolução das pastas XDG (`config`, `install`, `ipc`, o daemon); `page_box`/`hint`/`config_file` só vivem no diálogo de Configurações |
 | Ferramentas de desenvolvimento | `scripts/dev.sh`: 837 linhas e 32 comandos num arquivo só |
-| Raiz e docs | `ROADMAP.md`, `DEPENDENCIAS.md`, `README.md` na raiz; 18 arquivos soltos em `docs/` sem índice; dois roteiros (`ROADMAP.md` histórico e `docs/ROADMAP.md` de próximos passos); `build/`, `dev/`, `dist/` |
+| Raiz e docs (antes do passo 0) | `ROADMAP.md`, `DEPENDENCIAS.md` e `README.md` na raiz; 18 arquivos soltos em `docs/` sem índice; dois roteiros (o histórico, na raiz, e o de próximos passos, em `docs/`); `build/`, `dev/`, `dist/` |
 
 ## 3. Mapa: o que cada convenção vira aqui
 | Convenção | Aqui |
@@ -61,10 +61,10 @@ crates/      (planas, prefixo lr-)
   - `layer`: `effect/` (ciclo de vida da cadeia, troca, estatísticas de FPS, fontes) e `depth/` já é uma funcionalidade, com `hooks/` por família de função (passes, limpezas, consultas, cópias);
   - `lr-panel`: `home/` por assunto (jogo e preset, efeitos, profundidade, mensagens).
 - Ferramentas: `scripts/dev.sh` vira um despachante fino sobre `scripts/lib/*.sh` (um arquivo por assunto: smoke, fx, xid, appimage).
-- Documentação: `docs/README.md` como índice e três pastas: `usuario/`, `arquitetura/`, `projeto/`; um só roteiro (os "próximos passos" entram no `ROADMAP.md`; o histórico dos marcos vira `docs/projeto/historico.md`).
+- Documentação: `docs/README.md` como índice e três pastas: `usuario/`, `arquitetura/`, `projeto/`; um só `ROADMAP.md` (os próximos passos, na raiz); o histórico dos marcos vira `docs/projeto/historico.md`.
 
 ## 5. Sequência (cada passo: testes passando + um commit)
-0. **Documentação e raiz** (sem código): índice, juntar os dois roteiros, mover os arquivos de `docs/`. Risco baixo.
+0. ~~**Documentação e raiz**~~ **feito (22/11)**: índice em `docs/README.md`, um só `ROADMAP.md`, arquivos em `docs/{usuario,arquitetura,projeto}`.
 1. **Consolidar o que se repete:** `lr-paths` e os auxiliares. Risco baixo (testes cobrem).
 2. **Quebrar os arquivos enormes** em módulos por funcionalidade (`features/`, `shared/`), sem mudar comportamento. Risco baixo a médio (mecânico).
 3. **Dividir `control-core`** em três crates e tirar a dependência `control → panel`. Risco médio (muitos `use`), mas o compilador acusa tudo.

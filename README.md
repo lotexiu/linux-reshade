@@ -4,7 +4,7 @@ Pós-processamento de jogos **nativo no Linux**, com uso quase idêntico ao ReSh
 ao **depth buffer** (o ponto que as alternativas atuais no Linux não cobrem bem; ainda não feito, marco 5).
 
 > **Retomando o trabalho (outra máquina ou outra sessão do Claude)?** Leia primeiro
-> [`docs/CONTINUAR.md`](docs/CONTINUAR.md): onde paramos, o que vem agora, combinados de trabalho e armadilhas.
+> [`docs/projeto/CONTINUAR.md`](docs/projeto/CONTINUAR.md): onde paramos, o que vem agora, combinados de trabalho e armadilhas.
 
 ## Estado (2026-10-09)
 
@@ -21,7 +21,7 @@ Rocket League via Proton, só offline):
   o jogo ou formatar a máquina (`lrctl config init <pasta>`).
 
 Em andamento: presets por jogo no formato do ReShade, vários efeitos em cadeia, interface por jogo.
-Ver [`ROADMAP.md`](ROADMAP.md) e [`docs/presets.md`](docs/presets.md).
+Ver [`docs/projeto/historico.md`](docs/projeto/historico.md) e [`docs/usuario/presets.md`](docs/usuario/presets.md).
 
 ## Começar numa máquina nova
 
@@ -67,7 +67,7 @@ lrctl config init /mnt/D/reshade       # prepara a pasta de dados e a escolhe
 
 Variáveis de ambiente úteis: `LINUX_RESHADE_DATA` (pasta de dados), `LINUX_RESHADE_EFFECTS` (lista `:` de
 pastas de efeitos), `LINUX_RESHADE_CACHE`, `LINUX_RESHADE_LOG` (log da layer). A lista completa está em
-`docs/presets.md` e no código de `crates/config`.
+`docs/usuario/presets.md` e no código de `crates/config`.
 
 ## Mapa do repositório
 
@@ -76,8 +76,8 @@ pastas de efeitos), `LINUX_RESHADE_CACHE`, `LINUX_RESHADE_LOG` (log da layer). A
 | `crates/vk-layer` | base de qualquer layer Vulkan: dispatch, cadeia de create-info, negociação com o loader |
 | `crates/layer` | a layer (`liblinux_reshade_layer.so`): present, swapchain, efeitos, canais com o controle |
 | `crates/postfx` | executa um efeito (passes, texturas, uniforms) em Vulkan; testado em GPU de software |
-| `crates/fx-bundle` | formato do bundle (`docs/bundle-format.md`): leitor, uniforms, ids |
-| `crates/ipc` | memória compartilhada entre controle e layer (`docs/ipc.md`): estado, parâmetros, escolha, status, canal por jogo |
+| `crates/fx-bundle` | formato do bundle (`docs/arquitetura/bundle-format.md`): leitor, uniforms, ids |
+| `crates/ipc` | memória compartilhada entre controle e layer (`docs/arquitetura/ipc.md`): estado, parâmetros, escolha, status, canal por jogo |
 | `crates/ini` | `.ini` que preserva comentários, ordem e chaves desconhecidas (base de config e presets) |
 | `crates/config` | pasta de dados, `config.ini`, caminhos de busca em camadas |
 | `crates/control-core` | a lógica do controle, sem interface: compilador, vigia, escolha, parâmetros |
@@ -109,13 +109,13 @@ Os `smoke-*` abrem janelas por ~10 a 30 s: evite mexer em janelas até terminare
 
 | Arquivo | Conteúdo |
 |---|---|
-| [`docs/CONTINUAR.md`](docs/CONTINUAR.md) | **ponto de retomada**: estado, próximos passos, combinados, armadilhas |
-| [`ROADMAP.md`](ROADMAP.md) | os marcos e o que cada um entregou |
-| [`docs/presets.md`](docs/presets.md) | desenho de presets, shaders, jogos e cadeia de efeitos (fases F0..F7) |
-| [`docs/reshade-estudo.md`](docs/reshade-estudo.md) | como o ReShade funciona, lido do código-fonte, com os limites da leitura |
-| [`docs/ipc.md`](docs/ipc.md) | o canal entre controle e layer |
-| [`docs/bundle-format.md`](docs/bundle-format.md) | o formato do bundle |
-| [`DEPENDENCIAS.md`](DEPENDENCIAS.md) | política e decisões sobre dependências e libs próprias |
+| [`docs/projeto/CONTINUAR.md`](docs/projeto/CONTINUAR.md) | **ponto de retomada**: estado, próximos passos, combinados, armadilhas |
+| [`docs/projeto/historico.md`](docs/projeto/historico.md) | os marcos e o que cada um entregou |
+| [`docs/usuario/presets.md`](docs/usuario/presets.md) | desenho de presets, shaders, jogos e cadeia de efeitos (fases F0..F7) |
+| [`docs/projeto/reshade-estudo.md`](docs/projeto/reshade-estudo.md) | como o ReShade funciona, lido do código-fonte, com os limites da leitura |
+| [`docs/arquitetura/ipc.md`](docs/arquitetura/ipc.md) | o canal entre controle e layer |
+| [`docs/arquitetura/bundle-format.md`](docs/arquitetura/bundle-format.md) | o formato do bundle |
+| [`docs/arquitetura/dependencias.md`](docs/arquitetura/dependencias.md) | política e decisões sobre dependências e libs próprias |
 | [`tools/fx2spv/README.md`](tools/fx2spv/README.md) | o compilador FX |
 
 ## Por que existe
@@ -125,7 +125,7 @@ oficial é outro: **layers Vulkan**. Como DXVK (D3D9/10/11) e VKD3D-Proton (D3D1
 uma layer Vulkan vê jogos Vulkan nativos **e** jogos Windows no Proton, sem injeção de DLL.
 
 Objetivo secundário e deliberado: os módulos que esta ferramenta exigir viram **libs próprias reutilizáveis**
-(ver `DEPENDENCIAS.md`). As libs nascem da necessidade do projeto, não antes dela.
+(ver `docs/arquitetura/dependencias.md`). As libs nascem da necessidade do projeto, não antes dela.
 
 ## Decisões tomadas
 
@@ -141,7 +141,7 @@ Objetivo secundário e deliberado: os módulos que esta ferramenta exigir viram 
 | Controle por **processo separado**, memória compartilhada em `/dev/shm` | Parâmetros e escolha são lidos uma vez por frame, sem lock nem syscall. `/dev/shm` (e não `/run/user`) porque o pressure-vessel da Steam o expõe. |
 | **A layer não toca em input** | Reduz superfície no processo do jogo (anti-cheat). Teclado e atalhos ficam no app de controle. |
 | **Wayland é o alvo**; X11 só se um dia for preciso | Atalho global pelo portal XDG GlobalShortcuts (zbus); GNOME mostra um diálogo de confirmação na primeira vez. O atalho é só uma sugestão: o usuário pode trocá-lo. |
-| Interface em **GTK4**, lógica num crate independente de toolkit | Menos crates entre os toolkits de janela e o melhor comportamento no GNOME/Wayland (medido em `DEPENDENCIAS.md`). |
+| Interface em **GTK4**, lógica num crate independente de toolkit | Menos crates entre os toolkits de janela e o melhor comportamento no GNOME/Wayland (medido em `docs/arquitetura/dependencias.md`). |
 | **Nada na pasta do jogo**; pasta de dados escolhida pelo usuário | Reinstalar o jogo ou formatar a máquina não perde shaders nem presets. Shaders globais por padrão, pasta própria por jogo só quando um shader não funciona ali. |
 | **Preset no formato do ReShade** | Presets da comunidade funcionam sem conversão (formato verificado no código do ReShade). |
 | **Depth é opt-in por jogo**, desligado por padrão | É a feature mais sensível para anti-cheat (permite efeitos que "enxergam" através de paredes). |
@@ -158,7 +158,7 @@ Objetivo secundário e deliberado: os módulos que esta ferramenta exigir viram 
 ```
 
 O controle compila cada efeito para a resolução de cada jogo aberto e publica o caminho do bundle; a layer o
-carrega e troca em tempo de execução. Detalhes em `docs/ipc.md`.
+carrega e troca em tempo de execução. Detalhes em `docs/arquitetura/ipc.md`.
 
 ## Diferencial: depth buffer (marco 5, não iniciado)
 
@@ -191,4 +191,4 @@ recusados com uma mensagem clara.
 
 - Nome definitivo do projeto e licença do código próprio (o `reshadefx` que o `fx2spv` usa é BSD-3).
 - Driver alvo: NVIDIA (o que há aqui) é o testado; Mesa não foi testado.
-- Compute shaders, mipmaps e fontes de mouse/teclado dos efeitos: sem plano (ver `docs/CONTINUAR.md`).
+- Compute shaders, mipmaps e fontes de mouse/teclado dos efeitos: sem plano (ver `docs/projeto/CONTINUAR.md`).

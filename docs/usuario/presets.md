@@ -1,7 +1,7 @@
 # Presets, shaders, jogos e cadeia de efeitos
 
 Estado: **proposta, revisão 2** (2026-10-09); F0 e F1 implementadas, o resto ainda sem código. A base factual (o que o ReShade faz, com a
-fonte) está em [reshade-estudo.md](reshade-estudo.md); este documento diz o que copiamos e o que muda.
+fonte) está em [reshade-estudo.md](../projeto/reshade-estudo.md); este documento diz o que copiamos e o que muda.
 
 Pedidos que moldam o desenho: efeito e parâmetros **por jogo**; nada gravado na pasta do jogo; **shaders
 globais por padrão**, com pasta própria por jogo só quando um shader não funcionar naquele jogo; **todas as

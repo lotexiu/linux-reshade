@@ -1,5 +1,5 @@
 //! Observa os passes que desenham na imagem do swapchain (a "tela"), para achar onde a cena termina e a interface do
-//! jogo começa: base do modo "efeito antes da UI" (ver `docs/antes-da-ui.md`). Só observa; não muda nada no jogo.
+//! jogo começa: base do modo "efeito antes da UI" (ver `docs/projeto/antes-da-ui.md`). Só observa; não muda nada no jogo.
 
 use super::observe::LoadOp;
 use std::collections::{HashMap, HashSet};

@@ -3,7 +3,7 @@
 //! Seção global: `Techniques` (só as ligadas, `Nome@Arquivo.fx`), `TechniqueSorting` (todas, na ordem de
 //! execução), `PreprocessorDefinitions` (macros do preset) e `Key<técnica>` (atalho que liga/desliga a
 //! técnica). Uma seção por efeito, `[Arquivo.fx]`, com as macros dele e o valor de cada uniform.
-//! As regras estão em `docs/reshade-estudo.md`, seção 3.
+//! As regras estão em `docs/projeto/reshade-estudo.md`, seção 3.
 //!
 //! [`game`] diz qual preset vale para um jogo.
 //!

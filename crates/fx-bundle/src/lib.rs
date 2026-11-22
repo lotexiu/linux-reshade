@@ -1,4 +1,4 @@
-//! Leitor do bundle de efeito produzido pelo `fx2spv` (formato em `docs/bundle-format.md`).
+//! Leitor do bundle de efeito produzido pelo `fx2spv` (formato em `docs/arquitetura/bundle-format.md`).
 //!
 //! - [`manifest`]: os tipos do `manifest.json`
 //! - [`validate`]: as regras que o runtime assume (referências existentes, nada fora da v1)

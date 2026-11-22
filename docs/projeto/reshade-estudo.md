@@ -1,7 +1,7 @@
 # Estudo: como o ReShade funciona
 
 Resultado da leitura do código-fonte do ReShade (`crosire/reshade`, branch `main`, BSD-3), em 2026-10-09,
-para decidir o que copiar, o que mudar e o que descartar. Serve de referência para `docs/presets.md`.
+para decidir o que copiar, o que mudar e o que descartar. Serve de referência para `docs/usuario/presets.md`.
 
 **Limites da leitura** (para ninguém tomar isto por mais do que é): li cerca de metade de `runtime.cpp`
 (config, presets, carregamento de efeitos, passes) e do `runtime_gui.cpp` (abas Home e Settings). **Não li**:
@@ -92,7 +92,7 @@ deslocamento) **não** são do runtime: vêm do `ReShade.fxh` e o usuário as aj
   `mousepoint`, `mousedelta`, `mousebutton`, `mousewheel`, `overlay_open`, `overlay_active`,
   `overlay_hovered`, `screenshot`, `bufready_depth`. Nosso runtime tem as seis primeiras.
   **Mouse/teclado/overlay não têm equivalente simples no Wayland** (uma layer não recebe entrada):
-  precisa de decisão (ver `docs/presets.md`).
+  precisa de decisão (ver `docs/usuario/presets.md`).
 - `ui_type` nos shaders que temos: `drag`, `slider`, `combo`, `radio`, `input`, `color`, `drag2`, `list`.
   O painel cobre slider, combo, cor, número e interruptor; **`radio`, `list` e `drag2` ainda precisam ser
   conferidos**.

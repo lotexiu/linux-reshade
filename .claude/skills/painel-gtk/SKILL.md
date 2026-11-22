@@ -5,7 +5,7 @@ description: Regras e fluxo para mexer na interface GTK4 do lrpanel (crates/gui)
 
 # Interface do painel (GTK4, Wayland/KDE)
 
-Leia `docs/CONTINUAR.md` ("Arquitetura da interface") antes de começar. Resumo:
+Leia `docs/projeto/CONTINUAR.md` ("Arquitetura da interface") antes de começar. Resumo:
 
 1. Fluxo com lista, busca, filtros ou conteúdo que cresce: **página de um `gtk::Stack`**, nunca popover. Modelo: `crates/gui/src/add_effect.rs`.
 2. Popover só para algo pequeno e fixo (um campo e um botão, um aviso). **Nunca** aninhado, nunca com `DropDown` dentro, nunca com seção
@@ -25,4 +25,4 @@ Leia `docs/CONTINUAR.md` ("Arquitetura da interface") antes de começar. Resumo:
 ## Texto visível
 
 Todo texto que a pessoa lê passa por `control_core::i18n::tr` (fixo) ou `fmt` (com valores); a chave é o texto em inglês e a
-tradução entra em `crates/control-core/locales/pt_BR.tsv`. Ver `docs/idiomas.md`.
+tradução entra em `crates/control-core/locales/pt_BR.tsv`. Ver `docs/usuario/idiomas.md`.

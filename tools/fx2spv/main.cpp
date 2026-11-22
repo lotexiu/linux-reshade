@@ -2,7 +2,7 @@
 //
 // Usa o front-end `reshadefx` do ReShade (BSD-3-Clause) exatamente como o runtime do ReShade o
 // usa no Vulkan: mesmas macros BUFFER_*, mesmo gerador de SPIR-V. É uma ferramenta SEPARADA: nada
-// disto é ligado à layer, que só lê o bundle. O formato está em docs/bundle-format.md.
+// disto é ligado à layer, que só lê o bundle. O formato está em docs/arquitetura/bundle-format.md.
 
 #include "effect_codegen.hpp"
 #include "effect_module.hpp"

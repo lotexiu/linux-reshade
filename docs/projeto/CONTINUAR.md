@@ -4,8 +4,8 @@ Escrito em 2026-10-09 e atualizado em 2026-10-10 (fim da F4). Serve a quem for c
 nova sessão do Claude): diz onde paramos, o que vem agora, como trabalhar aqui e o que já deu errado.
 A memória do Claude fica na máquina dele (`~/.claude/...`), então o que importa dela está **repetido aqui**.
 
-Se for uma nova sessão do Claude: leia, nesta ordem, `README.md`, este arquivo, `docs/presets.md`,
-`docs/reshade-estudo.md` e `docs/ipc.md`; depois `git log --oneline | head -30`.
+Se for uma nova sessão do Claude: leia, nesta ordem, `README.md`, este arquivo, `docs/usuario/presets.md`,
+`docs/projeto/reshade-estudo.md` e `docs/arquitetura/ipc.md`; depois `git log --oneline | head -30`.
 
 ## Onde paramos
 
@@ -13,9 +13,9 @@ Fim da F4: um preset do formato do ReShade vale por jogo, o vigia o transforma e
 cadeia. Commits de referência: `smoke-preset` (`f5eae79`), `lrctl preset` (`7ae4c6a`), sRGB (`5a1fccc`), mipmaps
 (`103fb53`), texturas de arquivo (`a52dff8`, `94079c7`).
 
-| Fase (`docs/presets.md`) | Estado |
+| Fase (`docs/usuario/presets.md`) | Estado |
 |---|---|
-| Marcos 0 a 4 do `ROADMAP.md` (layer, passe fixo, bundle, controle, GUI) | **feitos** |
+| Marcos 0 a 4 do `docs/projeto/historico.md` (layer, passe fixo, bundle, controle, GUI) | **feitos** |
 | F0 configuração e caminhos | **feita** |
 | F1 escolha e parâmetros por jogo | **feita** |
 | F2 crate `preset` e `game.ini` | **feita** |
@@ -23,12 +23,12 @@ cadeia. Commits de referência: `smoke-preset` (`f5eae79`), `lrctl preset` (`7ae
 | F4 plano a partir do preset (`game_plan`, `games`) | **feita**; `lrctl preset ...` edita |
 | F5 interface por jogo (no estilo da aba Home do ReShade) | **primeira versão feita** (`panel::Home`, `lrpanel`); ver pendências abaixo |
 | F6 macros por nível (recompilam) | **feita**; atalhos de preset e transição suave ainda não |
-| D1 observar a profundidade (`LINUX_RESHADE_DEPTH_OBSERVE=1`) | **feita**, testada no vkcube e no Haste; ver `docs/depth.md` |
+| D1 observar a profundidade (`LINUX_RESHADE_DEPTH_OBSERVE=1`) | **feita**, testada no vkcube e no Haste; ver `docs/arquitetura/depth.md` |
 | F7 o resto do inventário (atalhos por técnica, capturas, OSD, mouse/teclado) | a fazer |
-| D2 profundidade amostrada (original ou foto de um passe) | **feita**; regra automática do `DontCare` validada no Haste (2026-10-10); `docs/depth.md` |
+| D2 profundidade amostrada (original ou foto de um passe) | **feita**; regra automática do `DontCare` validada no Haste (2026-10-10); `docs/arquitetura/depth.md` |
 | D3 profundidade por jogo | parcial: marcador `depth-arm-<jogo>` arma o jogo sozinho; o painel mostra o estado da profundidade e as macros (`UPSIDE_DOWN` à mão, no preset); falta escolher candidata/passe no painel |
-| Compute e texturas 1D/3D | **feitos** (2026-10-10): 119 de 152 efeitos executam na lavapipe; `smoke-compute` passa na GPU real (vkcube); falta testar os efeitos do Marty num jogo; `docs/levantamento.md` |
-| Efeito antes da UI | adiado: no Haste a UI já está na imagem de render (`docs/antes-da-ui.md`) |
+| Compute e texturas 1D/3D | **feitos** (2026-10-10): 119 de 152 efeitos executam na lavapipe; `smoke-compute` passa na GPU real (vkcube); falta testar os efeitos do Marty num jogo; `docs/projeto/levantamento.md` |
+| Efeito antes da UI | adiado: no Haste a UI já está na imagem de render (`docs/projeto/antes-da-ui.md`) |
 
 Também feito nesta etapa: sRGB (8 bits), mipmaps, texturas de arquivo (PNG), o remendo de `#include` do Windows
 no `fx2spv` (`tools/fx2spv/patches`), a pasta de dados padrão (`~/.local/share/linux-reshade`), o id do jogo
@@ -43,7 +43,7 @@ mensagens.
 
 1. **Pasta de dados única** escolhida pelo usuário, com um `location.ini` de uma linha em `~/.config/linux-reshade/`
    apontando para ela; cada caminho (shaders, texturas, presets, cache) também é configurável. Caminhos relativos
-   valem a partir do `config.ini`. Layout em `docs/presets.md`.
+   valem a partir do `config.ini`. Layout em `docs/usuario/presets.md`.
 2. **Shaders globais por padrão**; `<Presets>/<Jogo>/Shaders` (se existir) é procurada antes das globais.
 3. **Preset no formato do `ReShadePreset.ini`** (`Techniques`, `TechniqueSorting`, `PreprocessorDefinitions`,
    `Key<técnica>`, seção `[Arquivo.fx]`). Ordem de execução = ordem da lista (a primeira roda primeiro).
@@ -73,7 +73,7 @@ mensagens.
   `feat(crate): ...`, `fix(...)`, `docs: ...`, `test: ...`.
 - **Modular ao máximo**: um crate por função, sem repetir código; "primeiro fazer existir"; não pular etapas.
 - **Cuidado com dependências**: medir (`cargo tree`: nº de crates, licença, mantenedor) e registrar em
-  `DEPENDENCIAS.md` **antes** de adotar. A layer (dentro do jogo) exige critério mais duro. As crates novas da
+  `docs/arquitetura/dependencias.md` **antes** de adotar. A layer (dentro do jogo) exige critério mais duro. As crates novas da
   F0/F1 (`ini`, `config`) não adicionam nenhuma dependência de terceiros.
 - **Testar de verdade** (GPU de software lavapipe, validation layer, os `smoke-*`) antes de declarar pronto, e
   **dizer o que não foi testado**.

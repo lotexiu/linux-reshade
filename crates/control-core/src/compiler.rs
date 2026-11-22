@@ -283,7 +283,7 @@ impl Compiler {
         Self::from_config(&Config::load())
     }
 
-    /// Monta o compilador a partir da configuração do usuário (`docs/presets.md`). Sem pasta de dados nem
+    /// Monta o compilador a partir da configuração do usuário (`docs/usuario/presets.md`). Sem pasta de dados nem
     /// lista de efeitos, usa os padrões de um clone do repositório (`target/release/lrctl` dentro dele).
     /// Variáveis próprias daqui: `LINUX_RESHADE_FX2SPV` e `LINUX_RESHADE_INCLUDES` (lista separada por `:`).
     pub fn from_config(config: &Config) -> Result<Self, String> {

@@ -1,4 +1,4 @@
-//! A configuração de onde moram os dados do usuário (ver `docs/presets.md`).
+//! A configuração de onde moram os dados do usuário (ver `docs/usuario/presets.md`).
 //!
 //! ```text
 //! ~/.config/linux-reshade/location.ini   data_dir=/mnt/D/reshade       (o único arquivo fora da pasta de dados)

@@ -1,39 +1,36 @@
-# Roadmap
+# Caminhos combinados (a retomar)
 
-Marcos em ordem. Cada um deve rodar de ponta a ponta antes do próximo. Atualizar incrementalmente.
-Para retomar o trabalho (onde paramos, próximos passos, combinados): `docs/CONTINUAR.md`.
+Ordem combinada em 08/11/2026:
+1. ~~Teste no A Hat in Time com `GE-Proton11-7-dxvk-exp`~~ **feito (08/11): não travou**; o DXVK do Experimental não é a causa, sobra o resto do Proton Experimental (ver `docs/arquitetura/depth.md`).
+2. **Atualizar a máquina para o Fedora 45** (a versão nova que outras pessoas devem começar a usar) e conferir instalação, layer, atalhos e AppImage nela.
+3. **Testar o contador de desempenho e os efeitos básicos em jogo** (ver `docs/usuario/efeitos-embutidos.md`).
+4. Facilitar o uso e preservar FPS (ver abaixo).
 
-0. **Ambiente.** Instalar Rust (rustup), SDK/ferramentas Vulkan (`vulkaninfo`, `glslc`, `spirv-val`),
-   e um jogo ou demo Vulkan simples para teste. Opcional agora: `gamescope`. Criar o workspace Cargo
-   e `git init`.
-   *Feito em 2026-10-09:* git, Rust 1.99 (asdf, fixado em `.tool-versions`), `scripts/dev.sh`. *Falta:* `sudo apt-get install
-   build-essential vulkan-tools ...` (ver `scripts/dev.sh setup`).
-1. **Layer passthrough.** *(parte feita em 2026-10-09: layer carrega no `vkcube` sob Wayland/NVIDIA, repassa tudo e registra instance/device/swapchain/present; `scripts/dev.sh smoke` verifica. Flag de efeitos em memória compartilhada (crate `ipc`) escrita pelo `lrctl` e lida pela layer a cada present, coberta pelo `smoke`. Atalho global (Ctrl+Shift+F10) via portal GlobalShortcuts, em `lrctl daemon`, testado com `scripts/dev.sh hotkey`: ciclo ligar/desligar visto pela layer. Verificado também dentro do container `soldier` da Steam (`scripts/dev.sh smoke-steam`): layer carregada, estado em `/dev/shm` visível, flag respeitada. Falta: Proton de verdade (sniper), jogos de 32 bits, e o passe que inverte as cores (marco 2).)* Layer Vulkan em Rust (`ash`) que só repassa tudo e é carregada num teste.
-   Critério de aceite: `scripts/dev.sh run` mostra a layer no `VK_LOADER_DEBUG=layer` do `vkcube`, o
-   log registra cada Present, e um processo separado liga/desliga uma flag em memória compartilhada
-   (inverter cores quando ligada) com atalho global. Inclui manifesto JSON, ativação por variável de ambiente (para não rodar em todo processo
-   Vulkan) e teste dentro do container do Steam (pressure-vessel).
-2. **Passe fullscreen fixo.** *(feito em 2026-10-09: crate `postfx` + integração na layer; Ctrl+Shift+F10 alterna entre normal e invertido no `vkcube`; `scripts/dev.sh validate` roda com a validation layer sem mensagens. Pendente: espaço de cor sRGB, desempenho medido, jogos reais.)* Ler o swapchain e escrever nele (por exemplo inverter cores).
-3. **Bundle + um `.fx` simples** *(feito em 2026-10-09: formato v1 em `docs/bundle-format.md`; `tools/fx2spv` (C++, reshadefx BSD-3) compila FX para bundle; crate `fx-bundle` lê e valida; `postfx::Effect` executa; a layer roda o bundle de `LINUX_RESHADE_BUNDLE`. 15 efeitos executam na GPU de software com a validation layer sem mensagens (13 da comunidade, Sépia e Inversão); 5 são recusados com motivo explícito: 3 usam depth (marco 5) e 2 precisam carregar imagem de arquivo. Pendente: carregador de imagens, mipmaps, swapchain sRGB, recompilar o bundle quando a resolução muda.)* (só cor, sem depth). Define o formato do manifesto: passes,
-   texturas, samplers, uniforms, técnicas, anotações para a UI, semânticas `COLOR` e `DEPTH`.
-4. **App de controle** *(4a feito em 2026-10-09: `lrctl uniforms|get|set|reset` altera parâmetros em tempo real por um bloco seqlock em memória compartilhada, documentado em `docs/ipc.md`. 4b feito: `lrctl use` escolhe o efeito e a layer o troca em tempo de execução, sem editar o Steam. 4c feito: a layer informa resolução, formato e estado de cada swapchain (`lrctl layers`), `lrctl use <Nome>` escolhe o efeito por nome e o vigia (no `daemon`) o compila para cada resolução que aparecer, verificado com dois `vkcube` de tamanhos diferentes (`scripts/dev.sh smoke-auto`). 4d feito: `lrpanel`, interface GTK4 (efeito, parâmetros gerados das anotações `ui_*`, jogos e estado, interruptor de efeitos), com a lógica num crate independente de toolkit (`panel`); verificada de ponta a ponta com um `vkcube` real (`scripts/dev.sh panel-smoke`).)* conversando por socket: parâmetros, presets, recompilação quando um
-   `#define` muda (hot reload do bundle).
-   *Próximo (`docs/presets.md`; F0 feita: pasta de dados, `config.ini`, `lrctl config`; F1 feita: efeito e parâmetros por jogo, `--layer`):* efeito e parâmetros por jogo, presets em pasta configurável
-   (`preset.ini` global e uma pasta por jogo), vários efeitos encadeados em ordem, paridade com o ReShade.
-5. **Depth buffer.** O diferencial. Rastreio de imagens/draws/layouts, escolha heurística,
-   cópia antes do clear, Z invertido, formatos, MSAA. Testar com jogos Vulkan nativos e D3D no Proton.
-6. **Depois, sem ordem fixa:** formato nativo de efeito além do FX, backend OpenGL, backend Windows,
-   fusão de passes e outras otimizações.
+## Antes do resto: arrumar a casa (pedido de 08/11/2026; o usuário vai atualizar a máquina para o Fedora 45 antes de seguir)
+1. ~~**Troca de idioma que não aplica direito:**~~ **feito (22/11)**: a janela de Configurações não era do programa (`application()` vazio), então o pedido de troca nunca chegava à principal, e depois, ao associá-la, sobrava uma Configurações antiga; o modelo também guardava textos já traduzidos. Corrigido e coberto por `lrpanel --switch-language` no `ui-smoke`. Descrição original: a janela de Configurações atualiza, mas a janela principal não (a troca cria uma instância nova na configuração em vez de
+   atualizar a principal). Validar com calma o fluxo inteiro (catálogo, `LR_LANG`, `ui.ini`, janela principal, páginas em pilha, diálogos abertos) e cobrir com teste.
+2. **Reorganização do projeto**, para ficar mais intuitivo e fácil de manter: estrutura de pastas e módulos, menos código repetido, legibilidade, fronteiras claras entre
+   crates (layer, postfx, painel, gui, control, ipc...). O usuário acha este projeto o mais diferente e menos intuitivo entre os que conhece.
+   **Antes de mexer, fazer uma pesquisa** de como projetos maiores parecidos organizam isso (layers Vulkan, workspaces Rust grandes, apps GTK) e propor o desenho;
+   só então migrar, em passos pequenos e com os testes passando a cada um.
 
-## Regra para as libs
+## Facilitar o uso
+- Botão que copia `LINUX_RESHADE=1 %command%` para as opções de inicialização da Steam.
+- Lembrar a profundidade escolhida por jogo (`game.ini`); combinar imagem + ponto de captura (hoje a escolha é exclusiva no arquivo).
+- Lista de passes sem corte (campo estruturado no status em vez do texto de 700 caracteres).
+- `lrctl doctor` completo e "Exportar diagnóstico" (distribuição, driver, Vulkan, layer, spirv-opt, portal, Xid recentes, log da layer).
+- Aviso no painel para o Proton Experimental (troca de definições ao vivo pode derrubar a GPU) e detecção de Xid.
+- Presets prontos por faixa (Leve, Médio, Pesado); importar/exportar presets do ReShade.
 
-Nenhuma lib é criada antes de um marco precisar dela. Lista de candidatas, gatilhos e política de
-terceiros em `DEPENDENCIAS.md`.
+## Preservar FPS (ideias, da que mais ajuda à que menos)
+1. Mostrar o custo de GPU de cada efeito no painel (a layer já mede por etapa).
+2. Guarda de FPS: se o tempo de quadro passar de um limite, reduzir a qualidade (macro) ou desligar o efeito mais caro, e voltar quando sobrar folga.
+3. Pular trabalho que não aparece (menus sem cena 3D; só copiar profundidade se algum efeito a usa).
+4. Texturas temporárias de efeitos diferentes dividindo a mesma memória.
 
-## Como começar o código (quando for a hora)
+## Adiados
+- Ubuntu (visto em um teste: atalhos não funcionaram e as mudanças de efeito só valiam na abertura do jogo): depois do Fedora 45; ver `docs/usuario/instalacao.md`.
+- Seleção automática de profundidade por pontuação e estabilidade (média móvel por estratégia); só depois de dados de vários jogos.
 
-- Um **workspace Cargo** na raiz deste diretório. Começar com poucos crates (layer, app de
-  controle). Crates novos aparecem quando um marco pedir.
-- Libs nascem **dentro do workspace**, como crates internos. Só vão para repositório próprio
-  (como o `@lotexiu/typescript`) depois que a API estabilizar.
-- Spikes e benchmarks em `.tmp/`, fora do git, no estilo do `@lotexiu/typescript`.
+## Pendente do overlay
+- O ícone de "processando" no jogo existe (marcador `busy-*` na pasta de estado enquanto o vigia compila, e a cadeia sendo montada); falta ver em jogo se aparece nos momentos certos.

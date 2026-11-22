@@ -252,7 +252,7 @@ pub fn set_depth_arm(game: &str, on: bool) -> io::Result<()> {
     set_depth_arm_in(&state_dir(), game, on)
 }
 
-/// O pedido da pessoa para a profundidade de um jogo: a layer lê o arquivo `depth-pick-<id da layer>` (ver `docs/depth.md`).
+/// O pedido da pessoa para a profundidade de um jogo: a layer lê o arquivo `depth-pick-<id da layer>` (ver `docs/arquitetura/depth.md`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DepthPick {
     /// A heurística da layer.

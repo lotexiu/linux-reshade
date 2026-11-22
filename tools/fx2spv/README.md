@@ -1,7 +1,7 @@
 # fx2spv
 
 Compila um efeito ReShade FX para um **bundle** (`manifest.json` + um `.spv` por entry point; formato
-em [`docs/bundle-format.md`](../../docs/bundle-format.md)). É uma ferramenta separada: nada dela é
+em [`docs/arquitetura/bundle-format.md`](../../docs/arquitetura/bundle-format.md)). É uma ferramenta separada: nada dela é
 ligado à layer, que só lê o bundle.
 
 ```
