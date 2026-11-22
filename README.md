@@ -79,6 +79,7 @@ pastas de efeitos), `LINUX_RESHADE_CACHE`, `LINUX_RESHADE_LOG` (log da layer). A
 | `crates/fx-bundle` | formato do bundle (`docs/arquitetura/bundle-format.md`): leitor, uniforms, ids |
 | `crates/ipc` | memória compartilhada entre controle e layer (`docs/arquitetura/ipc.md`): estado, parâmetros, escolha, status, canal por jogo |
 | `crates/ini` | `.ini` que preserva comentários, ordem e chaves desconhecidas (base de config e presets) |
+| `crates/paths` | as pastas do usuário (XDG: config, dados, cache, estado), num lugar só |
 | `crates/config` | pasta de dados, `config.ini`, caminhos de busca em camadas |
 | `crates/control-core` | a lógica do controle, sem interface: compilador, vigia, escolha, parâmetros |
 | `crates/control` | `lrctl` (linha de comando e daemon) |

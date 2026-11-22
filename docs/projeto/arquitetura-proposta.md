@@ -65,8 +65,8 @@ crates/      (planas, prefixo lr-)
 
 ## 5. Sequência (cada passo: testes passando + um commit)
 0. ~~**Documentação e raiz**~~ **feito (22/11)**: índice em `docs/README.md`, um só `ROADMAP.md`, arquivos em `docs/{usuario,arquitetura,projeto}`.
-1. **Consolidar o que se repete:** `lr-paths` e os auxiliares. Risco baixo (testes cobrem).
-2. **Quebrar os arquivos enormes** em módulos por funcionalidade (`features/`, `shared/`), sem mudar comportamento. Risco baixo a médio (mecânico).
+1. ~~**Consolidar o que se repete**~~ **feito (22/11)**: crate `paths` (as pastas XDG, antes repetidas em 7 crates), `config::ui_file`, `util::modified`. A medição mostrou que `expand` e `one_line` não eram repetições de verdade (funções diferentes).
+2. ~~**Quebrar os arquivos enormes**~~ **feito (22/11)**, sem mudar comportamento, com testes e smokes passando a cada passo: `gui` (`app/window/`, `features/{effects,depth,games,flatpak,settings}`, `shared/`, uma aba das Configurações por arquivo), `panel/home/`, `layer/effect/`, `layer/depth/hooks/`, `control-core/compiler/`, `ipc/{depth,markers,daemon_lock}`, `postfx/effect/build.rs`. Nenhum arquivo passa de ~700 linhas (o `build` do efeito é uma função só).
 3. **Dividir `control-core`** em três crates e tirar a dependência `control → panel`. Risco médio (muitos `use`), mas o compilador acusa tudo.
 4. **Mover os aplicativos para `apps/` e renomear os pacotes para o prefixo `lr-`** (e ajustar `scripts/appimage.sh` e docs); acrescentar o teste das regras de dependência. Risco médio, mecânico.
 5. **Modularizar `scripts/dev.sh`.** Risco baixo.
