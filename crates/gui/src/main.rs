@@ -6,7 +6,7 @@
 
 mod features;
 mod shared;
-mod window;
+mod app;
 
 static GTK_WARNINGS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
@@ -167,7 +167,7 @@ fn main() -> glib::ExitCode {
                 }
             }
             let home = panel::Home::new(Compiler::from_env(), config::Config::load().presets_dir, state);
-            let ui = window::Ui::new(app, home);
+            let ui = app::window::Ui::new(app, home);
             ui.window.present();
             // Os botões e o relógio da tela guardam só referências fracas da interface (para não formarem um ciclo):
             // alguém precisa segurá-la viva enquanto o programa roda. Sem isto ela some ao fim desta função e
@@ -185,7 +185,7 @@ fn main() -> glib::ExitCode {
                     let old = current.borrow().clone();
                     old.home().borrow_mut().relocalize();
                     let (width, height) = (old.window.width(), old.window.height());
-                    let new = window::Ui::with_home(&app, old.home());
+                    let new = app::window::Ui::with_home(&app, old.home());
                     new.window.set_default_size(width, height);
                     new.window.present();
                     *current.borrow_mut() = new.clone();
@@ -214,7 +214,7 @@ fn main() -> glib::ExitCode {
 }
 
 /// Sem ninguém segurando a interface além do próprio programa, ela ainda existe e o relógio da tela segue rodando.
-async fn keepalive_check(app: gtk::Application, ui: std::rc::Weak<window::Ui>, exit: Rc<RefCell<glib::ExitCode>>) {
+async fn keepalive_check(app: gtk::Application, ui: std::rc::Weak<app::window::Ui>, exit: Rc<RefCell<glib::ExitCode>>) {
     glib::timeout_future(Duration::from_millis(1500)).await;
     match ui.upgrade() {
         Some(_) => println!("lrpanel keepalive: ok"),
@@ -227,7 +227,7 @@ async fn keepalive_check(app: gtk::Application, ui: std::rc::Weak<window::Ui>, e
 }
 
 /// O roteiro dos modos de teste: espera a janela ser desenhada, age como um usuário e sai deixando tudo como estava.
-async fn test_run(app: gtk::Application, ui: Rc<window::Ui>, options: Rc<Options>, exit: Rc<RefCell<glib::ExitCode>>) {
+async fn test_run(app: gtk::Application, ui: Rc<app::window::Ui>, options: Rc<Options>, exit: Rc<RefCell<glib::ExitCode>>) {
     let fail = |why: String| {
         eprintln!("lrpanel: {why}");
         *exit.borrow_mut() = glib::ExitCode::FAILURE;

@@ -161,7 +161,7 @@ impl EffectRow {
             label.set_wrap(true);
             label.set_max_width_chars(48);
             label.set_xalign(0.0);
-            crate::window::margins(&label, 8);
+            crate::app::window::margins(&label, 8);
             let popover = gtk::Popover::new();
             popover.set_child(Some(&label));
             button.set_popover(Some(&popover));
@@ -277,7 +277,7 @@ impl EffectRow {
             RefCell::new(view)
         });
         let outer = gtk::Box::new(gtk::Orientation::Vertical, 4);
-        crate::window::margins(&outer, 8);
+        crate::app::window::margins(&outer, 8);
         let top = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         top.append(&head);
         let has_panel = true; // as definições de pré-processador do efeito estão sempre no painel
