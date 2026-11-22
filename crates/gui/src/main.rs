@@ -195,12 +195,17 @@ fn main() -> glib::ExitCode {
                 let (app, current) = (app.clone(), current.clone());
                 move |_, _| {
                     let old = current.borrow().clone();
+                    old.home().borrow_mut().relocalize();
                     let (width, height) = (old.window.width(), old.window.height());
                     let new = window::Ui::with_home(&app, old.home());
                     new.window.set_default_size(width, height);
                     new.window.present();
                     *current.borrow_mut() = new.clone();
-                    // As Configurações eram filhas da janela velha e saem com ela: volta a abri-las, na mesma aba.
+                    // As Configurações (e qualquer outra janela filha) eram da janela velha: fecham com ela, e as Configurações voltam a abrir na janela
+                    // nova. Sem fechá-las ficava uma segunda janela de Configurações, ainda no idioma antigo.
+                    for child in app.windows().into_iter().filter(|w| w.transient_for().as_ref() == Some(old.window.upcast_ref::<gtk::Window>())) {
+                        child.destroy();
+                    }
                     old.window.destroy();
                     shortcuts_dialog::open_at(&new.window, 0);
                 }
@@ -256,14 +261,27 @@ async fn test_run(app: gtk::Application, ui: Rc<window::Ui>, options: Rc<Options
     }
     if let Some(code) = &options.switch_language {
         let before = audit::texts_of(&ui.window);
-        control_core::i18n::set(code);
-        app.activate_action("relocalize", None);
+        // O caminho de verdade: as Configurações (uma janela filha) pedem a troca. Ela só chega à janela principal se a filha sabe de que programa é.
+        let settings = shortcuts_dialog::open(&ui.window);
+        let Some(language) = control_core::i18n::languages().iter().position(|l| l.code == *code) else {
+            return fail(format!("idioma desconhecido: {code}"));
+        };
+        match audit::first_dropdown(settings.upcast_ref()) {
+            // Escolhe o idioma na lista das Configurações, como a pessoa: é esse clique que refaz a janela principal.
+            Some(dropdown) => dropdown.set_selected(language as u32),
+            None => return fail("a lista de idiomas não está na página Geral das Configurações".to_string()),
+        }
         glib::timeout_future(Duration::from_millis(1500)).await;
         let windows: Vec<gtk::Window> = app.windows();
         let mains = windows.iter().filter(|w| w.is::<gtk::ApplicationWindow>()).count();
         let after = windows.iter().find(|w| w.is::<gtk::ApplicationWindow>()).map(|w| audit::texts_of(w)).unwrap_or_default();
-        if mains != 1 {
-            fail(format!("trocar o idioma deixou {mains} janelas principais (esperava 1)"));
+        // Texto que ainda está em inglês na janela nova mas tem tradução: ficou preso (um modelo compartilhado guardou o texto, por exemplo).
+        let stuck: Vec<&String> = after.iter().filter(|t| control_core::i18n::tr_dyn(t) != **t).collect();
+        let settings_windows = windows.iter().filter(|w| !w.is::<gtk::ApplicationWindow>()).count();
+        if mains != 1 || settings_windows != 1 {
+            fail(format!("trocar o idioma deixou {mains} janela(s) principal(is) e {settings_windows} de Configurações (esperava 1 e 1)"));
+        } else if !stuck.is_empty() {
+            fail(format!("trocar o idioma deixou {} texto(s) sem traduzir na janela principal: {:?}", stuck.len(), stuck));
         } else if before == after {
             fail("trocar o idioma não mudou nenhum texto".to_string());
         } else {

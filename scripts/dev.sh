@@ -624,6 +624,8 @@ cmd_panel() {
 cmd_ui_smoke() {
   cmd_build -p linux-reshade-gui
   timeout 90 "$ROOT/target/release/lrpanel" --smoke-popovers
+  # A troca de idioma pelas Configurações (o clique de verdade): uma janela principal e uma de Configurações, tudo no idioma novo.
+  LR_LANG=en timeout 90 "$ROOT/target/release/lrpanel" --switch-language pt_BR 2>&1 | grep -E "^lrpanel(:| switch-language)" | grep -v "jogos:" | tee /dev/stderr | grep -q "switch-language: ok"
 }
 
 cmd_panel_smoke() {

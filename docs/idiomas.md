@@ -6,7 +6,8 @@ A linha `# language: Nome do idioma` dá o nome que aparece na lista. Texto sem 
 
 ## Escolher o idioma
 
-- No painel: **Configurações → Geral → Idioma**. Vale na hora (a janela é refeita no mesmo lugar) e fica em
+- No painel: **Configurações → Geral → Idioma**. Vale na hora (a janela principal e as Configurações são refeitas, com o mesmo modelo, e o que o
+  modelo guarda já traduzido é refeito também) e fica em
   `~/.config/linux-reshade/ui.ini` (`language=pt_BR`).
 - Pela variável `LR_LANG` (por exemplo `LR_LANG=pt_BR lrctl layers`), que vale mais que o arquivo.
 - Sem nenhuma das duas: inglês. Sob o `cargo` (test, run) o arquivo é ignorado e vale só `LR_LANG`.
@@ -39,7 +40,8 @@ A chave é o texto em inglês; acrescente a linha no `pt_BR.tsv` (e nos outros i
 ## Conferir
 
 - `lrpanel --dump-texts` lista todo texto visível (janela, páginas e abas das Configurações); compare `LR_LANG=en` com o outro idioma.
-- `lrpanel --switch-language <código>` troca o idioma com a janela aberta e confere que ficou uma só janela, com os textos novos.
+- `lrpanel --switch-language <código>` escolhe o idioma na lista das Configurações (o clique de verdade) e confere que ficou uma janela principal e uma de
+  Configurações, sem nenhum texto que tenha tradução ainda em inglês (os itens de lista que vêm de um efeito não contam). Roda no `scripts/dev.sh ui-smoke`.
 - Os testes de `control-core` e dos crates de baixo nível rodam em inglês; os de `panel` e `gui` também, desde que não haja `LR_LANG`.
 
 ## O que não é traduzido

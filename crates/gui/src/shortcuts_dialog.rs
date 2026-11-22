@@ -941,6 +941,8 @@ pub fn open(parent: &gtk::ApplicationWindow) -> gtk::Window {
 /// Como [`open`], já na aba `tab`.
 pub fn open_at(parent: &gtk::ApplicationWindow, tab: u32) -> gtk::Window {
     let window = gtk::Window::builder().title(tr("Settings")).transient_for(parent).modal(true).default_width(700).default_height(600).build();
+    // Sem isto a janela não sabe de que programa é (`window.application()` vazio) e a troca de idioma que ela pede não chega à janela principal.
+    window.set_application(parent.application().as_ref());
     let notebook = gtk::Notebook::new();
     notebook.append_page(&general_page(&window), Some(&gtk::Label::new(Some(tr("General")))));
     notebook.append_page(&shortcuts_page(&window), Some(&gtk::Label::new(Some(tr("Shortcuts")))));

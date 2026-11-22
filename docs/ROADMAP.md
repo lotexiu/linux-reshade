@@ -7,7 +7,7 @@ Ordem combinada em 08/11/2026:
 4. Facilitar o uso e preservar FPS (ver abaixo).
 
 ## Antes do resto: arrumar a casa (pedido de 08/11/2026; o usuário vai atualizar a máquina para o Fedora 45 antes de seguir)
-1. **Troca de idioma que não aplica direito:** a janela de Configurações atualiza, mas a janela principal não (a troca cria uma instância nova na configuração em vez de
+1. ~~**Troca de idioma que não aplica direito:**~~ **feito (22/11)**: a janela de Configurações não era do programa (`application()` vazio), então o pedido de troca nunca chegava à principal, e depois, ao associá-la, sobrava uma Configurações antiga; o modelo também guardava textos já traduzidos. Corrigido e coberto por `lrpanel --switch-language` no `ui-smoke`. Descrição original: a janela de Configurações atualiza, mas a janela principal não (a troca cria uma instância nova na configuração em vez de
    atualizar a principal). Validar com calma o fluxo inteiro (catálogo, `LR_LANG`, `ui.ini`, janela principal, páginas em pilha, diálogos abertos) e cobrir com teste.
 2. **Reorganização do projeto**, para ficar mais intuitivo e fácil de manter: estrutura de pastas e módulos, menos código repetido, legibilidade, fronteiras claras entre
    crates (layer, postfx, painel, gui, control, ipc...). O usuário acha este projeto o mais diferente e menos intuitivo entre os que conhece.

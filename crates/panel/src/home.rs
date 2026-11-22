@@ -304,6 +304,14 @@ impl Home {
         }
     }
 
+    /// Depois de trocar o idioma: refaz o que o modelo guarda já traduzido (os avisos das linhas do preset, o aviso da profundidade). Os
+    /// avisos pontuais de uma ação (`done`) ficam como estavam. Sem isto a janela nova mostrava esses textos no idioma antigo.
+    pub fn relocalize(&mut self) {
+        self.view_key = None;
+        self.version += 1;
+        self.refresh();
+    }
+
     /// Sobe a cada mudança do que a tela mostra (ver `refresh`): a interface pula o desenho se a versão é a que ela já desenhou.
     pub fn version(&self) -> u64 {
         self.version
