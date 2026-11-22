@@ -256,7 +256,7 @@ fn spawn_config_watch(config: &config::Config, techs: &[control_core::tech_keys:
     // Reinicia por qualquer ajuste que o daemon lê só na partida: teclas, pastas e capturas.
     let keys_now = |c: &config::Config| {
         let mut v: Vec<String> = config::KEY_NAMES.iter().map(|(k, _)| c.key(k)).collect();
-        v.push(format!("{:?}|{:?}|{:?}|{:?}|{}", c.effect_paths, c.texture_paths, c.presets_dir, c.screenshot_dir, c.screenshot_before));
+        v.push(format!("{:?}|{:?}|{:?}|{:?}|{}|{:?}", c.effect_paths, c.texture_paths, c.presets_dir, c.screenshot_dir, c.screenshot_before, c.overlay));
         v
     };
     // Os atalhos de técnica moram nos presets: se mudam, o daemon também se reinicia.

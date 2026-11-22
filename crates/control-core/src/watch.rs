@@ -159,7 +159,7 @@ const ARM_EVERY: Duration = Duration::from_secs(3);
 pub fn run(compiler: &Compiler, state: &ipc::Writer, presets_dir: Option<std::path::PathBuf>, global_macros: &str, screenshots: &std::path::Path) -> ! {
     let mut saver = crate::shots::Saver::default();
     let mut failures = Failures::new();
-    let mut games = presets_dir.map(|dir| crate::games::Games::new(dir).with_global_macros(global_macros).with_depth_dir(ipc::state_dir()));
+    let mut games = presets_dir.map(|dir| crate::games::Games::new(dir).with_global_macros(global_macros).with_depth_dir(ipc::state_dir()).with_overlay(config::Config::load().overlay.preset_text()));
     let mut last_prune = std::time::Instant::now();
     let mut last_arm: Option<std::time::Instant> = None;
     let mut known: Vec<String> = Vec::new();

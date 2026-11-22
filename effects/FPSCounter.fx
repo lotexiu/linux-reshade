@@ -1,5 +1,5 @@
-// Contador de quadros por segundo e tempo de quadro no canto da tela (o equivalente ao OSD de FPS do ReShade).
-// Escrito para este projeto; usa só a fonte `frametime` do runtime. O valor é suavizado entre os quadros.
+// Desempenho no canto da tela (o equivalente ao OSD de FPS do ReShade): FPS agora, média, mínimo, máximo e 1% low dos últimos 5 s, e o tempo de
+// quadro. Escrito para este projeto; usa as fontes `frametime` e `fps_*` do runtime. O FPS "agora" é suavizado entre os quadros.
 
 uniform int Corner <
 	ui_type = "combo";
@@ -20,7 +20,16 @@ uniform float Smoothing <
 	ui_min = 0.005; ui_max = 1.0;
 > = 0.05;
 
+uniform bool Details <
+	ui_label = "Média, mínimo, máximo e 1% low";
+	ui_tooltip = "Desligado mostra só o FPS e o tempo de quadro.";
+> = true;
+
 uniform float FRAME_TIME < source = "frametime"; >;
+uniform float FPS_AVG < source = "fps_avg"; >;
+uniform float FPS_MIN < source = "fps_min"; >;
+uniform float FPS_MAX < source = "fps_max"; >;
+uniform float FPS_LOW1 < source = "fps_low1"; >;
 
 texture BackBufferTex : COLOR;
 sampler BackBuffer { Texture = BackBufferTex; };
@@ -51,44 +60,67 @@ float PS_Copy(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_T
 }
 
 // Fonte de 3x5 pixels, uma linha por três bits (de cima para baixo), do bit 14 ao 0.
-// 0-9 dígitos, 10 '.', 11 F, 12 P, 13 S, 14 M, 15 espaço.
+// 0-9 dígitos, 10 '.', 11 F, 12 P, 13 S, 14 M, 15 espaço, 16 A, 17 V, 18 G, 19 I, 20 N, 21 X, 22 L, 23 %.
 uint Glyph(int g)
 {
-	uint font[16] = { 0x7B6F, 0x2C97, 0x73E7, 0x73CF, 0x5BC9, 0x79CF, 0x79EF, 0x7249, 0x7BEF, 0x7BCF, 0x0002, 0x79E4, 0x7BE4, 0x79CF, 0x5FED, 0x0000 };
-	return font[clamp(g, 0, 15)];
+	uint font[24] = { 0x7B6F, 0x2C97, 0x73E7, 0x73CF, 0x5BC9, 0x79CF, 0x79EF, 0x7249, 0x7BEF, 0x7BCF, 0x0002, 0x79E4, 0x7BE4, 0x79CF, 0x5FED, 0x0000,
+	                  0x2BED, 0x5B6A, 0x796F, 0x7497, 0x7B6D, 0x5AAD, 0x4927, 0x52A5 };
+	return font[clamp(g, 0, 23)];
 }
 
-// O caractere `i` da linha: um número com uma casa decimal (valor*10) e a unidade.
+// Os três caracteres do nome de cada linha: 0 FPS, 1 AVG, 2 MIN, 3 MAX, 4 1%L, 5 MS.
+int Label(int line, int i)
+{
+	int labels[18] = { 11, 12, 13,  16, 17, 18,  14, 19, 20,  14, 16, 21,  1, 23, 22,  14, 13, 15 };
+	return labels[line * 3 + i];
+}
+
+int Pow10(int n)
+{
+	return n == 0 ? 1 : (n == 1 ? 10 : (n == 2 ? 100 : 1000));
+}
+
+// O caractere `i` (0 a 8) da linha: o nome, um espaço e o valor. Os inteiros ficam à esquerda sem zeros sobrando; a linha do tempo de quadro
+// (5) mostra `valor` como décimos de milissegundo ("12.3").
 int CharAt(int line, int i, int value)
 {
-	// "123.4 FPS" / "123.4 MS": quatro dígitos com ponto antes do último, espaço, unidade.
-	int d3 = (value / 1000) % 10;
-	int d2 = (value / 100) % 10;
-	int d1 = (value / 10) % 10;
-	int d0 = value % 10;
-	if (i == 0) return d3 == 0 ? 15 : d3;
-	if (i == 1) return (d3 == 0 && d2 == 0) ? 15 : d2;
-	if (i == 2) return d1;
-	if (i == 3) return 10;
-	if (i == 4) return d0;
-	if (i == 5) return 15;
-	if (line == 0) return i == 6 ? 11 : (i == 7 ? 12 : 13);
-	return i == 6 ? 14 : (i == 7 ? 13 : 15);
+	if (i < 3) return Label(line, i);
+	if (i == 3) return 15;
+	int k = i - 4;
+	value = clamp(value, 0, 99999);
+	if (line == 5)
+	{
+		int digits = value >= 1000 ? 4 : (value >= 100 ? 3 : 2);
+		int lead = 4 - digits; // espaços à esquerda dentro de "dd.d" com 4 dígitos
+		if (k == 3) return 10;
+		int pos = k < 3 ? k : k - 1; // posição do dígito sem o ponto: 0..3
+		if (pos < lead) return 15;
+		return (value / Pow10(3 - pos)) % 10;
+	}
+	int n = value >= 10000 ? 5 : (value >= 1000 ? 4 : (value >= 100 ? 3 : (value >= 10 ? 2 : 1)));
+	if (k >= n) return 15;
+	return (value / Pow10(n - 1 - k)) % 10;
 }
 
 float4 PS_Draw(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Target
 {
 	float4 color = tex2D(BackBuffer, texcoord);
 	float frame_ms = tex2Dfetch(sAvgB, int2(0, 0)).x;
-	int fps10 = (int)clamp(round(10000.0 / max(frame_ms, 0.01)), 0.0, 9999.0);
-	int ms10 = (int)clamp(round(frame_ms * 10.0), 0.0, 9999.0);
+	int values[6];
+	values[0] = (int)clamp(round(10000.0 / max(frame_ms, 0.01)) / 10.0, 0.0, 9999.0);
+	values[1] = (int)clamp(round(FPS_AVG), 0.0, 9999.0);
+	values[2] = (int)clamp(round(FPS_MIN), 0.0, 9999.0);
+	values[3] = (int)clamp(round(FPS_MAX), 0.0, 9999.0);
+	values[4] = (int)clamp(round(FPS_LOW1), 0.0, 9999.0);
+	values[5] = (int)clamp(round(frame_ms * 10.0), 0.0, 9999.0);
 
+	int rows = Details ? 6 : 2;
 	int cell_w = 4 * Scale;
 	int cell_h = 6 * Scale;
 	int columns = 9;
 	int margin = 2 * Scale;
 	int box_w = columns * cell_w + 2 * margin;
-	int box_h = 2 * cell_h + 3 * margin / 2 + margin / 2;
+	int box_h = rows * cell_h + 2 * margin;
 	int2 size = int2(BUFFER_WIDTH, BUFFER_HEIGHT);
 	int2 origin = int2((Corner == 1 || Corner == 3) ? size.x - box_w - margin : margin, (Corner >= 2) ? size.y - box_h - margin : margin);
 	int2 p = int2(position.xy) - origin;
@@ -97,15 +129,15 @@ float4 PS_Draw(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_
 
 	float3 result = color.rgb * 0.35;
 	int2 t = p - int2(margin, margin);
-	if (t.x >= 0 && t.y >= 0 && t.x < columns * cell_w && t.y < 2 * cell_h + margin / 2)
+	if (t.x >= 0 && t.y >= 0 && t.x < columns * cell_w && t.y < rows * cell_h)
 	{
-		int line = t.y / (cell_h + margin / 4);
-		int local_y = t.y - line * (cell_h + margin / 4);
+		int row = t.y / cell_h;
+		int line = Details ? row : (row == 0 ? 0 : 5);
 		int col = t.x / cell_w;
-		int2 pixel = int2((t.x % cell_w) / Scale, local_y / Scale);
-		if (line < 2 && pixel.x < 3 && pixel.y < 5 && local_y < cell_h)
+		int2 pixel = int2((t.x % cell_w) / Scale, (t.y % cell_h) / Scale);
+		if (pixel.x < 3 && pixel.y < 5)
 		{
-			int g = CharAt(line, col, line == 0 ? fps10 : ms10);
+			int g = CharAt(line, col, values[line]);
 			uint bits = Glyph(g);
 			uint bit = 14u - (uint)(pixel.y * 3 + pixel.x);
 			if (((bits >> bit) & 1u) != 0u)

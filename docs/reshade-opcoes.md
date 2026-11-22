@@ -16,7 +16,7 @@ O que o ReShade 6 oferece nas abas Home/Settings/Statistics/Log/About e onde iss
 | Tecla por técnica (`Key<técnica>`) | **feito**: botão em cada efeito do painel; grava o `Key<técnica>` do preset no formato do ReShade (presets do Windows valem) e o daemon registra a tecla |
 | Modo de desempenho (constantes no lugar de uniforms) | falta |
 | Formato da captura (JPEG/BMP), `SavePresetFile`, `SaveOverlayShot` | falta (só PNG, sem overlay: o painel é outra janela) |
-| OSD: FPS e tempo de quadro | **feito** como efeito: `FPSCounter` (canto e tamanho configuráveis); relógio falta |
+| OSD: FPS e tempo de quadro | **feito** como efeito: `FPSCounter` (FPS, média, mínimo, máximo, 1% low e ms; canto e tamanho em Configurações ▸ Overlay; ver `docs/efeitos-embutidos.md`); relógio falta |
 | Estatísticas (tempo por técnica, uso do processador pela layer) | **feito**: `lrctl stats on` + aba Desempenho (GPU por efeito, processador por quadro); memória falta |
 | Abas Log e Sobre | **feito**: abas Registro e Sobre nas Configurações |
 | Transição suave entre presets, atalhos de preset por tecla própria | falta |

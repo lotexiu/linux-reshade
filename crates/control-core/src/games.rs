@@ -51,6 +51,8 @@ pub struct Games {
     depth_dir: Option<PathBuf>,
     /// As layers (id) cuja escolha de profundidade gravada já foi aplicada.
     depth_applied: HashSet<String>,
+    /// O preset (texto) do contador de desempenho acrescentado ao plano de cada jogo (`[OVERLAY]` do `config.ini`); `None` desligado.
+    overlay: Option<String>,
 }
 
 fn modified(path: &std::path::Path) -> Option<SystemTime> {
@@ -73,10 +75,16 @@ fn resolutions(layer: &LiveLayer) -> Vec<(u32, u32)> {
 
 impl Games {
     pub fn new(presets_dir: PathBuf) -> Self {
-        Self { presets_dir, global_macros: Macros::new(), published: HashMap::new(), depth_dir: None, depth_applied: HashSet::new() }
+        Self { presets_dir, global_macros: Macros::new(), published: HashMap::new(), depth_dir: None, depth_applied: HashSet::new(), overlay: None }
     }
 
     /// As definições de pré-processador globais (`NOME=VALOR,OUTRO`); valem para todos os efeitos, abaixo do preset.
+    /// O contador de desempenho (`config::Overlay::preset_text`) a acrescentar ao plano de cada jogo.
+    pub fn with_overlay(mut self, preset_text: Option<String>) -> Self {
+        self.overlay = preset_text;
+        self
+    }
+
     pub fn with_global_macros(mut self, text: &str) -> Self {
         self.global_macros = preset::parse_macros(text);
         self
@@ -208,7 +216,17 @@ impl Games {
                     return;
                 }
             };
-            let built = game_plan::build(compiler, &Preset::parse(&text), &self.global_macros, &game_plan::auto_depth_macros(reversed), width, height);
+            let preset = Preset::parse(&text);
+            let mut built = game_plan::build(compiler, &preset, &self.global_macros, &game_plan::auto_depth_macros(reversed), width, height);
+            // O contador de desempenho entra por último (sobre o resultado dos outros efeitos), a menos que o preset já o tenha.
+            if let Some(overlay) = &self.overlay
+                && !game_plan::enabled_order(&preset).iter().any(|id| id.file.as_deref() == Some("FPSCounter.fx"))
+            {
+                let extra = game_plan::build(compiler, &Preset::parse(overlay), &Macros::new(), &Macros::new(), width, height);
+                built.plan.steps.extend(extra.plan.steps);
+                built.variants.extend(extra.variants);
+                built.warnings.extend(extra.warnings);
+            }
             report.warnings.extend(built.warnings.into_iter().map(|w| (game.to_string(), w)));
             let effects = built.variants.clone();
             self.published.insert(layer.id.clone(), Published { file: found.path.clone(), modified: stamp, effects, reversed, pending: (None, 0) });
@@ -318,6 +336,22 @@ mod tests {
         assert_eq!(plan.steps.iter().map(|s| s.technique.as_str()).collect::<Vec<_>>(), ["Sepia", "Invert"], "o preset do jogo, não o global");
         assert_eq!(f32::from_le_bytes(plan.steps[0].uniforms[..4].try_into().unwrap()), 0.5);
         assert_eq!(games.in_use(&layers).len(), 4, "dois efeitos em duas resoluções");
+    }
+
+    #[test]
+    fn the_performance_overlay_is_appended_last_to_each_games_plan_unless_the_preset_has_it() {
+        let e = env("games-overlay");
+        fs::write(e.presets.join("preset.ini"), "Techniques=Sepia@Sepia.fx\n").unwrap();
+        let layers = [layer("Jogo", &[(800, 600)])];
+        // O texto do config usa o FPSCounter; aqui o Invert faz o papel dele (o compilador de teste só conhece estes).
+        let mut games = Games::new(e.presets.clone()).with_overlay(Some("Techniques=Invert@Invert.fx\n".into()));
+        let report = games.tick(&e.f.compiler, &e.state, &layers, &mut Failures::new());
+        assert!(report.warnings.is_empty(), "{report:?}");
+        let ipc::PlanRead::Plan(plan) = reader(&e, "layer-Jogo").read_plan() else { panic!("sem plano") };
+        assert_eq!(plan.steps.iter().map(|s| s.technique.as_str()).collect::<Vec<_>>(), ["Sepia", "Invert"], "o contador vem depois dos efeitos do preset");
+        assert!(config::Overlay::default().preset_text().is_none(), "desligado de fábrica");
+        let on = config::Overlay { enabled: true, corner: 1, scale: 4, details: false };
+        assert_eq!(on.preset_text().as_deref(), Some("Techniques=FPSCounter@FPSCounter.fx\n\n[FPSCounter.fx]\nCorner=1\nScale=4\nDetails=0\n"));
     }
 
     #[test]

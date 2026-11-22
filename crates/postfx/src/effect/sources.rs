@@ -19,6 +19,12 @@ pub struct FrameInfo {
     pub frame_count: u32,
     /// `[ano, mês (1-12), dia (1-31), segundos desde a meia-noite]`.
     pub date: [f32; 4],
+    /// Quadros por segundo nos últimos segundos: média, mínimo (o pior quadro), máximo (o melhor) e o "1% low" (a taxa do quadro que só 1% dos
+    /// quadros superam em lentidão). Zero até a layer ter quadros suficientes.
+    pub fps_avg: f32,
+    pub fps_min: f32,
+    pub fps_max: f32,
+    pub fps_low1: f32,
 }
 
 /// Data e hora em UTC a partir de segundos Unix, no formato do `source = "date"`.
@@ -44,6 +50,10 @@ enum Kind {
     FrameTime,
     FrameCount,
     Date,
+    FpsAvg,
+    FpsMin,
+    FpsMax,
+    FpsLow1,
     Random { min: f32, max: f32 },
     PingPong { min: f32, max: f32, step_min: f32, step_max: f32 },
     /// O controle (de 1, na ordem do efeito) que a pessoa está editando; 0 se nenhum.
@@ -109,6 +119,10 @@ impl Sources {
                 "frametime" => Kind::FrameTime,
                 "framecount" => Kind::FrameCount,
                 "date" => Kind::Date,
+                "fps_avg" => Kind::FpsAvg,
+                "fps_min" => Kind::FpsMin,
+                "fps_max" => Kind::FpsMax,
+                "fps_low1" => Kind::FpsLow1,
                 "overlay_active" | "overlay_hovered" => Kind::OverlayActive,
                 "overlay_open" => Kind::OverlayOpen,
                 "random" => Kind::Random { min: number(u, "min", 0.0), max: number(u, "max", 1.0) },
@@ -172,6 +186,10 @@ impl Sources {
                 Kind::FrameTime => vec![frame.frame_time_ms],
                 Kind::FrameCount => vec![frame.frame_count as f32],
                 Kind::Date => frame.date.to_vec(),
+                Kind::FpsAvg => vec![frame.fps_avg],
+                Kind::FpsMin => vec![frame.fps_min],
+                Kind::FpsMax => vec![frame.fps_max],
+                Kind::FpsLow1 => vec![frame.fps_low1],
                 Kind::OverlayActive => vec![self.active as f32],
                 Kind::OverlayOpen => vec![f32::from(self.active != 0)],
                 Kind::Random { min, max } => {
@@ -243,6 +261,20 @@ mod tests {
     }
 
     #[test]
+    fn the_fps_statistics_come_from_the_frame() {
+        let m = manifest(&[
+            ("a", "float", 1, r#"{"source":"fps_avg"}"#),
+            ("lo", "float", 1, r#"{"source":"fps_min"}"#),
+            ("hi", "float", 1, r#"{"source":"fps_max"}"#),
+            ("l1", "float", 1, r#"{"source":"fps_low1"}"#),
+        ]);
+        let mut s = Sources::collect(&m);
+        assert!(s.ignored().is_empty(), "as quatro fontes são conhecidas: {:?}", s.ignored());
+        let w = s.evaluate(&FrameInfo { fps_avg: 100.0, fps_min: 40.0, fps_max: 144.0, fps_low1: 60.0, ..FrameInfo::default() });
+        assert_eq!((f32_at(&w, 0, 0), f32_at(&w, 1, 0), f32_at(&w, 2, 0), f32_at(&w, 3, 0)), (100.0, 40.0, 144.0, 60.0));
+    }
+
+    #[test]
     fn timer_frametime_and_framecount_follow_the_frame() {
         let m = manifest(&[
             ("t", "float", 1, r#"{"source":"timer"}"#),
@@ -252,7 +284,7 @@ mod tests {
         ]);
         let mut s = Sources::collect(&m);
         assert_eq!(s.list.len(), 3, "só os uniforms com source");
-        let w = s.evaluate(&FrameInfo { time_ms: 1234.5, frame_time_ms: 16.7, frame_count: 42, date: [0.0; 4] });
+        let w = s.evaluate(&FrameInfo { time_ms: 1234.5, frame_time_ms: 16.7, frame_count: 42, ..FrameInfo::default() });
         assert_eq!((w[0].0, f32_at(&w, 0, 0)), (0, 1234.5));
         assert_eq!((w[1].0, f32_at(&w, 1, 0)), (16, 16.7));
         assert_eq!((w[2].0, u32::from_le_bytes(w[2].1[..4].try_into().unwrap())), (32, 42));

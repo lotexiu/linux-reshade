@@ -355,6 +355,62 @@ fn folders_page(window: &gtk::Window) -> gtk::Box {
     page
 }
 
+/// O contador de desempenho (FPS, média, mínimo, máximo e 1% low) que a layer desenha num canto dos jogos. Grava em `[OVERLAY]` do `config.ini`;
+/// o daemon percebe a mudança e republica os planos sozinho.
+fn overlay_page() -> gtk::Box {
+    let page = page_box();
+    page.append(&hint(tr("A small counter drawn in a corner of the game: FPS now, average, minimum, maximum and 1% low of the last 5 seconds, and the frame time. It is added after the preset's effects. It needs the game to have a preset (or the global one).")));
+    let status = gtk::Label::new(None);
+    status.set_xalign(0.0);
+    status.set_wrap(true);
+    let current = config::Config::load().overlay;
+    let save = |key: &'static str, value: String, status: gtk::Label| {
+        let Some(path) = config_file() else { return };
+        match config::set_value(&path, "OVERLAY", key, &value) {
+            Ok(()) => status.set_text(tr("Saved. It applies to the open games in a few seconds.")),
+            Err(e) => status.set_text(&format!("{}: {e}", path.display())),
+        }
+    };
+
+    let enabled = gtk::CheckButton::with_label(tr("Show the performance counter in games"));
+    enabled.set_active(current.enabled);
+    enabled.connect_toggled({
+        let (status, save) = (status.clone(), save);
+        move |b| save("Stats", if b.is_active() { "1" } else { "0" }.to_string(), status.clone())
+    });
+    page.append(&enabled);
+
+    let details = gtk::CheckButton::with_label(tr("Also show average, minimum, maximum and 1% low"));
+    details.set_active(current.details);
+    details.connect_toggled({
+        let (status, save) = (status.clone(), save);
+        move |b| save("Details", if b.is_active() { "1" } else { "0" }.to_string(), status.clone())
+    });
+    page.append(&details);
+
+    let corner_line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    corner_line.append(&gtk::Label::new(Some(tr("Corner"))));
+    let corner = gtk::DropDown::from_strings(&[tr("Top left"), tr("Top right"), tr("Bottom left"), tr("Bottom right")]);
+    corner.set_selected(u32::from(current.corner));
+    corner.connect_selected_notify({
+        let (status, save) = (status.clone(), save);
+        move |d| save("Corner", d.selected().to_string(), status.clone())
+    });
+    corner_line.append(&corner);
+    corner_line.append(&gtk::Label::new(Some(tr("Size"))));
+    let scale = gtk::SpinButton::with_range(1.0, 8.0, 1.0);
+    crate::icons::arrows(&scale);
+    scale.set_value(f64::from(current.scale));
+    scale.connect_value_changed({
+        let (status, save) = (status.clone(), save);
+        move |s| save("Scale", (s.value() as u32).to_string(), status.clone())
+    });
+    corner_line.append(&scale);
+    page.append(&corner_line);
+    page.append(&status);
+    page
+}
+
 fn captures_page(window: &gtk::Window) -> gtk::Box {
     let page = page_box();
     page.append(&hint(tr("The capture key is in the Shortcuts tab. Each game with the layer open saves its own frame.")));
@@ -859,6 +915,7 @@ pub fn open_at(parent: &gtk::ApplicationWindow, tab: u32) -> gtk::Window {
     notebook.append_page(&captures_page(&window), Some(&gtk::Label::new(Some(tr("Screenshots")))));
     notebook.append_page(&folders_page(&window), Some(&gtk::Label::new(Some(tr("Folders")))));
     notebook.append_page(&performance_page(&window), Some(&gtk::Label::new(Some(tr("Performance")))));
+    notebook.append_page(&overlay_page(), Some(&gtk::Label::new(Some(tr("Overlay")))));
     notebook.append_page(&cache_page(), Some(&gtk::Label::new(Some(tr("Cache")))));
     notebook.append_page(&system_page(), Some(&gtk::Label::new(Some(tr("System")))));
     notebook.append_page(&flatpak_page(), Some(&gtk::Label::new(Some(tr("Flatpak")))));

@@ -297,7 +297,11 @@ impl Compiler {
 
         let (effects, default_includes) = if config.is_configured() {
             // Os `#include` (ReShade.fxh e cia.) moram junto dos efeitos, como no ReShade.
-            (config.effect_paths.clone(), config.effect_paths.clone())
+            // Os efeitos que vêm com o programa (FPSCounter, os Basic*...) entram por último: o que a pessoa tem com o mesmo nome vale
+            // mais, e quem já tinha uma pasta de dados antes deles existirem os recebe sem copiar nada.
+            let mut effects = config.effect_paths.clone();
+            effects.extend(in_repo("effects").map(SearchPath::flat).filter(|b| !effects.iter().any(|e| e.dir == b.dir)));
+            (effects, config.effect_paths.clone())
         } else {
             let community: Vec<SearchPath> = ["third_party/reshade-shaders-legacy/Shaders", "third_party/reshade-shaders-slim/Shaders"]
                 .iter()
@@ -313,7 +317,9 @@ impl Compiler {
             None => default_includes,
         };
         let textures = if config.is_configured() {
-            config.texture_paths.clone()
+            let mut textures = config.texture_paths.clone();
+            textures.extend(in_repo("effects/Textures").map(SearchPath::flat).filter(|b| !textures.iter().any(|t| t.dir == b.dir)));
+            textures
         } else {
             ["third_party/reshade-shaders-legacy/Textures", "third_party/reshade-shaders-slim/Textures"]
                 .iter()

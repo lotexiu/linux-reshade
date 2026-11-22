@@ -78,7 +78,7 @@ fn every_compiled_bundle_either_runs_or_is_refused_explicitly() {
             match created {
                 Ok(mut effect) => {
                     // Frame típico de um jogo rodando há 10 s: os uniforms com `source` precisam de valores.
-                    let frame = FrameInfo { time_ms: 10_000.0, frame_time_ms: 16.6, frame_count: 600, date: [2026.0, 10.0, 9.0, 43_200.0] };
+                    let frame = FrameInfo { time_ms: 10_000.0, frame_time_ms: 16.6, frame_count: 600, date: [2026.0, 10.0, 9.0, 43_200.0], ..FrameInfo::default() };
                     for i in 0..targets.images.len() {
                         effect.update_sources(i, &frame);
                         gpu.submit(effect.command_buffer(i));
@@ -235,7 +235,9 @@ fn a_chain_of_compiled_bundles_runs() {
                         }
                     }
                 }
-                let frame = FrameInfo { time_ms: 10_000.0, frame_time_ms: 16.6, frame_count: 600, date: [2026.0, 10.0, 9.0, 43_200.0] };
+                // `LINUX_RESHADE_CHAIN_FPS=avg,min,max,low1`: as estatísticas de FPS que o runtime daria (o contador de FPS).
+                let fps: Vec<f32> = std::env::var("LINUX_RESHADE_CHAIN_FPS").ok().map(|v| v.split(',').filter_map(|n| n.trim().parse().ok()).collect()).unwrap_or_default();
+                let frame = FrameInfo { time_ms: 10_000.0, frame_time_ms: 16.6, frame_count: 600, date: [2026.0, 10.0, 9.0, 43_200.0], fps_avg: fps.first().copied().unwrap_or(0.0), fps_min: fps.get(1).copied().unwrap_or(0.0), fps_max: fps.get(2).copied().unwrap_or(0.0), fps_low1: fps.get(3).copied().unwrap_or(0.0) };
                 if let Ok(name) = std::env::var("LINUX_RESHADE_CHAIN_ACTIVE") {
                     chain.set_active_control(Some(&name));
                 }
