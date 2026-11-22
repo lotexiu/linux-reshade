@@ -203,8 +203,7 @@ pub fn layer_library() -> Result<PathBuf, String> {
 }
 
 fn work_dir() -> PathBuf {
-    let home = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share"))).unwrap_or_else(|| PathBuf::from("."));
-    home.join("linux-reshade/flatpak")
+    paths::data_home().unwrap_or_else(|| PathBuf::from(".")).join("linux-reshade/flatpak")
 }
 
 fn cache_dir() -> PathBuf {

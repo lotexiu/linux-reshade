@@ -4,6 +4,7 @@
 //! Um bundle só serve à resolução para a qual foi compilado, então o diretório do cache leva o tamanho
 //! no nome (`Sepia-1920x1080`). A escolha que a layer recebe é o *modelo* `<cache>/Sepia-{W}x{H}`.
 
+use crate::util::modified;
 use config::{Config, SearchPath};
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -181,10 +182,6 @@ fn run_retrying_busy(command: &mut Command) -> std::io::Result<std::process::Out
             other => return other,
         }
     }
-}
-
-fn modified(path: &Path) -> Option<SystemTime> {
-    std::fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
 /// Onde o compilador anota de quais arquivos vieram as imagens do bundle (um caminho por linha).

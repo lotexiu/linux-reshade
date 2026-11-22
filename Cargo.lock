@@ -238,6 +238,7 @@ name = "config"
 version = "0.0.1"
 dependencies = [
  "ini",
+ "paths",
 ]
 
 [[package]]
@@ -250,6 +251,7 @@ dependencies = [
  "image-file",
  "ini",
  "ipc",
+ "paths",
  "preset",
  "shortcuts",
 ]
@@ -738,6 +740,7 @@ version = "0.0.1"
 dependencies = [
  "config",
  "ini",
+ "paths",
 ]
 
 [[package]]
@@ -842,6 +845,7 @@ dependencies = [
  "ini",
  "ipc",
  "panel",
+ "paths",
  "preset",
  "shortcuts",
 ]
@@ -853,6 +857,7 @@ dependencies = [
  "ash",
  "fx-bundle",
  "ipc",
+ "paths",
  "postfx",
  "vk-layer",
 ]
@@ -948,6 +953,10 @@ name = "parking"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f38d5652c16fde515bb1ecef450ab0f6a219d619a7274976324d5e377f7dceba"
+
+[[package]]
+name = "paths"
+version = "0.0.1"
 
 [[package]]
 name = "pin-project-lite"

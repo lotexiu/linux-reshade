@@ -14,7 +14,6 @@
 //! do `config.ini`, e não do jogo: a pasta de dados pode ser copiada para outra máquina.
 
 use ini::Ini;
-use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -197,29 +196,28 @@ pub fn default_key(name: &str) -> &'static str {
 }
 
 /// Como o ambiente é lido: injetado, para os testes não dependerem da máquina.
-pub type Env<'a> = &'a dyn Fn(&str) -> Option<OsString>;
+pub type Env<'a> = paths::Env<'a>;
 
 pub const LOCATION_DIR: &str = "linux-reshade";
 
-fn home(env: Env) -> Option<PathBuf> {
-    env("HOME").map(PathBuf::from)
-}
-
 /// O `location.ini`: o ponteiro para a pasta de dados.
 pub fn location_file(env: Env) -> Option<PathBuf> {
-    let base = env("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| home(env).map(|h| h.join(".config")))?;
-    Some(base.join(LOCATION_DIR).join("location.ini"))
+    Some(paths::config_home_with(env)?.join(LOCATION_DIR).join("location.ini"))
+}
+
+/// O `ui.ini`: as escolhas da interface (idioma, perguntar antes de apagar um preset...).
+pub fn ui_file() -> Option<PathBuf> {
+    Some(paths::config_home()?.join(LOCATION_DIR).join("ui.ini"))
 }
 
 /// A pasta de dados padrão, para quem nunca escolheu outra: `$XDG_DATA_HOME/linux-reshade`, ou
 /// `~/.local/share/linux-reshade`.
 pub fn default_data_dir(env: Env) -> Option<PathBuf> {
-    let base = env("XDG_DATA_HOME").map(PathBuf::from).or_else(|| home(env).map(|h| h.join(".local/share")))?;
-    Some(base.join(LOCATION_DIR))
+    Some(paths::data_home_with(env)?.join(LOCATION_DIR))
 }
 
 fn default_cache(env: Env) -> PathBuf {
-    let base = env("XDG_CACHE_HOME").map(PathBuf::from).or_else(|| home(env).map(|h| h.join(".cache"))).unwrap_or_else(|| PathBuf::from("/tmp"));
+    let base = paths::cache_home_with(env).unwrap_or_else(|| PathBuf::from("/tmp"));
     base.join(LOCATION_DIR).join("bundles")
 }
 
@@ -239,7 +237,7 @@ impl Config {
     /// Variáveis: `LINUX_RESHADE_DATA` (pasta de dados), `LINUX_RESHADE_CONFIG` (outro `config.ini`),
     /// `LINUX_RESHADE_EFFECTS`, `LINUX_RESHADE_TEXTURES`, `LINUX_RESHADE_PRESETS`, `LINUX_RESHADE_CACHE`.
     pub fn resolve(env: Env) -> Self {
-        let home = home(env);
+        let home = paths::home_with(env);
         let home = home.as_deref();
 
         let data_dir = env("LINUX_RESHADE_DATA").map(PathBuf::from).or_else(|| {

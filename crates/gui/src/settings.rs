@@ -9,8 +9,7 @@ use std::path::PathBuf;
 const KEY_CONFIRM_DELETE: &str = "confirm_delete_preset";
 
 fn file() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
-    Some(base.join(config::LOCATION_DIR).join("ui.ini"))
+    config::ui_file()
 }
 
 /// Pergunta antes de apagar um preset? Sim, até a pessoa pedir para não perguntar mais.

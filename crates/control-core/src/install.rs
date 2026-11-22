@@ -11,12 +11,8 @@ const LAYER_LIB: &str = "liblinux_reshade_layer.so";
 const MANIFEST_NAME: &str = "VK_LAYER_LOTEXIU_linux_reshade.json";
 const AUTOSTART_NAME: &str = "linux-reshade-daemon.desktop";
 
-fn xdg(var: &str, fallback: &str) -> PathBuf {
-    std::env::var_os(var).map(PathBuf::from).filter(|p| p.is_absolute()).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(fallback))).unwrap_or_else(|| PathBuf::from("."))
-}
-
 fn data_dir() -> PathBuf {
-    xdg("XDG_DATA_HOME", ".local/share")
+    paths::data_home().unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// A pasta dos recursos que vêm com o programa (o `fx2spv`, os efeitos e os cabeçalhos do ReShade), com a mesma disposição do
@@ -126,7 +122,7 @@ pub fn installed_library() -> PathBuf {
 }
 
 fn autostart_path() -> PathBuf {
-    xdg("XDG_CONFIG_HOME", ".config").join("autostart").join(AUTOSTART_NAME)
+    paths::config_home().unwrap_or_else(|| PathBuf::from(".")).join("autostart").join(AUTOSTART_NAME)
 }
 
 /// O manifesto da camada para a biblioteca em `library`.
@@ -286,7 +282,7 @@ pub fn start_daemon_if_needed() -> bool {
     let Ok(exe) = std::env::current_exe() else { return false };
     let Some(lrctl) = exe.parent().map(|d| d.join("lrctl")).filter(|p| p.is_file()) else { return false };
     use std::os::unix::process::CommandExt;
-    let log = std::fs::OpenOptions::new().create(true).append(true).open(xdg("XDG_STATE_HOME", ".local/state").join("linux-reshade-daemon.out")).ok();
+    let log = std::fs::OpenOptions::new().create(true).append(true).open(paths::state_home().unwrap_or_else(|| PathBuf::from(".")).join("linux-reshade-daemon.out")).ok();
     let mut command = std::process::Command::new(lrctl);
     command.arg("daemon").stdin(std::process::Stdio::null());
     if let Some(log) = log {

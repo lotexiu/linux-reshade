@@ -16,6 +16,7 @@
 pub use i18n;
 pub mod action;
 pub mod analysis;
+mod util;
 pub mod compiler;
 pub mod flatpak;
 pub mod game_plan;

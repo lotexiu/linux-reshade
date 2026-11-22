@@ -14,8 +14,7 @@ const ICONS: [(&str, &str); 2] = [
 ];
 
 fn base() -> Option<std::path::PathBuf> {
-    let data = std::env::var_os("XDG_DATA_HOME").map(std::path::PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share")))?;
-    Some(data.join(config::LOCATION_DIR).join("icons"))
+    Some(paths::data_home()?.join(config::LOCATION_DIR).join("icons"))
 }
 
 /// Grava os ícones (se faltam ou mudaram) e põe a pasta no caminho de busca do GTK.

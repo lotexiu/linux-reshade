@@ -9,6 +9,7 @@ publish.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
+paths = { path = "../paths" }
 ash.workspace = true
 vk-layer = { path = "../vk-layer" }
 ipc = { path = "../ipc" }

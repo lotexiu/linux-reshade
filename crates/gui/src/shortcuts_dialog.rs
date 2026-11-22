@@ -481,7 +481,7 @@ fn tail_of(path: &std::path::Path, max: u64) -> String {
 
 /// Os arquivos de log que existem, com um nome para mostrar.
 fn log_files() -> Vec<(String, std::path::PathBuf)> {
-    let state = std::env::var_os("XDG_STATE_HOME").map(std::path::PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/state"))).map(|d| d.join(config::LOCATION_DIR));
+    let state = paths::state_home().map(|d| d.join(config::LOCATION_DIR));
     let mut files = Vec::new();
     if let Some(dir) = state {
         files.push((tr("Daemon").to_string(), dir.join("daemon.log")));

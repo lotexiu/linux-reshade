@@ -10,6 +10,7 @@ name = "lrpanel"
 path = "src/main.rs"
 
 [dependencies]
+paths = { path = "../paths" }
 panel = { path = "../panel" }
 control-core = { path = "../control-core" }
 config = { path = "../config" }

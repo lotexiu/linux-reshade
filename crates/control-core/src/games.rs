@@ -9,6 +9,7 @@
 use crate::analysis::{self, Feature};
 use crate::compiler::{Compiler, Defines, Ensured, valid_name, variant_key};
 use crate::game_plan;
+use crate::util::modified;
 use crate::watch::{Failures, Job};
 use ipc::{EffectState, LiveLayer};
 use preset::{Macros, Preset};
@@ -53,10 +54,6 @@ pub struct Games {
     depth_applied: HashSet<String>,
     /// O preset (texto) do contador de desempenho acrescentado ao plano de cada jogo (`[OVERLAY]` do `config.ini`); `None` desligado.
     overlay: Option<String>,
-}
-
-fn modified(path: &std::path::Path) -> Option<SystemTime> {
-    std::fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
 /// As resoluções em que a layer pode receber efeitos.

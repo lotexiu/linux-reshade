@@ -6,6 +6,7 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+paths = { path = "../paths" }
 config = { path = "../config" }
 i18n = { path = "../i18n" }
 ipc = { path = "../ipc" }

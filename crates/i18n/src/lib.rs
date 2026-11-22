@@ -28,8 +28,7 @@ pub const DEFAULT: &str = "en";
 const KEY: &str = "language";
 
 fn ui_file() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
-    Some(base.join(config::LOCATION_DIR).join("ui.ini"))
+    config::ui_file()
 }
 
 /// As pastas com catálogos de usuário.
@@ -38,8 +37,7 @@ fn user_dirs() -> Vec<PathBuf> {
     if let Some(d) = std::env::var_os("LINUX_RESHADE_LOCALES").filter(|d| !d.is_empty()) {
         dirs.push(PathBuf::from(d));
     }
-    let data = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
-    if let Some(data) = data {
+    if let Some(data) = paths::data_home() {
         dirs.push(data.join(config::LOCATION_DIR).join("locales"));
     }
     dirs
