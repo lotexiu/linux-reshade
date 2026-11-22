@@ -145,7 +145,10 @@ pub struct Config {
 /// Os ajustes do contador de desempenho que a layer desenha nos jogos (o efeito `FPSCounter`, acrescentado ao plano de cada jogo).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Overlay {
+    /// Mostra o contador (FPS, média...). `Stats` no `config.ini`.
     pub enabled: bool,
+    /// Mostra o ícone de "processando" quando algo está sendo compilado ou montado para o jogo. `Busy` no `config.ini` (ligado de fábrica).
+    pub busy: bool,
     /// 0 superior esquerdo, 1 superior direito, 2 inferior esquerdo, 3 inferior direito.
     pub corner: u8,
     /// 1 a 8: o tamanho dos números.
@@ -156,14 +159,23 @@ pub struct Overlay {
 
 impl Default for Overlay {
     fn default() -> Self {
-        Self { enabled: false, corner: 0, scale: 3, details: true }
+        Self { enabled: false, busy: false, corner: 0, scale: 3, details: true }
     }
 }
 
 impl Overlay {
     /// O preset (texto) que acrescenta o contador ao plano de um jogo, ou `None` se está desligado.
     pub fn preset_text(&self) -> Option<String> {
-        self.enabled.then(|| format!("Techniques=FPSCounter@FPSCounter.fx\n\n[FPSCounter.fx]\nCorner={}\nScale={}\nDetails={}\n", self.corner.min(3), self.scale.clamp(1, 8), u8::from(self.details)))
+        (self.enabled || self.busy).then(|| {
+            format!(
+                "Techniques=FPSCounter@FPSCounter.fx\n\n[FPSCounter.fx]\nCorner={}\nScale={}\nDetails={}\nShowStats={}\nShowBusy={}\n",
+                self.corner.min(3),
+                self.scale.clamp(1, 8),
+                u8::from(self.details),
+                u8::from(self.enabled),
+                u8::from(self.busy)
+            )
+        })
     }
 }
 
@@ -278,7 +290,7 @@ impl Config {
         let analysis_exclude = base.as_ref().map(|b| ini.as_ref().map(|i| i.get_list("GENERAL", "AnalysisExclude")).unwrap_or_default().iter().filter(|s| !s.trim().is_empty()).map(|s| SearchPath::parse(s, b, home).dir).collect()).unwrap_or_default();
         let flag = |key: &str, default: bool| ini.as_ref().and_then(|i| i.get("OVERLAY", key)).map_or(default, |v| v == "1" || v.eq_ignore_ascii_case("true"));
         let number = |key: &str, default: u8| ini.as_ref().and_then(|i| i.get("OVERLAY", key)).and_then(|v| v.trim().parse::<u8>().ok()).unwrap_or(default);
-        let overlay = Overlay { enabled: flag("Stats", false), corner: number("Corner", 0).min(3), scale: number("Scale", 3).clamp(1, 8), details: flag("Details", true) };
+        let overlay = Overlay { enabled: flag("Stats", false), busy: flag("Busy", true), corner: number("Corner", 0).min(3), scale: number("Scale", 3).clamp(1, 8), details: flag("Details", true) };
         Self { data_dir, config_file: configured, effect_paths, texture_paths, presets_dir, global_macros, cache_dir, keys, screenshot_dir, screenshot_before, optimize_shaders, analyze_all, analysis_exclude, overlay }
     }
 

@@ -28,6 +28,11 @@ pub fn note(uses_depth: bool, layer: Option<&LiveLayer>) -> Option<DepthNote> {
             };
             say(fmt("Depth in use: {}x{} {}, {}.", &[&d.width, &d.height, &depth_format_name(d.format), &orientation]), false)
         }
+        // A imagem original não pode ser amostrada (ou o layout ainda não se sabe), mas os efeitos já estão rodando: a layer entrega uma cópia da
+        // profundidade (modo cópia), que não depende disso. Avisar para reabrir o jogo seria falso.
+        (Some(d), true) if layer.status.techniques.iter().any(|t| t.state == ipc::TechniqueState::Applied) => {
+            say(fmt("Depth in use: {}x{} {}, {}.", &[&d.width, &d.height, &depth_format_name(d.format), &match d.reversed { Some(true) => tr("reversed"), Some(false) => tr("normal"), None => tr("unknown orientation") }]), false)
+        }
         (Some(_), true) => say(tr("The game needs to be reopened for the effects to use depth (open it with the daemon running, or use LINUX_RESHADE_DEPTH=1).").into(), true),
         (None, true) => say(tr("Depth of the game not found yet: open a 3D scene and wait a moment.").into(), true),
         (Some(d), false) => say(fmt("The game has depth available ({}x{} {}); no effect in the preset uses it.", &[&d.width, &d.height, &depth_format_name(d.format)]), false),
@@ -134,6 +139,17 @@ pub fn choices(layer: &LiveLayer) -> Vec<DepthChoice> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_reopen_warning_is_not_shown_while_the_effects_already_run() {
+        let depth = DepthStatus { width: 1920, height: 1080, format: 129, samples: 1, draws: 400, vertices: 1, passes: 2, load: "load".into(), store: "store".into(), reversed: Some(false), last_pass: 2, chosen: true, automatic: true, unusable: None, sampled: false, layout: 0 };
+        let mut status = LayerStatus { depth: vec![depth], exe: "Jogo".into(), ..LayerStatus::default() };
+        let waiting = LiveLayer { id: "l".into(), status: status.clone() };
+        assert!(note(true, Some(&waiting)).is_some_and(|n| n.attention), "sem efeito rodando e sem amostragem: reabrir");
+        status.techniques = vec![ipc::TechniqueStatus { name: "T".into(), state: ipc::TechniqueState::Applied }];
+        let running = LiveLayer { id: "l".into(), status };
+        assert!(note(true, Some(&running)).is_some_and(|n| !n.attention), "com a cadeia aplicada o aviso some");
+    }
 
     #[test]
     fn the_passes_come_from_the_end_of_the_summary() {

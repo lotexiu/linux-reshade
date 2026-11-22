@@ -226,7 +226,16 @@ impl Ui {
         flatpak_button.set_tooltip_text(Some(tr("This game runs as a Flatpak app: opens the page where its setup is shown and undone")));
         flatpak_button.set_visible(false);
         game.set_hexpand(true);
-        page.append(&line(tr("Game"), &[game.upcast_ref(), flatpak_button.upcast_ref()]));
+        // A linha de opções de inicialização que liga a layer num jogo da Steam (a layer só carrega com LINUX_RESHADE=1).
+        let launch_button = gtk::Button::with_label(tr("Copy launch options"));
+        launch_button.set_tooltip_text(Some(tr("Copies the line to paste in Steam: right-click the game, Properties, General, Launch options. It turns the layer on for that game. Games that are not on Steam use it before their command.")));
+        launch_button.connect_clicked(|b| {
+            b.clipboard().set_text("LINUX_RESHADE=1 %command%");
+            b.set_label(tr("Copied: paste in Steam"));
+            let b = b.clone();
+            glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || b.set_label(tr("Copy launch options")));
+        });
+        page.append(&line(tr("Game"), &[game.upcast_ref(), flatpak_button.upcast_ref(), launch_button.upcast_ref()]));
         page.append(&line(tr("Preset"), &[preset.upcast_ref(), new_preset.upcast_ref(), delete_preset.upcast_ref()]));
         page.append(&preset_note);
         // Definições do pré-processador e profundidade na mesma linha, com a profundidade em uso à direita dos botões.

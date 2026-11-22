@@ -1,8 +1,7 @@
 # Caminhos combinados (a retomar)
 
 Ordem combinada em 08/11/2026:
-1. **Teste no A Hat in Time** com a ferramenta `GE-Proton11-7-dxvk-exp` (GE-Proton com o DXVK do Proton Experimental): trocar macros 10 vezes (LOGARITHMIC, REVERSED,
-   `DIFFUSE_GI_Q`), 30 s entre elas, `LINUX_RESHADE_LOG=/tmp/lr.log`. Se travar, a causa é o DXVK do Experimental; senão, outra parte do Proton.
+1. ~~Teste no A Hat in Time com `GE-Proton11-7-dxvk-exp`~~ **feito (08/11): não travou**; o DXVK do Experimental não é a causa, sobra o resto do Proton Experimental (ver `docs/depth.md`).
 2. **Atualizar a máquina para o Fedora 45** (a versão nova que outras pessoas devem começar a usar) e conferir instalação, layer, atalhos e AppImage nela.
 3. **Testar o contador de desempenho e os efeitos básicos em jogo** (ver `docs/efeitos-embutidos.md`).
 4. Facilitar o uso e preservar FPS (ver abaixo).
@@ -24,3 +23,6 @@ Ordem combinada em 08/11/2026:
 ## Adiados
 - Ubuntu (visto em um teste: atalhos não funcionaram e as mudanças de efeito só valiam na abertura do jogo): depois do Fedora 45; ver `docs/instalacao.md`.
 - Seleção automática de profundidade por pontuação e estabilidade (média móvel por estratégia); só depois de dados de vários jogos.
+
+## Pendente do overlay
+- O ícone de "processando" no jogo existe (marcador `busy-*` na pasta de estado enquanto o vigia compila, e a cadeia sendo montada); falta ver em jogo se aparece nos momentos certos.

@@ -25,6 +25,12 @@ Liga-se em **Configurações ▸ Overlay** (`[OVERLAY]` do `config.ini`: `Stats`
 jogo (depois dos efeitos do preset), a menos que o preset já o tenha. Limitação: precisa de um preset (do jogo ou o global); sem nenhum, não há plano.
 Também dá para pôr o `FPSCounter` num preset como um efeito qualquer.
 
+## O ícone de "processando" no jogo
+Quando algo está sendo processado para o jogo (o vigia compilando efeitos, por exemplo ao mudar uma definição, ou a layer montando uma cadeia), o overlay mostra um
+arco girando no canto (`lr_busy` é a fonte do runtime; o vigia deixa um marcador `busy-<pid>-<n>` em `/dev/shm/linux-reshade-<uid>` enquanto compila). Liga em
+**Configurações ▸ Overlay ▸ ícone de processando** (`Busy=1`, ligado de fábrica) e funciona mesmo com o contador desligado. Como o ícone é parte do efeito `FPSCounter`,
+ele só aparece enquanto há uma cadeia desenhando: na recriação completa das definições (a cadeia some por um instante) ele não aparece nesse intervalo.
+
 ## Ferramentas de desenvolvimento
 - `cargo run --release -p control-core --example compile -- <Efeito> <L> <A>` compila como o painel (com as texturas), usando `LINUX_RESHADE_CACHE` e
   `LINUX_RESHADE_RESOURCES=$PWD`.

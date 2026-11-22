@@ -124,6 +124,49 @@ fn depth_arm_file(dir: &std::path::Path, game: &str) -> Option<PathBuf> {
     (!game.is_empty() && !game.starts_with('.') && !game.contains(['/', '\\', '\0'])).then(|| dir.join(format!("depth-arm-{game}")))
 }
 
+/// Quem está compilando efeitos para os jogos (o vigia do daemon) deixa um marcador `busy-<pid>-<n>` na pasta de estado enquanto trabalha: a layer
+/// o vê e mostra o ícone de "processando" no jogo. O marcador some ao soltar o guarda; um que ficou para trás (processo morto) vale só por
+/// [`BUSY_MAX_AGE`].
+pub struct BusyGuard {
+    path: Option<PathBuf>,
+}
+
+impl Drop for BusyGuard {
+    fn drop(&mut self) {
+        if let Some(path) = self.path.take() {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
+/// Quanto tempo um marcador de "processando" é crível sem ser renovado.
+pub const BUSY_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(120);
+
+pub fn busy_guard_in(dir: &std::path::Path) -> BusyGuard {
+    static COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    if ensure_private_dir(dir).is_err() {
+        return BusyGuard { path: None };
+    }
+    let path = dir.join(format!("busy-{}-{}", std::process::id(), COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+    BusyGuard { path: fs::write(&path, b"").ok().map(|()| path) }
+}
+
+pub fn busy_guard() -> BusyGuard {
+    busy_guard_in(&state_dir())
+}
+
+/// Há alguém compilando para os jogos agora?
+pub fn busy_now_in(dir: &std::path::Path) -> bool {
+    let Ok(entries) = fs::read_dir(dir) else { return false };
+    entries.flatten().any(|e| {
+        e.file_name().to_string_lossy().starts_with("busy-") && e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age < BUSY_MAX_AGE)
+    })
+}
+
+pub fn busy_now() -> bool {
+    busy_now_in(&state_dir())
+}
+
 pub fn depth_arm_wanted_in(dir: &std::path::Path, game: &str) -> bool {
     depth_arm_file(dir, game).is_some_and(|f| f.exists())
 }

@@ -406,6 +406,15 @@ fn overlay_page() -> gtk::Box {
     });
     page.append(&details);
 
+    let busy = gtk::CheckButton::with_label(tr("Show a processing icon when effects are being compiled or rebuilt"));
+    busy.set_tooltip_text(Some(tr("A small spinner in the corner while the program compiles or rebuilds effects for the game (when a definition changes, for example). It works even with the counter off.")));
+    busy.set_active(current.busy);
+    busy.connect_toggled({
+        let (status, save) = (status.clone(), save);
+        move |b| save("Busy", if b.is_active() { "1" } else { "0" }.to_string(), status.clone())
+    });
+    page.append(&busy);
+
     let corner_line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     corner_line.append(&gtk::Label::new(Some(tr("Corner"))));
     let corner = gtk::DropDown::from_strings(&[tr("Top left"), tr("Top right"), tr("Bottom left"), tr("Bottom right")]);

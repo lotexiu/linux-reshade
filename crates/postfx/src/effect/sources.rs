@@ -25,6 +25,8 @@ pub struct FrameInfo {
     pub fps_min: f32,
     pub fps_max: f32,
     pub fps_low1: f32,
+    /// Algo está sendo processado para o jogo (compilando efeitos, montando a cadeia): 1, senão 0 (`source = "lr_busy"`).
+    pub busy: f32,
 }
 
 /// Data e hora em UTC a partir de segundos Unix, no formato do `source = "date"`.
@@ -54,6 +56,7 @@ enum Kind {
     FpsMin,
     FpsMax,
     FpsLow1,
+    Busy,
     Random { min: f32, max: f32 },
     PingPong { min: f32, max: f32, step_min: f32, step_max: f32 },
     /// O controle (de 1, na ordem do efeito) que a pessoa está editando; 0 se nenhum.
@@ -123,6 +126,7 @@ impl Sources {
                 "fps_min" => Kind::FpsMin,
                 "fps_max" => Kind::FpsMax,
                 "fps_low1" => Kind::FpsLow1,
+                "lr_busy" => Kind::Busy,
                 "overlay_active" | "overlay_hovered" => Kind::OverlayActive,
                 "overlay_open" => Kind::OverlayOpen,
                 "random" => Kind::Random { min: number(u, "min", 0.0), max: number(u, "max", 1.0) },
@@ -190,6 +194,7 @@ impl Sources {
                 Kind::FpsMin => vec![frame.fps_min],
                 Kind::FpsMax => vec![frame.fps_max],
                 Kind::FpsLow1 => vec![frame.fps_low1],
+                Kind::Busy => vec![frame.busy],
                 Kind::OverlayActive => vec![self.active as f32],
                 Kind::OverlayOpen => vec![f32::from(self.active != 0)],
                 Kind::Random { min, max } => {

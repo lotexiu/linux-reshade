@@ -624,3 +624,8 @@ Bottom left	Inferior esquerdo
 Bottom right	Inferior direito
 Size	Tamanho
 Overlay	Overlay
+Copy launch options	Copiar opções de inicialização
+Copied: paste in Steam	Copiado: cole na Steam
+Copies the line to paste in Steam: right-click the game, Properties, General, Launch options. It turns the layer on for that game. Games that are not on Steam use it before their command.	Copia a linha para colar na Steam: botão direito no jogo, Propriedades, Geral, Opções de inicialização. Ela liga a layer nesse jogo. Jogos fora da Steam usam a linha antes do comando.
+Show a processing icon when effects are being compiled or rebuilt	Mostrar um ícone de processando quando os efeitos estão sendo compilados ou refeitos
+A small spinner in the corner while the program compiles or rebuilds effects for the game (when a definition changes, for example). It works even with the counter off.	Um pequeno indicador girando no canto enquanto o programa compila ou refaz efeitos do jogo (quando uma definição muda, por exemplo). Funciona mesmo com o contador desligado.

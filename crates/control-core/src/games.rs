@@ -216,6 +216,7 @@ impl Games {
                     return;
                 }
             };
+            let _busy = ipc::busy_guard(); // a layer mostra o ícone de "processando" enquanto os efeitos compilam
             let preset = Preset::parse(&text);
             let mut built = game_plan::build(compiler, &preset, &self.global_macros, &game_plan::auto_depth_macros(reversed), width, height);
             // O contador de desempenho entra por último (sobre o resultado dos outros efeitos), a menos que o preset já o tenha.
@@ -235,6 +236,7 @@ impl Games {
         }
 
         // Cada etapa em cada resolução do jogo (a primeira já foi compilada ao montar o plano).
+        let _busy = ipc::busy_guard();
         let effects = self.published.get(&layer.id).map(|p| p.effects.clone()).unwrap_or_default();
         for (name, defines) in &effects {
             let key = variant_key(name, defines);
@@ -349,9 +351,11 @@ mod tests {
         assert!(report.warnings.is_empty(), "{report:?}");
         let ipc::PlanRead::Plan(plan) = reader(&e, "layer-Jogo").read_plan() else { panic!("sem plano") };
         assert_eq!(plan.steps.iter().map(|s| s.technique.as_str()).collect::<Vec<_>>(), ["Sepia", "Invert"], "o contador vem depois dos efeitos do preset");
-        assert!(config::Overlay::default().preset_text().is_none(), "desligado de fábrica");
-        let on = config::Overlay { enabled: true, corner: 1, scale: 4, details: false };
-        assert_eq!(on.preset_text().as_deref(), Some("Techniques=FPSCounter@FPSCounter.fx\n\n[FPSCounter.fx]\nCorner=1\nScale=4\nDetails=0\n"));
+        assert!(config::Overlay::default().preset_text().is_none(), "o contador e o ícone dependem do config.ini (o `Busy` é ligado de fábrica ao ler o arquivo)");
+        let on = config::Overlay { enabled: true, busy: false, corner: 1, scale: 4, details: false };
+        assert_eq!(on.preset_text().as_deref(), Some("Techniques=FPSCounter@FPSCounter.fx\n\n[FPSCounter.fx]\nCorner=1\nScale=4\nDetails=0\nShowStats=1\nShowBusy=0\n"));
+        let only_busy = config::Overlay { busy: true, ..config::Overlay::default() };
+        assert!(only_busy.preset_text().is_some_and(|t| t.contains("ShowStats=0") && t.contains("ShowBusy=1")), "só o ícone de processando também acrescenta o efeito");
     }
 
     #[test]

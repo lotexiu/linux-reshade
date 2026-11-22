@@ -225,3 +225,7 @@ presents vão para o log (extensões, filas e estruturas encadeadas) para compar
   que não pode ser partido; a regra automática ignorava limpezas que não dá para partir e ficava sem escolha por minutos no jogo (só no menu, onde a limpeza é fora de passe,
   ela pegava), caindo na profundidade viva (já sobreposta pela interface). Agora, se nenhuma limpeza relevante dá para partir, vale a última que dá antes dela
   (a do começo do quadro: a profundidade do quadro anterior, estável, com um quadro de atraso), o mesmo que "Antes da limpeza 1" manual.
+
+### 08/11, teste com `GE-Proton11-7-dxvk-exp` (GE-Proton com o DXVK 3.1.1-97 do Experimental)
+A Hat in Time, preset Padrão, trocas de macros: **não travou**. Logo o DXVK do Experimental não é a causa dos Xid; sobra o resto do Proton Experimental (Wine,
+`winevulkan`, o caminho do present). O GE-Proton fica como padrão; o Experimental continua sem suporte para trocas de definição ao vivo.

@@ -20,7 +20,29 @@ fn frame_info(now: Instant, previous: Option<Instant>, frame_count: u64) -> Fram
     let unix = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let frame_time_ms = previous.map(|p| now.duration_since(p).as_secs_f32() * 1000.0).unwrap_or(0.0);
     let [fps_avg, fps_min, fps_max, fps_low1] = fps_stats(frame_time_ms);
-    FrameInfo { time_ms: now.duration_since(*START).as_secs_f32() * 1000.0, frame_time_ms, frame_count: frame_count as u32, date: utc_date(unix), fps_avg, fps_min, fps_max, fps_low1 }
+    let busy = if busy_now() { 1.0 } else { 0.0 };
+    FrameInfo { time_ms: now.duration_since(*START).as_secs_f32() * 1000.0, frame_time_ms, frame_count: frame_count as u32, date: utc_date(unix), fps_avg, fps_min, fps_max, fps_low1, busy }
+}
+
+/// Alguma cadeia está sendo criada neste processo (atualizado a cada present por [`process`]).
+static CHAIN_BUILDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Algo está sendo processado para este jogo: o vigia compila efeitos (marcador na pasta de estado) ou a layer monta uma cadeia. A pasta é lida de
+/// quando em quando (o present roda centenas de vezes por segundo).
+fn busy_now() -> bool {
+    static CACHE: std::sync::Mutex<Option<(Instant, bool)>> = std::sync::Mutex::new(None);
+    if CHAIN_BUILDING.load(std::sync::atomic::Ordering::Relaxed) {
+        return true;
+    }
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, value)) = cache.as_ref()
+        && at.elapsed() < std::time::Duration::from_millis(250)
+    {
+        return *value;
+    }
+    let value = ipc::busy_now();
+    *cache = Some((Instant::now(), value));
+    value
 }
 
 /// Os tempos dos últimos quadros e a estatística calculada a partir deles.
@@ -859,6 +881,7 @@ pub unsafe fn process(data: &DeviceData, queue: vk::Queue, info: &vk::PresentInf
 
         let mut swapchains = data.swapchains.lock().unwrap();
         let fx = swapchains.get_mut(&swapchain.as_raw())?;
+        CHAIN_BUILDING.store(matches!(fx.fx, Fx::Building(_)), std::sync::atomic::Ordering::Relaxed);
 
         // Mesmo com os efeitos desligados: é aqui que se descobre que falta um bundle para esta
         // resolução, e o app de controle só sabe a tempo de compilá-lo se a layer avisar já.
