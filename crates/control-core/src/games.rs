@@ -348,7 +348,7 @@ mod tests {
         assert!(report.warnings.is_empty(), "{report:?}");
         let ipc::PlanRead::Plan(plan) = reader(&e, "layer-Jogo").read_plan() else { panic!("sem plano") };
         assert_eq!(plan.steps.iter().map(|s| s.technique.as_str()).collect::<Vec<_>>(), ["Sepia", "Invert"], "o contador vem depois dos efeitos do preset");
-        assert!(config::Overlay::default().preset_text().is_none(), "o contador e o ícone dependem do config.ini (o `Busy` é ligado de fábrica ao ler o arquivo)");
+        assert!(config::Overlay::default().preset_text().is_none(), "o contador e o ícone dependem do config.ini (o contador e o ícone são desligados de fábrica: o efeito do overlay custa passes de tela cheia)");
         let on = config::Overlay { enabled: true, busy: false, corner: 1, scale: 4, details: false };
         assert_eq!(on.preset_text().as_deref(), Some("Techniques=FPSCounter@FPSCounter.fx\n\n[FPSCounter.fx]\nCorner=1\nScale=4\nDetails=0\nShowStats=1\nShowBusy=0\n"));
         let only_busy = config::Overlay { busy: true, ..config::Overlay::default() };

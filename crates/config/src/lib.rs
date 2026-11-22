@@ -146,7 +146,7 @@ pub struct Config {
 pub struct Overlay {
     /// Mostra o contador (FPS, média...). `Stats` no `config.ini`.
     pub enabled: bool,
-    /// Mostra o ícone de "processando" quando algo está sendo compilado ou montado para o jogo. `Busy` no `config.ini` (ligado de fábrica).
+    /// Mostra o ícone de "processando" quando algo está sendo compilado ou montado para o jogo. `Busy` no `config.ini` (desligado de fábrica: o efeito do overlay acrescenta passes de tela cheia a todo jogo, e o projeto prefere não gastar FPS sem a pessoa pedir).
     pub busy: bool,
     /// 0 superior esquerdo, 1 superior direito, 2 inferior esquerdo, 3 inferior direito.
     pub corner: u8,
@@ -288,7 +288,7 @@ impl Config {
         let analysis_exclude = base.as_ref().map(|b| ini.as_ref().map(|i| i.get_list("GENERAL", "AnalysisExclude")).unwrap_or_default().iter().filter(|s| !s.trim().is_empty()).map(|s| SearchPath::parse(s, b, home).dir).collect()).unwrap_or_default();
         let flag = |key: &str, default: bool| ini.as_ref().and_then(|i| i.get("OVERLAY", key)).map_or(default, |v| v == "1" || v.eq_ignore_ascii_case("true"));
         let number = |key: &str, default: u8| ini.as_ref().and_then(|i| i.get("OVERLAY", key)).and_then(|v| v.trim().parse::<u8>().ok()).unwrap_or(default);
-        let overlay = Overlay { enabled: flag("Stats", false), busy: flag("Busy", true), corner: number("Corner", 0).min(3), scale: number("Scale", 3).clamp(1, 8), details: flag("Details", true) };
+        let overlay = Overlay { enabled: flag("Stats", false), busy: flag("Busy", false), corner: number("Corner", 0).min(3), scale: number("Scale", 3).clamp(1, 8), details: flag("Details", true) };
         Self { data_dir, config_file: configured, effect_paths, texture_paths, presets_dir, global_macros, cache_dir, keys, screenshot_dir, screenshot_before, optimize_shaders, analyze_all, analysis_exclude, overlay }
     }
 
