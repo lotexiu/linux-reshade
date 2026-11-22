@@ -187,6 +187,24 @@ fn shortcuts_page(window: &gtk::Window) -> gtk::Box {
     page
 }
 
+/// Um texto selecionável não deve aparecer todo selecionado: o foco que a página recebe ao abrir (a primeira coisa que aceita foco) seleciona tudo.
+/// Tira a seleção logo depois de a página aparecer; a pessoa ainda pode selecionar e copiar com o mouse.
+fn no_autoselect(label: &gtk::Label) {
+    label.connect_map(|l| {
+        // Duas vezes: o foco da página pode chegar depois do primeiro instante.
+        for delay in [0u64, 250] {
+            let l = l.clone();
+            gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(delay), move || {
+                if l.selection_bounds().is_some() && !l.has_focus() {
+                    l.select_region(0, 0);
+                } else if l.selection_bounds() == Some((0, l.text().chars().count() as i32)) {
+                    l.select_region(0, 0);
+                }
+            });
+        }
+    });
+}
+
 fn page_box() -> gtk::Box {
     let page = gtk::Box::new(gtk::Orientation::Vertical, 12);
     page.set_margin_top(16);
@@ -524,6 +542,7 @@ fn performance_page(window: &gtk::Window) -> gtk::Box {
     text.set_xalign(0.0);
     text.set_yalign(0.0);
     text.set_selectable(true);
+    no_autoselect(&text);
     text.add_css_class("monospace");
     let scroller = gtk::ScrolledWindow::new();
     scroller.set_child(Some(&text));
@@ -590,6 +609,7 @@ fn cache_page() -> gtk::Box {
     let usage = gtk::Label::new(None);
     usage.set_xalign(0.0);
     usage.set_selectable(true);
+    no_autoselect(&usage);
     let refresh_usage = {
         let (usage, compiler) = (usage.clone(), compiler.clone());
         move || usage.set_text(&match &*compiler {
@@ -643,6 +663,7 @@ fn cache_page() -> gtk::Box {
     report.set_xalign(0.0);
     report.set_yalign(0.0);
     report.set_selectable(true);
+    no_autoselect(&report);
     report.add_css_class("monospace");
     let scroller = gtk::ScrolledWindow::new();
     scroller.set_child(Some(&report));
@@ -784,6 +805,7 @@ fn system_page() -> gtk::Box {
     layer_status.set_xalign(0.0);
     layer_status.set_wrap(true);
     layer_status.set_selectable(true);
+    no_autoselect(&layer_status);
     let layer_button = gtk::Button::with_label(tr("Install or update the layer"));
     layer_button.set_halign(gtk::Align::Start);
     let show_layer = {
@@ -897,6 +919,7 @@ fn about_page() -> gtk::Box {
     label.set_xalign(0.0);
     label.set_wrap(true);
     label.set_selectable(true);
+    no_autoselect(&label);
     page.append(&label);
     page
 }
